@@ -2013,6 +2013,11 @@
         const res = await fetch('/api/reports/financial?' + params);
         const report = await res.json();
         
+        if(!res.ok || report.error) {
+          reportDiv.innerHTML = `<div style="color:#ff4444; padding:12px">Error generating report: ${report.error || 'Server error'}</div>`;
+          return;
+        }
+        
         reportDiv.innerHTML = '';
         const reportCard = document.createElement('div');
         reportCard.className = 'card';

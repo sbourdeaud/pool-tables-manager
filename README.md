@@ -1,21 +1,81 @@
-# Pool Tables Manager — Scaffold (Demo)
+# Pool Tables Manager
 
-This repository contains a minimal scaffold for the Pool Tables Manager app.
+A full-featured pool hall management system with session tracking, billing, subscriptions, and reporting.
 
-Services:
-- backend: Node/Express app serving a small static frontend and simple API endpoints
-- db: Postgres (for future use)
+## Features
 
-Quick start (requires Docker & Docker Compose):
+- **Session Management**: Track active sessions, players, and table usage
+- **Billing System**: Automated time-based billing with subscriber discounts
+- **Subscriptions**: Monthly subscription management with automatic discounts
+- **Reporting**: Financial reports by day/week/month/quarter/year
+- **Authentication**: OIDC integration or local admin authentication
+- **Multi-language**: English and French support
 
+## Quick Start
+
+**New Deployment** (empty database):
 ```bash
-docker compose up --build
+git clone <repository-url>
+cd pool-tables-manager
+docker-compose up -d
 ```
 
-Open http://localhost:3000 to view the demo UI.
+The application will automatically initialize the database and apply all migrations.
 
-Next steps:
-- Implement DB schema and migrations (Prisma)
-- Add session/table management, billing, subscriptions, reporting
-- Add admin authentication and role-based access
-- Add CI to build and publish container images
+**Access**: Open http://localhost:3000
+
+**First Setup**: Configure local admin password or OIDC authentication via Settings page.
+
+## Documentation
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)**: Complete deployment guide for new and existing instances
+- **[DEVELOPER_README.md](DEVELOPER_README.md)**: API documentation and development guide
+- **[USER_GUIDE.md](USER_GUIDE.md)**: User documentation and feature overview
+- **[backend/tests/README.md](backend/tests/README.md)**: Testing documentation and CI integration
+
+## Architecture
+
+**Services**:
+- `app`: Node.js/Express backend + static frontend
+- `db`: PostgreSQL database
+
+**Technology Stack**:
+- Backend: Node.js 18, Express, Prisma ORM
+- Database: PostgreSQL 15
+- Frontend: Vanilla JavaScript
+- Testing: Jest + Supertest
+- CI/CD: GitHub Actions
+
+## Development
+
+```bash
+# Run tests
+cd backend
+npm test
+
+# Run tests in Docker
+docker run --rm --network pool-tables-manager_default \
+  -v $(pwd)/backend:/app -w /app node:18-bullseye \
+  bash -c "npm test"
+
+# Access database
+docker exec -it pool-tables-manager-db-1 psql -U postgres -d pool_tables
+
+# View logs
+docker-compose logs -f app
+```
+
+## Updating
+
+```bash
+git pull
+docker-compose down
+docker-compose build
+docker-compose up -d
+```
+
+## Support
+
+For deployment issues, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+For API documentation, see [DEVELOPER_README.md](DEVELOPER_README.md).
