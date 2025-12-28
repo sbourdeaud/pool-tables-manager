@@ -1140,26 +1140,26 @@ app.post('/api/sessions/:id/switch', async (req, res) => {
     
     const result = await prisma.$transaction(async (tx)=>{
       // Get current session to know old table
-      const currentSession = await tx.$queryRawUnsafe(`SELECT id, table_id FROM "Session" WHERE id = $1`, sessionId);
+      const currentSession = await tx.$queryRawUnsafe(`SELECT id, table_id FROM "Session" WHERE id = $1::uuid`, sessionId);
       const sess = Array.isArray(currentSession) ? currentSession[0] : currentSession;
       if(!sess) throw new Error('session_not_found');
       const oldTableId = sess.table_id;
       
       // Check target table availability
-      const targetRows = await tx.$queryRawUnsafe(`SELECT id, status FROM "PoolTable" WHERE id = $1`, newTableId);
+      const targetRows = await tx.$queryRawUnsafe(`SELECT id, status FROM "PoolTable" WHERE id = $1::uuid`, newTableId);
       const target = Array.isArray(targetRows) ? targetRows[0] : targetRows;
       if(!target) throw new Error('table_not_found');
       if(target.status === 'occupied') throw new Error('table_unavailable');
       
       // Update session to new table
-      await tx.$executeRawUnsafe(`UPDATE "Session" SET table_id = $1 WHERE id = $2`, newTableId, sessionId);
+      await tx.$executeRawUnsafe(`UPDATE "Session" SET table_id = $1::uuid WHERE id = $2::uuid`, newTableId, sessionId);
       
       // Free old table and occupy new table
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id = $1`, oldTableId);
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id = $1`, newTableId);
+      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id = $1::uuid`, oldTableId);
+      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id = $1::uuid`, newTableId);
       
       // Return updated session info
-      const updated = await tx.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id = $1`, sessionId);
+      const updated = await tx.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id = $1::uuid`, sessionId);
       const u = Array.isArray(updated) ? updated[0] : updated;
       return { id: u.id, tableId: u.table_id, patronId: u.patron_id, startedAt: u.started_at, endedAt: u.ended_at, status: u.status, createdAt: u.created_at, numberOfPlayers: u.number_of_players };
     });
