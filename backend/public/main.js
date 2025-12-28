@@ -64,6 +64,15 @@
     oscillator2.start(now);
     oscillator2.stop(now + duration * 0.5);
   }
+  
+  // Play pool ball sound for session start and logo click
+  function playPoolBallSound(){
+    if(!audioEnabled) return;
+    const audio = new Audio('/sounds/pool-ball.mp3');
+    audio.volume = 0.5;
+    audio.play().catch(err => console.log('Audio play failed:', err));
+  }
+  
   const checkoutModal = document.getElementById('checkoutModal');
   const checkoutContent = document.getElementById('checkoutContent');
   const checkoutClose = document.getElementById('checkoutClose');
@@ -174,7 +183,7 @@
 
   navDashboard.addEventListener('click', e => { e.preventDefault(); renderDashboard(); });
   navAdmin.addEventListener('click', e => { e.preventDefault(); renderAdminDashboard(); });
-  logoLink.addEventListener('click', e => { e.preventDefault(); renderDashboard(); });
+  logoLink.addEventListener('click', e => { e.preventDefault(); playPoolBallSound(); renderDashboard(); });
 
   // Views
   // Admin dashboard with tiles for each management area
@@ -389,7 +398,7 @@
         const endBtn = document.createElement('button'); endBtn.textContent = 'End Session'; endBtn.addEventListener('click', async ()=>{ if(!confirm('End session?')) return; await fetch('/api/sessions/' + sess.id + '/end', { method: 'PATCH' }); renderTableManagement(); });
         row.appendChild(endBtn);
       } else {
-        const startBtn = document.createElement('button'); startBtn.textContent = 'Start Session'; startBtn.addEventListener('click', async ()=>{ const players = Number(prompt('Number of players','1'))||1; await fetch('/api/sessions', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tableId: tb.id, numberOfPlayers: players }) }); renderTableManagement(); });
+        const startBtn = document.createElement('button'); startBtn.textContent = 'Start Session'; startBtn.addEventListener('click', async ()=>{ const players = Number(prompt('Number of players','1'))||1; await fetch('/api/sessions', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tableId: tb.id, numberOfPlayers: players }) }); playPoolBallSound(); renderTableManagement(); });
         row.appendChild(startBtn);
       }
       // Maintenance mode toggle
@@ -1654,6 +1663,7 @@
         }
         const newSession = await response.json();
         console.log('New session created:', newSession);
+        playPoolBallSound();
         hideModal();
         // Small delay to ensure database commit completes
         await new Promise(resolve => setTimeout(resolve, 200));
