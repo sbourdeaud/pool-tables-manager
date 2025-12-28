@@ -3,14 +3,14 @@ set -e
 
 echo "Starting database initialization..."
 
-# Wait for database to be ready
+# Wait for database to be ready using pg_isready equivalent
 echo "Waiting for database to be ready..."
 timeout=30
 counter=0
-until node -e "require('./src/prismaClient').prisma.\$connect().then(() => process.exit(0)).catch(() => process.exit(1))" 2>/dev/null || [ $counter -eq $timeout ]; do
+until node -e "const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => { prisma.\$disconnect(); process.exit(0); }).catch(() => process.exit(1));" 2>/dev/null || [ $counter -eq $timeout ]; do
   counter=$((counter + 1))
   echo "Database not ready yet... ($counter/$timeout)"
-  sleep 1
+  sleep 2
 done
 
 if [ $counter -eq $timeout ]; then
@@ -25,7 +25,7 @@ MIGRATIONS_EXIST=$(node -e "
   const { PrismaClient } = require('@prisma/client');
   const prisma = new PrismaClient();
   prisma.\$queryRaw\`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_prisma_migrations')\`
-    .then(r => { console.log(r[0].exists ? 'yes' : 'no'); process.exit(0); })
+    .then(r => { console.log(r[0].exists ? 'yes' : 'no'); prisma.\$disconnect(); process.exit(0); })
     .catch(() => { console.log('no'); process.exit(0); });
 " 2>/dev/null || echo "no")
 
@@ -47,7 +47,7 @@ if [ "$MIGRATIONS_EXIST" = "no" ]; then
         const { PrismaClient } = require('@prisma/client');
         const prisma = new PrismaClient();
         prisma.\$queryRaw\`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'Session' AND column_name = 'pin'\`
-          .then(r => { console.log(r.length > 0 ? 'yes' : 'no'); process.exit(0); })
+          .then(r => { console.log(r.length > 0 ? 'yes' : 'no'); prisma.\$disconnect(); process.exit(0); })
           .catch(() => { console.log('no'); process.exit(0); });
       " 2>/dev/null || echo "no")
       
