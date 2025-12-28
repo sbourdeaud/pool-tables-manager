@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Table View</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    .table-name {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .table-type {
+      font-size: 16px;
+      opacity: 0.7;
+      font-weight: 400;
+    }
+    .session-info {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 24px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+    }
+    .info-item {
+      text-align: center;
+    }
+    .info-label {
+      font-size: 12px;
+      opacity: 0.6;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .info-value {
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .items-section {
+      margin-bottom: 24px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      opacity: 0.8;
+    }
+    .item {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .item-desc {
+      font-weight: 500;
+    }
+    .item-qty {
+      font-size: 14px;
+      opacity: 0.7;
+      margin-top: 4px;
+    }
+    .item-total {
+      font-weight: 600;
+      font-size: 18px;
+    }
+    .table-charge {
+      background: rgba(16, 185, 129, 0.1);
+      border-left: 3px solid #10b981;
+    }
+    .total-section {
+      padding: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      border-radius: 12px;
+      text-align: center;
+      border: 2px solid rgba(16, 185, 129, 0.3);
+    }
+    .total-label {
+      font-size: 16px;
+      opacity: 0.8;
+      margin-bottom: 8px;
+    }
+    .total-amount {
+      font-size: 48px;
+      font-weight: 700;
+      color: #10b981;
+    }
+    .no-session {
+      text-align: center;
+      padding: 48px 20px;
+      opacity: 0.6;
+    }
+    .error {
+      text-align: center;
+      padding: 48px 20px;
+      color: #ef4444;
+    }
+    .loading {
+      text-align: center;
+      padding: 48px 20px;
+      opacity: 0.6;
+    }
+    .pin-entry {
+      text-align: center;
+      padding: 32px 20px;
+    }
+    .pin-entry h2 {
+      font-size: 24px;
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .pin-entry p {
+      opacity: 0.7;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .pin-input-group {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .pin-digit {
+      width: 60px;
+      height: 70px;
+      font-size: 32px;
+      text-align: center;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      color: #ffffff;
+      font-weight: 600;
+    }
+    .pin-digit:focus {
+      outline: none;
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.1);
+    }
+    .pin-button {
+      padding: 14px 36px;
+      font-size: 16px;
+      font-weight: 600;
+      background: #10b981;
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .pin-button:hover {
+      background: #059669;
+      transform: translateY(-1px);
+    }
+    .pin-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .pin-error {
+      color: #ef4444;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="container">
+    <div class="loading">Loading...</div>
+  </div>
+
+  <script>
+    (async function(){
+      const container = document.getElementById('container');
+      const currency = '€'; // Default currency
+      
+      // Get table number from URL path
+      const path = window.location.pathname;
+      const match = path.match(/\/table(\d+)/);
+      
+      if(!match){
+        container.innerHTML = '<div class="error">Invalid table URL</div>';
+        return;
+      }
+      
+      const tableNumber = match[1];
+      
+      // Check if PIN is in URL params or sessionStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      let pin = urlParams.get('pin') || sessionStorage.getItem(`table${tableNumber}_pin`);
+      
+      // Function to show PIN entry screen
+      function showPinEntry(errorMsg = '') {
+        container.innerHTML = `
+          <div class="pin-entry">
+            <h2>Enter PIN Code</h2>
+            <p>Please enter the 4-digit PIN to view this table</p>
+            <div class="pin-input-group">
+              <input type="text" maxlength="1" class="pin-digit" id="pin1" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+              <input type="text" maxlength="1" class="pin-digit" id="pin2" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+              <input type="text" maxlength="1" class="pin-digit" id="pin3" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+              <input type="text" maxlength="1" class="pin-digit" id="pin4" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+            </div>
+            <button class="pin-button" id="submitPin">View Table</button>
+            ${errorMsg ? `<div class="pin-error">${errorMsg}</div>` : ''}
+          </div>
+        `;
+        
+        const inputs = [
+          document.getElementById('pin1'),
+          document.getElementById('pin2'),
+          document.getElementById('pin3'),
+          document.getElementById('pin4')
+        ];
+        
+        // Auto-focus first input
+        inputs[0].focus();
+        
+        // Handle input
+        inputs.forEach((input, index) => {
+          input.addEventListener('input', (e) => {
+            const value = e.target.value;
+            if (value && /^\d$/.test(value)) {
+              if (index < 3) {
+                inputs[index + 1].focus();
+              }
+            }
+          });
+          
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !input.value && index > 0) {
+              inputs[index - 1].focus();
+            }
+          });
+          
+          // Prevent non-numeric input
+          input.addEventListener('beforeinput', (e) => {
+            if (e.data && !/^\d$/.test(e.data)) {
+              e.preventDefault();
+            }
+          });
+        });
+        
+        // Handle submit
+        document.getElementById('submitPin').addEventListener('click', async () => {
+          const enteredPin = inputs.map(i => i.value).join('');
+          if (enteredPin.length !== 4) {
+            showPinEntry('Please enter all 4 digits');
+            return;
+          }
+          
+          // Store PIN and reload
+          sessionStorage.setItem(`table${tableNumber}_pin`, enteredPin);
+          pin = enteredPin;
+          loadTableData();
+        });
+        
+        // Enter key on last digit
+        inputs[3].addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            document.getElementById('submitPin').click();
+          }
+        });
+      }
+      
+      // Function to load table data
+      async function loadTableData() {
+        container.innerHTML = '<div class="loading">Loading...</div>';
+        
+        try {
+          const response = await fetch(`/api/public/table/${tableNumber}?pin=${pin}`);
+        
+          if(!response.ok){
+            if(response.status === 404){
+              container.innerHTML = '<div class="error">Table not found</div>';
+            } else if(response.status === 403){
+              // Invalid PIN - clear stored PIN and show entry screen
+              sessionStorage.removeItem(`table${tableNumber}_pin`);
+              showPinEntry('Invalid PIN. Please try again.');
+            } else {
+              container.innerHTML = '<div class="error">Error loading table information</div>';
+            }
+            return;
+          }
+        
+          const data = await response.json();
+        
+        if(!data.session){
+          container.innerHTML = `
+            <div class="header">
+              <div class="table-name">${data.table.name || 'Table #' + data.table.number}</div>
+              ${data.table.type ? `<div class="table-type">${data.table.type}</div>` : ''}
+            </div>
+            <div class="no-session">No active session</div>
+          `;
+          return;
+        }
+        
+        // Calculate duration
+        const startTime = new Date(data.session.startedAt);
+        const elapsed = Date.now() - startTime.getTime();
+        const hours = Math.floor(elapsed / 3600000);
+        const minutes = Math.floor((elapsed % 3600000) / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+        const durationText = `${hours}:${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
+        
+        // Build HTML
+        let html = `
+          <div class="header">
+            <div class="table-name">${data.table.name || 'Table #' + data.table.number}</div>
+            ${data.table.type ? `<div class="table-type">${data.table.type}</div>` : ''}
+          </div>
+          
+          <div class="session-info">
+            <div class="info-item">
+              <div class="info-label">Started</div>
+              <div class="info-value">${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Duration</div>
+              <div class="info-value" id="duration">${durationText}</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">Players</div>
+              <div class="info-value">${data.session.numberOfPlayers || 1}</div>
+            </div>
+          </div>
+        `;
+        
+        // Add table charge if exists
+        if(data.tableCharge > 0){
+          const hoursCharged = Math.ceil(elapsed / 3600000);
+          html += `
+            <div class="items-section">
+              <div class="section-title">Table Time</div>
+              <div class="item table-charge">
+                <div>
+                  <div class="item-desc">Table Time</div>
+                  <div class="item-qty">${hoursCharged}h charged</div>
+                </div>
+                <div class="item-total">${currency}${(data.tableCharge/100).toFixed(2)}</div>
+              </div>
+            </div>
+          `;
+        }
+        
+        // Add items if any
+        if(data.items && data.items.length > 0){
+          html += '<div class="items-section"><div class="section-title">Items</div>';
+          
+          for(const item of data.items){
+            html += `
+              <div class="item">
+                <div>
+                  <div class="item-desc">${item.description}</div>
+                  <div class="item-qty">${item.quantity} × ${currency}${(item.unitPrice/100).toFixed(2)}</div>
+                </div>
+                <div class="item-total">${currency}${(item.totalCents/100).toFixed(2)}</div>
+              </div>
+            `;
+          }
+          
+          html += '</div>';
+        }
+        
+        // Add total
+        html += `
+          <div class="total-section">
+            <div class="total-label">Total Due</div>
+            <div class="total-amount">${currency}${(data.totalCents/100).toFixed(2)}</div>
+          </div>
+        `;
+        
+        container.innerHTML = html;
+        
+        // Update duration every second
+        setInterval(() => {
+          const elapsed = Date.now() - startTime.getTime();
+          const hours = Math.floor(elapsed / 3600000);
+          const minutes = Math.floor((elapsed % 3600000) / 60000);
+          const seconds = Math.floor((elapsed % 60000) / 1000);
+          const durationEl = document.getElementById('duration');
+          if(durationEl){
+            durationEl.textContent = `${hours}:${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
+          }
+        }, 1000);
+        
+        } catch(e){
+          console.error(e);
+          container.innerHTML = '<div class="error">Error loading table information</div>';
+        }
+      }
+      
+      // Initial load - check if we need PIN
+      if (!pin) {
+        showPinEntry();
+      } else {
+        loadTableData();
+        // Refresh data every 60 seconds
+        setInterval(() => {
+          loadTableData();
+        }, 60000);
+      }
+      
+    })();
+  </script>
+</body>
+</html>

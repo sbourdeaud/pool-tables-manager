@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String   @id @default(uuid())
+  name             String?
+  email            String   @unique
+  role             String   @default("user")
+  preferredLanguage String? @map("preferred_language")
+  preferredTheme   String? @map("preferred_theme")
+  createdAt        DateTime @default(now()) @map("created_at")
+}
+
+model TableType {
+  id                String  @id @default(uuid())
+  name_en           String
+  name_fr           String?
+  base_hourly_cents Int
+  createdAt         DateTime @default(now()) @map("created_at")
+}
+
+model PoolTable {
+  id          String   @id @default(uuid())
+  tableTypeId String  @map("table_type_id")
+  number      Int      @unique
+  status      String   @default("available")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tableTypeId])
+}
+
+model Drink {
+  id          String @id @default(uuid())
+  name_en     String
+  name_fr     String?
+  price_cents Int
+  taxable     Boolean @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  tableId       String   @map("table_id")
+  patronId      String?  @map("patron_id")
+  startedAt     DateTime @default(now()) @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+  status        String   @default("active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  numberOfPlayers Int?   @map("number_of_players")
+  pin           String?
+}
+
+model TabLineItem {
+  id          String @id @default(uuid())
+  sessionId   String @map("session_id")
+  type        String
+  description String?
+  quantity    Float  @default(1)
+  unitPrice   Int    @map("unit_price")
+  totalCents  Int    @map("total_cents")
+  createdAt   DateTime @default(now()) @map("created_at")
+}
+
+model Transaction {
+  id         String @id @default(uuid())
+  userId     String? @map("user_id")
+  sessionId  String? @map("session_id")
+  amountCents Int    @map("amount_cents")
+  type       String
+  createdAt  DateTime @default(now()) @map("created_at")
+}
+
+model Subscription {
+  id                String   @id @default(uuid())
+  patronId          String @map("patron_id")
+  plan_name         String
+  monthly_fee_cents Int
+  active_from       DateTime
+  active_until      DateTime?
+  auto_renew        Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at")
+}
+
+model Setting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+}
