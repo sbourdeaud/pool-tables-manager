@@ -533,12 +533,12 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
     if(periodType === 'day'){
       details = [];
       for(const sess of sessions){
-        const tableData = await prisma.$queryRaw`
+        const tableData = await prisma.$queryRawUnsafe(`
           SELECT pt.number, tt.name_en
           FROM "PoolTable" pt
           JOIN "TableType" tt ON pt.table_type_id = tt.id
-          WHERE pt.id = ${sess.table_id}
-        `;
+          WHERE pt.id = $1::uuid
+        `, sess.table_id);
         const table = Array.isArray(tableData) ? tableData[0] : tableData;
         
         const items = await prisma.tabLineItem.findMany({
@@ -557,12 +557,12 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
         
         let tableCharge = 0;
         if(table && nonSubscriberCount > 0){
-          const tableType = await prisma.$queryRaw`
+          const tableType = await prisma.$queryRawUnsafe(`
             SELECT tt.base_hourly_cents
             FROM "PoolTable" pt
             JOIN "TableType" tt ON pt.table_type_id = tt.id
-            WHERE pt.id = ${sess.table_id}
-          `;
+            WHERE pt.id = $1::uuid
+          `, sess.table_id);
           const tt = Array.isArray(tableType) ? tableType[0] : tableType;
           
           if(tt){
