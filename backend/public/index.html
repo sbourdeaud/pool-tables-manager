@@ -189,6 +189,23 @@
         <button id="settlementClose">Cancel</button>
       </div>
     </div>
+    <div class="modal card" id="authModal" role="dialog" aria-modal="true" style="display:none">
+      <header id="authModalHeader">Login</header>
+      <div id="authModalBody" style="padding:8px 0">
+        <div id="authMessage" style="margin-bottom:8px; opacity:0.9">Please authenticate to access admin features.</div>
+        <div id="authSetupFields" style="display:none; flex-direction:column; gap:8px">
+          <label>New admin password: <input id="authNewPassword" type="password" style="width:100%" /></label>
+          <label>Confirm password: <input id="authConfirmPassword" type="password" style="width:100%" /></label>
+        </div>
+        <div id="authLoginFields" style="display:none; flex-direction:column; gap:8px">
+          <label>Admin password: <input id="authPassword" type="password" style="width:100%" /></label>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:8px">
+        <button id="authCancel">Cancel</button>
+        <button id="authSubmit" style="background:#10b981; color:#fff; font-weight:600">Submit</button>
+      </div>
+    </div>
   </div>
   <script src="/main.js"></script>
 </body>

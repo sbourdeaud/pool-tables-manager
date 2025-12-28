@@ -86,6 +86,70 @@
     }
   }
   loadAppName();
+
+  // On initial load, check auth/bootstrap state and show modal for login/setup when needed
+  const authModal = document.getElementById('authModal');
+  const authModalHeader = document.getElementById('authModalHeader');
+  const authSetupFields = document.getElementById('authSetupFields');
+  const authLoginFields = document.getElementById('authLoginFields');
+  const authMessage = document.getElementById('authMessage');
+  const authNewPassword = document.getElementById('authNewPassword');
+  const authConfirmPassword = document.getElementById('authConfirmPassword');
+  const authPassword = document.getElementById('authPassword');
+  const authCancel = document.getElementById('authCancel');
+  const authSubmit = document.getElementById('authSubmit');
+
+  function showAuthModal(){ authModal.style.display = 'block'; modalBackdrop.style.display = 'flex'; }
+  function hideAuthModal(){ authModal.style.display = 'none'; modalBackdrop.style.display = 'none'; }
+
+  authCancel.addEventListener('click', ()=>{ hideAuthModal(); });
+
+  async function checkAuthOnLoad(){
+    try{
+      const res = await fetch('/api/auth/info');
+      if(!res.ok) return;
+      const info = await res.json();
+      if(info.oidc_enabled && !info.authenticated){
+        window.location.href = '/auth/login';
+        return;
+      }
+
+      if(!info.oidc_enabled){
+        if(!info.local_admin_setup){
+          // show setup form
+          authModalHeader.textContent = 'Initial Admin Setup';
+          authMessage.textContent = 'Define a local admin password (username: admin). Keep it secure.';
+          authSetupFields.style.display = 'flex';
+          authLoginFields.style.display = 'none';
+          showAuthModal();
+          authSubmit.onclick = async ()=>{
+            const pw = authNewPassword.value || '';
+            const pw2 = authConfirmPassword.value || '';
+            if(pw.length < 6){ alert('Password must be at least 6 characters'); return; }
+            if(pw !== pw2){ alert('Passwords do not match'); return; }
+            const setupRes = await fetch('/api/auth/local-setup', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ password: pw }) });
+            if(setupRes.ok){ hideAuthModal(); alert('Admin password saved. Please log in.'); checkAuthOnLoad(); }
+            else { const t = await setupRes.json().catch(()=>null); alert('Failed to save admin password: ' + (t?.error || setupRes.status)); }
+          };
+        } else if(!info.authenticated){
+          // show login form
+          authModalHeader.textContent = 'Admin Login';
+          authMessage.textContent = 'Enter the local admin password.';
+          authSetupFields.style.display = 'none';
+          authLoginFields.style.display = 'flex';
+          showAuthModal();
+          authSubmit.onclick = async ()=>{
+            const pw = authPassword.value || '';
+            if(pw.length === 0){ alert('Enter password'); return; }
+            const loginRes = await fetch('/auth/local/login', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ username: 'admin', password: pw }) });
+            if(loginRes.ok){ hideAuthModal(); alert('Logged in successfully'); location.reload(); }
+            else { const t = await loginRes.json().catch(()=>null); alert('Login failed: ' + (t?.error || loginRes.status)); }
+          };
+        }
+      }
+    }catch(err){ console.warn('Auth check failed', err); }
+  }
+  checkAuthOnLoad();
   
   let savedLang = localStorage.getItem('lang') || 'en';
 
@@ -707,10 +771,22 @@
       item.appendChild(typeName); item.appendChild(status);
       item.addEventListener('click', async ()=>{
         try{
-          await fetch('/api/sessions/' + sessionId + '/switch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newTableId: t.id }) });
+          const response = await fetch('/api/sessions/' + sessionId + '/switch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ newTableId: t.id }) });
+          if(!response.ok){
+            const errorData = await response.json().catch(()=>({}));
+            if(errorData.error === 'table_unavailable'){
+              alert('Table is no longer available. Please try another table.');
+            } else {
+              alert('Transfer failed: ' + (errorData.error || 'Unknown error'));
+            }
+            return;
+          }
           hideModal();
           renderDashboard();
-        }catch(e){ alert('Transfer failed'); }
+        }catch(e){ 
+          console.error('Transfer error:', e);
+          alert('Transfer failed: ' + e.message); 
+        }
       });
       transferTableList.appendChild(item);
     }
@@ -1646,6 +1722,57 @@
     audioRow.appendChild(audioHelp);
     form.appendChild(audioRow);
 
+    // OIDC Settings
+    const oidcSection = document.createElement('div');
+    oidcSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    oidcSection.style.padding = '12px';
+    oidcSection.style.borderRadius = '6px';
+    const oidcTitle = document.createElement('h3'); oidcTitle.textContent = 'OpenID Connect (OIDC) Settings'; oidcTitle.style.marginTop = '0'; oidcSection.appendChild(oidcTitle);
+
+    const oidcEnableRow = document.createElement('div');
+    const oidcEnableLabel = document.createElement('label'); oidcEnableLabel.textContent = 'Enable OIDC (admin pages): '; oidcEnableLabel.style.fontWeight='600';
+    const oidcEnable = document.createElement('input'); oidcEnable.type='checkbox'; oidcEnable.style.marginLeft='8px'; oidcEnable.checked = settings.oidc_enabled === 'true';
+    oidcEnable.addEventListener('change', async (e)=>{ const val = e.target.checked ? 'true' : 'false'; try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_enabled: val }) }); alert('OIDC enabled set to: ' + val); renderSettings(); }catch(err){ console.warn('failed saving oidc_enabled', err); alert('Failed to save setting'); } });
+    oidcEnableRow.appendChild(oidcEnableLabel); oidcEnableRow.appendChild(oidcEnable);
+    const oidcEnableHelp = document.createElement('div'); oidcEnableHelp.style.fontSize='12px'; oidcEnableHelp.style.opacity='0.7'; oidcEnableHelp.style.marginTop='4px'; oidcEnableHelp.textContent = 'When enabled, admin pages require OIDC login. Keep disabled to avoid lockout.';
+    oidcSection.appendChild(oidcEnableRow); oidcSection.appendChild(oidcEnableHelp);
+
+    const issuerRow = document.createElement('div'); const issuerLabel = document.createElement('label'); issuerLabel.textContent = 'Issuer URL: '; issuerLabel.style.fontWeight='600';
+    const issuerInput = document.createElement('input'); issuerInput.type='text'; issuerInput.style.marginLeft='8px'; issuerInput.style.width='100%'; issuerInput.value = settings.oidc_issuer || '';
+    issuerInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_issuer: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_issuer', err); alert('Failed to save setting'); } });
+    issuerRow.appendChild(issuerLabel); issuerRow.appendChild(issuerInput); oidcSection.appendChild(issuerRow);
+
+    const clientIdRow = document.createElement('div'); const clientIdLabel = document.createElement('label'); clientIdLabel.textContent = 'Client ID: '; clientIdLabel.style.fontWeight='600';
+    const clientIdInput = document.createElement('input'); clientIdInput.type='text'; clientIdInput.style.marginLeft='8px'; clientIdInput.style.width='100%'; clientIdInput.value = settings.oidc_client_id || '';
+    clientIdInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_client_id: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_client_id', err); alert('Failed to save setting'); } });
+    clientIdRow.appendChild(clientIdLabel); clientIdRow.appendChild(clientIdInput); oidcSection.appendChild(clientIdRow);
+
+    const clientSecretRow = document.createElement('div'); const clientSecretLabel = document.createElement('label'); clientSecretLabel.textContent = 'Client Secret: '; clientSecretLabel.style.fontWeight='600';
+    const clientSecretInput = document.createElement('input'); clientSecretInput.type='password'; clientSecretInput.style.marginLeft='8px'; clientSecretInput.style.width='100%'; clientSecretInput.value = settings.oidc_client_secret || '';
+    clientSecretInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_client_secret: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_client_secret', err); alert('Failed to save setting'); } });
+    clientSecretRow.appendChild(clientSecretLabel); clientSecretRow.appendChild(clientSecretInput); oidcSection.appendChild(clientSecretRow);
+
+    const scopeRow = document.createElement('div'); const scopeLabel = document.createElement('label'); scopeLabel.textContent = 'Scope: '; scopeLabel.style.fontWeight='600';
+    const scopeInput = document.createElement('input'); scopeInput.type='text'; scopeInput.style.marginLeft='8px'; scopeInput.style.width='100%'; scopeInput.value = settings.oidc_scope || 'openid profile email';
+    scopeInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_scope: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_scope', err); alert('Failed to save setting'); } });
+    scopeRow.appendChild(scopeLabel); scopeRow.appendChild(scopeInput); oidcSection.appendChild(scopeRow);
+
+    const redirectRow = document.createElement('div'); const redirectLabel = document.createElement('label'); redirectLabel.textContent = 'Redirect URI: '; redirectLabel.style.fontWeight='600';
+    const redirectInput = document.createElement('input'); redirectInput.type='text'; redirectInput.style.marginLeft='8px'; redirectInput.style.width='100%'; redirectInput.value = settings.oidc_redirect_uri || '';
+    redirectInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_redirect_uri: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_redirect_uri', err); alert('Failed to save setting'); } });
+    redirectRow.appendChild(redirectLabel); redirectRow.appendChild(redirectInput); oidcSection.appendChild(redirectRow);
+
+    const testRow = document.createElement('div'); testRow.style.marginTop='8px';
+    const testBtn = document.createElement('button'); testBtn.textContent = 'Test OIDC (opens login)'; testBtn.addEventListener('click', async ()=>{
+      // Try opening /auth/login which will validate OIDC config server-side
+      window.open('/auth/login', '_blank');
+    });
+    testRow.appendChild(testBtn);
+    const testHelp = document.createElement('div'); testHelp.style.fontSize='12px'; testHelp.style.opacity='0.8'; testHelp.style.marginTop='6px'; testHelp.textContent = 'Opens the OIDC login flow in a new tab. Ensure values are saved before testing.';
+    oidcSection.appendChild(testRow); oidcSection.appendChild(testHelp);
+
+    form.appendChild(oidcSection);
+
     // Danger Zone Section
     const dangerZone = document.createElement('div');
     dangerZone.style.marginTop = '32px';
@@ -1698,6 +1825,70 @@
     
     dangerZone.appendChild(clearHistoryBtn);
     dangerZone.appendChild(clearHistoryHelp);
+    // Local admin management (rotate / clear)
+    const securityTitle = document.createElement('h4');
+    securityTitle.textContent = 'Local Admin (Recovery)';
+    securityTitle.style.marginTop = '12px';
+    dangerZone.appendChild(securityTitle);
+
+    if(settings.local_admin_password_hash){
+      const rotateDiv = document.createElement('div');
+      rotateDiv.style.display = 'flex'; rotateDiv.style.flexDirection = 'column'; rotateDiv.style.gap = '8px'; rotateDiv.style.marginTop = '8px';
+      rotateDiv.innerHTML = `
+        <div style="font-weight:600">Rotate admin password</div>
+      `;
+      const cur = document.createElement('input'); cur.type='password'; cur.placeholder='Current password'; cur.style.width='100%';
+      const nw = document.createElement('input'); nw.type='password'; nw.placeholder='New password'; nw.style.width='100%';
+      const nw2 = document.createElement('input'); nw2.type='password'; nw2.placeholder='Confirm new password'; nw2.style.width='100%';
+      const rotateBtn = document.createElement('button'); rotateBtn.textContent = 'Rotate Password'; rotateBtn.style.background='#f59e0b'; rotateBtn.style.color='#000';
+      rotateBtn.addEventListener('click', async ()=>{
+        if(!confirm('Rotate admin password?')) return;
+        if(nw.value.length < 6){ alert('New password must be at least 6 characters'); return; }
+        if(nw.value !== nw2.value){ alert('Passwords do not match'); return; }
+        try{
+          const resp = await fetch('/api/auth/local-rotate', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: cur.value, newPassword: nw.value }) });
+          const body = await resp.json().catch(()=>null);
+          if(!resp.ok) return alert('Failed to rotate: ' + (body?.error || resp.status));
+          alert('Password rotated successfully');
+          cur.value=''; nw.value=''; nw2.value='';
+        }catch(err){ alert('Rotate failed: ' + err.message); }
+      });
+      rotateDiv.appendChild(cur); rotateDiv.appendChild(nw); rotateDiv.appendChild(nw2); rotateDiv.appendChild(rotateBtn);
+      dangerZone.appendChild(rotateDiv);
+
+      const clearAdminDiv = document.createElement('div'); clearAdminDiv.style.marginTop='12px';
+      const clearAdminBtn = document.createElement('button'); clearAdminBtn.textContent = '🔓 Clear Local Admin (allow re-bootstrap)'; clearAdminBtn.style.background='#ef4444'; clearAdminBtn.style.color='#fff';
+      clearAdminBtn.addEventListener('click', async ()=>{
+        const ok = confirm('This will remove the local admin password and allow re-setup. Are you sure?');
+        if(!ok) return;
+        try{
+          const resp = await fetch('/api/auth/local-clear', { method: 'DELETE' });
+          const body = await resp.json().catch(()=>null);
+          if(!resp.ok) return alert('Failed to clear: ' + (body?.error || resp.status));
+          alert('Local admin cleared. App can be reconfigured for local admin.');
+          renderSettings();
+        }catch(err){ alert('Clear failed: ' + err.message); }
+      });
+      clearAdminDiv.appendChild(clearAdminBtn);
+      dangerZone.appendChild(clearAdminDiv);
+    } else {
+      const setupDiv = document.createElement('div'); setupDiv.style.marginTop='8px';
+      const setupNote = document.createElement('div'); setupNote.textContent = 'No local admin is configured. You can create one here (only available if OIDC is disabled).'; setupDiv.appendChild(setupNote);
+      const pw1 = document.createElement('input'); pw1.type='password'; pw1.placeholder='New admin password'; pw1.style.width='100%'; pw1.style.marginTop='6px';
+      const pw2 = document.createElement('input'); pw2.type='password'; pw2.placeholder='Confirm password'; pw2.style.width='100%'; pw2.style.marginTop='6px';
+      const setupBtn = document.createElement('button'); setupBtn.textContent = 'Create Local Admin'; setupBtn.style.background='#10b981'; setupBtn.style.color='#fff'; setupBtn.addEventListener('click', async ()=>{
+        if(pw1.value.length < 6) return alert('Password too short');
+        if(pw1.value !== pw2.value) return alert('Passwords do not match');
+        try{
+          const resp = await fetch('/api/auth/local-setup', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pw1.value }) });
+          const body = await resp.json().catch(()=>null);
+          if(!resp.ok) return alert('Failed to create admin: ' + (body?.error || resp.status));
+          alert('Local admin created. Please log in.'); renderSettings();
+        }catch(err){ alert('Create failed: ' + err.message); }
+      });
+      setupDiv.appendChild(pw1); setupDiv.appendChild(pw2); setupDiv.appendChild(setupBtn);
+      dangerZone.appendChild(setupDiv);
+    }
     form.appendChild(dangerZone);
 
     const backBtn = document.createElement('button'); backBtn.textContent = '← Back to Admin'; backBtn.style.marginTop='12px';

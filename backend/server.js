@@ -3,19 +3,224 @@ const path = require('path');
 const cors = require('cors');
 const crypto = require('crypto');
 require('dotenv').config();
+const session = require('express-session');
+const { Issuer, generators } = require('openid-client');
+const bcrypt = require('bcryptjs');
+const prisma = require('./src/prismaClient');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Session configuration
+const SESSION_SECRET = process.env.SESSION_SECRET || 'dev_secret_change_me';
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 }
+}));
+
+// Helper: Read OIDC settings from DB
+async function getOidcSettings(){
+  const rows = await prisma.setting.findMany({ where: { key: { in: ['oidc_enabled','oidc_issuer','oidc_client_id','oidc_client_secret','oidc_scope','oidc_redirect_uri','local_admin_password_hash'] } } });
+  const obj = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  return obj;
+}
+
+async function getSettingValue(key){
+  const row = await prisma.setting.findUnique({ where: { key } }).catch(()=>null);
+  return row ? row.value : null;
+}
+
+// Simple helper to build client (cached)
+let _oidcClientCache = null;
+async function getOidcClient(){
+  const s = await getOidcSettings();
+  if(!s || s.oidc_enabled !== 'true') return null;
+  if(_oidcClientCache && _oidcClientCache.issuer === s.oidc_issuer) return _oidcClientCache.client;
+  const issuer = await Issuer.discover(s.oidc_issuer);
+  const client = new issuer.Client({ client_id: s.oidc_client_id, client_secret: s.oidc_client_secret });
+  _oidcClientCache = { issuer: s.oidc_issuer, client };
+  return client;
+}
 
 const PORT = process.env.PORT || 3000;
 
 // Serve static frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Route for public table view
+// Route for public table view (remains unauthenticated)
 app.get('/table:tableNumber', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'table.html'));
+});
+
+// Serve admin and dashboard routes only to authenticated users
+app.get('/admin', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/dashboard', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Authentication routes (OIDC skeleton)
+app.get('/auth/login', async (req, res) => {
+  try {
+    const client = await getOidcClient();
+    if(!client) return res.status(400).send('OIDC not configured');
+    const s = await getOidcSettings();
+    const redirectUri = s.oidc_redirect_uri || `http://localhost:${PORT}/auth/callback`;
+    const codeVerifier = generators.codeVerifier();
+    const codeChallenge = generators.codeChallenge(codeVerifier);
+    req.session.codeVerifier = codeVerifier;
+    const url = client.authorizationUrl({
+      scope: s.oidc_scope || 'openid profile email',
+      redirect_uri: redirectUri,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256'
+    });
+    res.redirect(url);
+  } catch (err) {
+    console.error('OIDC login error', err);
+    res.status(500).send('OIDC login error');
+  }
+});
+
+app.get('/auth/callback', async (req, res) => {
+  try {
+    const client = await getOidcClient();
+    if(!client) return res.status(400).send('OIDC not configured');
+    const params = client.callbackParams(req);
+    const s = await getOidcSettings();
+    const redirectUri = s.oidc_redirect_uri || `http://localhost:${PORT}/auth/callback`;
+    const tokenSet = await client.callback(redirectUri, params, { code_verifier: req.session.codeVerifier });
+    const userinfo = await client.userinfo(tokenSet.access_token);
+    req.session.user = { tokenSet, userinfo };
+    res.redirect('/');
+  } catch (err) {
+    console.error('OIDC callback error', err);
+    res.status(500).send('OIDC callback error');
+  }
+});
+
+app.get('/auth/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
+
+// Local auth endpoints
+app.get('/api/auth/info', async (req, res) => {
+  try{
+    const s = await getOidcSettings();
+    const oidcEnabled = s.oidc_enabled === 'true';
+    const localHash = s.local_admin_password_hash;
+    const authenticated = !!(req.session && req.session.user);
+    res.json({ oidc_enabled: oidcEnabled, local_admin_setup: !!localHash, authenticated, user: req.session?.user });
+  }catch(err){ console.error(err); res.status(500).json({ error: 'internal' }); }
+});
+
+// Setup local admin password (only allowed when OIDC is not enabled and no local admin present)
+app.post('/api/auth/local-setup', async (req, res) => {
+  try{
+    const s = await getOidcSettings();
+    if(s.oidc_enabled === 'true') return res.status(400).json({ error: 'oidc_enabled' });
+    const existing = await getSettingValue('local_admin_password_hash');
+    if(existing) return res.status(400).json({ error: 'already_configured' });
+    const { password } = req.body;
+    if(!password || password.length < 6) return res.status(400).json({ error: 'weak_password' });
+    const hash = await bcrypt.hash(password, 10);
+    await prisma.setting.upsert({ where: { key: 'local_admin_password_hash' }, update: { value: hash }, create: { key: 'local_admin_password_hash', value: hash } });
+    // create admin user entry optionally
+    console.log(`[AUDIT] local-setup by ${req.ip} at ${new Date().toISOString()}`);
+    res.json({ success: true });
+  }catch(err){ console.error(err); res.status(500).json({ error: 'internal' }); }
+});
+
+// Local login (username 'admin')
+app.post('/auth/local/login', async (req, res) => {
+  try{
+    const s = await getOidcSettings();
+    if(s.oidc_enabled === 'true') return res.status(400).json({ error: 'oidc_enabled' });
+    const { username, password } = req.body;
+    if(username !== 'admin') return res.status(400).json({ error: 'invalid_user' });
+    const hash = await getSettingValue('local_admin_password_hash');
+    if(!hash) return res.status(400).json({ error: 'not_configured' });
+    const ok = await bcrypt.compare(password, hash);
+    if(!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    req.session.user = { local: true, username: 'admin' };
+    console.log(`[AUDIT] local-login success from ${req.ip} at ${new Date().toISOString()}`);
+    res.json({ success: true });
+  }catch(err){ console.error(err); res.status(500).json({ error: 'internal' }); }
+});
+
+// Rotate local admin password (authenticated via current local admin session)
+app.post('/api/auth/local-rotate', requireAuth, async (req, res) => {
+  try{
+    const { currentPassword, newPassword } = req.body;
+    if(!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'weak_password' });
+    const hash = await getSettingValue('local_admin_password_hash');
+    if(!hash) return res.status(400).json({ error: 'not_configured' });
+    const ok = await bcrypt.compare(currentPassword, hash);
+    if(!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await prisma.setting.upsert({ where: { key: 'local_admin_password_hash' }, update: { value: newHash }, create: { key: 'local_admin_password_hash', value: newHash } });
+    console.log(`[AUDIT] local-rotate by ${req.ip} at ${new Date().toISOString()}`);
+    res.json({ success: true });
+  }catch(err){ console.error(err); res.status(500).json({ error: 'internal' }); }
+});
+
+// Clear local admin (remove password hash) - requires auth
+app.delete('/api/auth/local-clear', requireAuth, async (req, res) => {
+  try{
+    await prisma.setting.deleteMany({ where: { key: 'local_admin_password_hash' } });
+    console.log(`[AUDIT] local-clear by ${req.ip} at ${new Date().toISOString()}`);
+    res.json({ success: true });
+  }catch(err){ console.error(err); res.status(500).json({ error: 'internal' }); }
+});
+
+// Middleware to protect admin routes when OIDC is enabled
+async function requireAuth(req, res, next){
+  try{
+    const s = await getOidcSettings();
+    const oidcEnabled = s.oidc_enabled === 'true';
+    const localHash = s.local_admin_password_hash;
+
+    // If neither OIDC nor local admin is configured, allow through (first-time bootstrap)
+    if(!oidcEnabled && !localHash) return next();
+
+    // If OIDC enabled -> require session.user (set by OIDC flow)
+    if(oidcEnabled){
+      if(req.session && req.session.user) return next();
+      return res.status(401).send('Unauthorized');
+    }
+
+    // If local admin configured -> require session.user (local auth sets this)
+    if(localHash){
+      if(req.session && req.session.user) return next();
+      return res.status(401).send('Unauthorized');
+    }
+    return next();
+  }catch(err){
+    next(err);
+  }
+}
+
+// Mount protection for admin-prefixed routes
+app.use('/api/admin', (req, res, next) => requireAuth(req, res, next));
+
+// Admin OIDC test endpoint
+app.get('/api/admin/oidc/test', async (req, res) => {
+  try {
+    const s = await getOidcSettings();
+    if(!s || !s.oidc_issuer) return res.status(400).json({ error: 'oidc_not_configured' });
+    const issuer = await Issuer.discover(s.oidc_issuer);
+    return res.json({ issuer: issuer.metadata });
+  } catch (err) {
+    console.error('OIDC test error', err);
+    res.status(500).json({ error: 'oidc_test_failed', message: err.message });
+  }
 });
 
 // Health
@@ -36,7 +241,7 @@ app.get('/api/settings', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.patch('/api/settings', async (req, res) => {
+app.patch('/api/settings', requireAuth, async (req, res) => {
   try {
     const updates = req.body; // { currency: '$' }
     const results = [];
@@ -71,7 +276,7 @@ app.delete('/api/admin/clear-history', async (req, res) => {
 });
 
 // Financial Reports
-app.get('/api/reports/financial', async (req, res) => {
+app.get('/api/reports/financial', requireAuth, async (req, res) => {
   try {
     const { periodType, year, month, quarter, date, weekDate } = req.query;
     let startDate, endDate;
@@ -119,12 +324,12 @@ app.get('/api/reports/financial', async (req, res) => {
     
     for(const sess of sessions){
       // Get table type
-      const tableData = await prisma.$queryRaw`
+      const tableData = await prisma.$queryRawUnsafe(`
         SELECT tt.name_en, tt.base_hourly_cents
         FROM "PoolTable" pt
         JOIN "TableType" tt ON pt.table_type_id = tt.id
-        WHERE pt.id = ${sess.table_id}
-      `;
+        WHERE pt.id = $1
+      `, sess.table_id);
       const table = Array.isArray(tableData) ? tableData[0] : tableData;
       
       if(table && sess.started_at && sess.ended_at){
@@ -405,7 +610,7 @@ app.get('/api/reports/financial', async (req, res) => {
 });
 
 // Reporting: aggregate totals over period
-app.get('/api/reports', async (req, res) => {
+app.get('/api/reports', requireAuth, async (req, res) => {
   try{
     const { period='monthly', start, scope='overall', table_type_id } = req.query;
     // Determine date_trunc arg
@@ -450,8 +655,6 @@ app.get('/api/reports', async (req, res) => {
     res.json(rows);
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
-
-const prisma = require('./src/prismaClient');
 
 // Ensure camelCase columns exist for Prisma compatibility with the existing snake_case DB
 (async function ensureCamelColumns(){
@@ -524,17 +727,17 @@ app.delete('/api/admin/drinks/:id', async (req, res) => {
 });
 
 // Table types and tables
-app.get('/api/table-types', async (req, res) => {
+app.get('/api/table-types', requireAuth, async (req, res) => {
   try { const types = await prisma.tableType.findMany({ orderBy: { createdAt: 'asc' } }); res.json(types); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.post('/api/table-types', async (req, res) => {
+app.post('/api/table-types', requireAuth, async (req, res) => {
   const { name_en, name_fr, base_hourly_cents } = req.body;
   try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update table type
-app.put('/api/table-types/:id', async (req, res) => {
+app.put('/api/table-types/:id', requireAuth, async (req, res) => {
   const { name_en, name_fr, base_hourly_cents } = req.body;
   try {
     const updated = await prisma.tableType.update({ where: { id: req.params.id }, data: { name_en, name_fr, base_hourly_cents } });
@@ -543,7 +746,7 @@ app.put('/api/table-types/:id', async (req, res) => {
 });
 
 // Delete table type (only if no tables exist for it)
-app.delete('/api/table-types/:id', async (req, res) => {
+app.delete('/api/table-types/:id', requireAuth, async (req, res) => {
   try {
     const count = await prisma.poolTable.count({ where: { tableTypeId: req.params.id } });
     if (count > 0) return res.status(409).json({ error: 'has_tables' });
@@ -552,7 +755,7 @@ app.delete('/api/table-types/:id', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.get('/api/tables', async (req, res) => {
+app.get('/api/tables', requireAuth, async (req, res) => {
   try {
     const rows = await prisma.$queryRawUnsafe(`SELECT id, table_type_id, number, status, created_at FROM "PoolTable" ORDER BY created_at ASC`);
     const mapped = rows.map(r => ({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, createdAt: r.created_at }));
@@ -561,7 +764,7 @@ app.get('/api/tables', async (req, res) => {
 });
 
 // Bulk create tables
-app.post('/api/tables/bulk', async (req, res) => {
+app.post('/api/tables/bulk', requireAuth, async (req, res) => {
   const { tableTypeId, quantity } = req.body;
   console.log('/api/tables/bulk POST body:', req.body);
   if (!tableTypeId) return res.status(400).json({ error: 'missing_tableTypeId' });
@@ -592,7 +795,7 @@ app.post('/api/tables/bulk', async (req, res) => {
   }
 });
 
-app.post('/api/tables', async (req, res) => {
+app.post('/api/tables', requireAuth, async (req, res) => {
   const { tableTypeId } = req.body;
   console.log('/api/tables POST body:', req.body);
   if (!tableTypeId) return res.status(400).json({ error: 'missing_tableTypeId' });
@@ -612,7 +815,7 @@ app.post('/api/tables', async (req, res) => {
 });
 
 // Update table (number or status)
-app.put('/api/tables/:id', async (req, res) => {
+app.put('/api/tables/:id', requireAuth, async (req, res) => {
   try {
     console.log('[PUT /api/tables/:id] Request body:', req.body);
     console.log('[PUT /api/tables/:id] Table ID:', req.params.id);
@@ -635,7 +838,7 @@ app.put('/api/tables/:id', async (req, res) => {
 });
 
 // Delete table
-app.delete('/api/tables/:id', async (req, res) => {
+app.delete('/api/tables/:id', requireAuth, async (req, res) => {
   try {
     await prisma.$executeRawUnsafe(`DELETE FROM "PoolTable" WHERE id::text = $1`, req.params.id);
     res.status(204).end();
@@ -643,7 +846,7 @@ app.delete('/api/tables/:id', async (req, res) => {
 });
 
 // Sessions: start, end
-app.post('/api/sessions', async (req, res) => {
+app.post('/api/sessions', requireAuth, async (req, res) => {
   const { tableId, patronId, numberOfPlayers, subscriberCount } = req.body;
   try {
     // Generate 4-digit PIN
@@ -686,7 +889,7 @@ app.post('/api/sessions', async (req, res) => {
   }
 });
 
-app.patch('/api/sessions/:id/end', async (req, res) => {
+app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   try {
     // end session and free table using raw SQL
     const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1 RETURNING id, table_id`, req.params.id);
@@ -698,7 +901,7 @@ app.patch('/api/sessions/:id/end', async (req, res) => {
 });
 
 // Update session (e.g., player count)
-app.patch('/api/sessions/:id', async (req, res) => {
+app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
   try {
     const { numberOfPlayers } = req.body;
     if (typeof numberOfPlayers !== 'undefined') {
@@ -892,7 +1095,7 @@ app.get('/api/sessions/:id', async (req, res) => {
 });
 
 // Add tab line item (menu item or custom)
-app.post('/api/sessions/:id/items', async (req, res) => {
+app.post('/api/sessions/:id/items', requireAuth, async (req, res) => {
   try{
     const { type, description, quantity, unitPrice } = req.body; // unitPrice in cents
     const qty = Number(quantity) || 1;
@@ -902,7 +1105,7 @@ app.post('/api/sessions/:id/items', async (req, res) => {
 });
 
 // Delete tab line item
-app.delete('/api/sessions/:sessionId/items/:itemId', async (req, res) => {
+app.delete('/api/sessions/:sessionId/items/:itemId', requireAuth, async (req, res) => {
   try{
     await prisma.tabLineItem.delete({ where: { id: req.params.itemId } });
     res.status(204).end();
@@ -910,7 +1113,7 @@ app.delete('/api/sessions/:sessionId/items/:itemId', async (req, res) => {
 });
 
 // Edit tab line item amount
-app.patch('/api/tab-items/:id', async (req, res) => {
+app.patch('/api/tab-items/:id', requireAuth, async (req, res) => {
   try{
     const { totalCents } = req.body;
     const updated = await prisma.tabLineItem.update({
@@ -933,28 +1136,30 @@ app.delete('/api/tab-items/:id', async (req, res) => {
 app.post('/api/sessions/:id/switch', async (req, res) => {
   try{
     const { newTableId } = req.body;
+    const sessionId = req.params.id;
+    
     const result = await prisma.$transaction(async (tx)=>{
       // Get current session to know old table
-      const currentSession = await tx.$queryRawUnsafe(`SELECT id, table_id FROM "Session" WHERE id = $1::uuid`, req.params.id);
+      const currentSession = await tx.$queryRawUnsafe(`SELECT id, table_id FROM "Session" WHERE id = $1`, sessionId);
       const sess = Array.isArray(currentSession) ? currentSession[0] : currentSession;
       if(!sess) throw new Error('session_not_found');
       const oldTableId = sess.table_id;
       
       // Check target table availability
-      const targetRows = await tx.$queryRawUnsafe(`SELECT id, status FROM "PoolTable" WHERE id = $1::uuid`, newTableId);
+      const targetRows = await tx.$queryRawUnsafe(`SELECT id, status FROM "PoolTable" WHERE id = $1`, newTableId);
       const target = Array.isArray(targetRows) ? targetRows[0] : targetRows;
       if(!target) throw new Error('table_not_found');
       if(target.status === 'occupied') throw new Error('table_unavailable');
       
       // Update session to new table
-      await tx.$executeRawUnsafe(`UPDATE "Session" SET table_id = $1::uuid WHERE id = $2::uuid`, newTableId, req.params.id);
+      await tx.$executeRawUnsafe(`UPDATE "Session" SET table_id = $1 WHERE id = $2`, newTableId, sessionId);
       
       // Free old table and occupy new table
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id = $1::uuid`, oldTableId);
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id = $1::uuid`, newTableId);
+      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id = $1`, oldTableId);
+      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id = $1`, newTableId);
       
       // Return updated session info
-      const updated = await tx.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id = $1::uuid`, req.params.id);
+      const updated = await tx.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id = $1`, sessionId);
       const u = Array.isArray(updated) ? updated[0] : updated;
       return { id: u.id, tableId: u.table_id, patronId: u.patron_id, startedAt: u.started_at, endedAt: u.ended_at, status: u.status, createdAt: u.created_at, numberOfPlayers: u.number_of_players };
     });
@@ -962,7 +1167,7 @@ app.post('/api/sessions/:id/switch', async (req, res) => {
   }catch(e){ console.error(e); if(e.message==='table_unavailable') return res.status(409).json({ error: 'table_unavailable' }); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.get('/api/sessions', async (req, res) => {
+app.get('/api/sessions', requireAuth, async (req, res) => {
   try {
     const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, pin FROM "Session" WHERE status <> 'cancelled' ORDER BY started_at DESC`);
     const mapped = rows.map(r => ({ id: r.id, tableId: r.table_id, patronId: r.patron_id, startedAt: r.started_at, endedAt: r.ended_at, status: r.status, createdAt: r.created_at, numberOfPlayers: r.number_of_players, pin: r.pin }));
@@ -971,7 +1176,7 @@ app.get('/api/sessions', async (req, res) => {
 });
 
 // Subscriptions CRUD
-app.get('/api/subscriptions', async (req, res) => { 
+app.get('/api/subscriptions', requireAuth, async (req, res) => { 
   try { 
     const subs = await prisma.subscription.findMany(); 
     // Fetch patron details for each subscription
@@ -983,7 +1188,7 @@ app.get('/api/subscriptions', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); } 
 });
 
-app.post('/api/subscriptions/:id/renew', async (req, res) => {
+app.post('/api/subscriptions/:id/renew', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const updated = await prisma.subscription.update({
@@ -996,7 +1201,7 @@ app.post('/api/subscriptions/:id/renew', async (req, res) => {
   }
 });
 
-app.post('/api/subscriptions', async (req, res) => { 
+app.post('/api/subscriptions', requireAuth, async (req, res) => { 
   const { patron_name, patron_email, plan_name, monthly_fee_cents, active_from } = req.body; 
   try { 
     // Create or find patron
@@ -1010,7 +1215,7 @@ app.post('/api/subscriptions', async (req, res) => {
 });
 
 // Delete subscription
-app.delete('/api/subscriptions/:id', async (req, res) => {
+app.delete('/api/subscriptions/:id', requireAuth, async (req, res) => {
   try {
     await prisma.subscription.delete({ where: { id: req.params.id } });
     res.status(204).end();
@@ -1026,7 +1231,7 @@ app.post('/api/patrons', async (req, res) => {
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.get('/api/patrons', async (req, res) => { try{ const list = await prisma.user.findMany({ where: { role: 'user' } }); res.json(list); }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); } });
+app.get('/api/patrons', requireAuth, async (req, res) => { try{ const list = await prisma.user.findMany({ where: { role: 'user' } }); res.json(list); }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); } });
 
 // Public table view - get session info by table number
 app.get('/api/public/table/:tableNumber', async (req, res) => {
@@ -1180,6 +1385,20 @@ async function seedDefaults() {
 }
 
 // Start server and seed defaults
-seedDefaults().then(() => {
+// Start server and seed defaults when not running tests
+async function startServer(){
+  await seedDefaults();
   app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
-});
+}
+
+// Only start the server when executed directly (not when required/imported by tests)
+if (require.main === module) {
+  // Prevent automatic start when running tests or when explicitly skipped.
+  // Jest sets `JEST_WORKER_ID` for its workers; some environments may not set NODE_ENV.
+  const skipForTest = process.env.NODE_ENV === 'test' || typeof process.env.JEST_WORKER_ID !== 'undefined' || process.env.SKIP_SERVER === '1';
+  if (!skipForTest) {
+    startServer();
+  }
+}
+
+module.exports = app;
