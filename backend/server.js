@@ -444,12 +444,12 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
         
         // Calculate table charges for period
         for(const sess of periodSessions){
-          const tableData = await prisma.$queryRaw`
+          const tableData = await prisma.$queryRawUnsafe(`
             SELECT tt.base_hourly_cents
-            FROM \"PoolTable\" pt
-            JOIN \"TableType\" tt ON pt.table_type_id = tt.id
-            WHERE pt.id = ${sess.table_id}
-          `;
+            FROM "PoolTable" pt
+            JOIN "TableType" tt ON pt.table_type_id = tt.id
+            WHERE pt.id = $1
+          `, sess.table_id);
           const table = Array.isArray(tableData) ? tableData[0] : tableData;
           
           if(table && sess.started_at && sess.ended_at){
