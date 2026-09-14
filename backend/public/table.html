@@ -201,19 +201,19 @@
       const container = document.getElementById('container');
       const currency = '€'; // Default currency
       
-      // Get table number from URL path
+      // Get table number from URL query or path
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryTableNumber = urlParams.get('number') || urlParams.get('table');
       const path = window.location.pathname;
-      const match = path.match(/\/table(\d+)/);
-      
-      if(!match){
+      const match = path.match(/\/table(?:\/)?(\d+)$/) || path.match(/\/table(\d+)$/);
+      const tableNumber = queryTableNumber || (match && match[1]);
+
+      if(!tableNumber || !/^\d+$/.test(tableNumber)){
         container.innerHTML = '<div class="error">Invalid table URL</div>';
         return;
       }
       
-      const tableNumber = match[1];
-      
       // Check if PIN is in URL params or sessionStorage
-      const urlParams = new URLSearchParams(window.location.search);
       let pin = urlParams.get('pin') || sessionStorage.getItem(`table${tableNumber}_pin`);
       
       // Function to show PIN entry screen
