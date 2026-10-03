@@ -124,11 +124,23 @@
   const nonsubMinus = document.getElementById('nonsubMinus');
   const nonsubPlus = document.getElementById('nonsubPlus');
   const nonsubCount = document.getElementById('nonsubCount');
+
+  // The header title is derived from two independent, asynchronously-loaded sources:
+  // the admin-configured "Application Name" setting, and the active locale's default
+  // app_title string. The configured app name always takes priority when set, regardless
+  // of which source finishes loading last.
+  let customAppName = null;
+  let localeAppTitle = null;
+  function applyAppTitle(){
+    title.textContent = customAppName || localeAppTitle || 'Pool Hall';
+  }
+
   async function loadAppName(){
     try{
       const res = await fetch('/api/settings');
       const settings = res.ok ? await res.json() : {};
-      title.textContent = settings.app_name || 'Pool Hall';
+      customAppName = settings.app_name || null;
+      applyAppTitle();
     }catch(err){
       console.warn('Failed to load app name', err);
     }
@@ -207,7 +219,8 @@
 
   async function loadLocale(locale){
     const bundle = await fetchLocale(locale);
-    title.textContent = bundle.app_title;
+    localeAppTitle = bundle.app_title;
+    applyAppTitle();
   }
 
   function applyTheme(pref){
@@ -1873,7 +1886,7 @@
     const appNameRow = document.createElement('div');
     const appNameLabel = document.createElement('label'); appNameLabel.textContent = 'Application Name: '; appNameLabel.style.fontWeight='600';
     const appNameInput = document.createElement('input'); appNameInput.type='text'; appNameInput.style.marginLeft='8px'; appNameInput.style.width='200px'; appNameInput.value = settings.app_name || 'Pool Hall'; appNameInput.placeholder = 'Pool Hall';
-    appNameInput.addEventListener('change', async (e)=>{ const val = e.target.value; try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ app_name: val }) }); title.textContent = val || 'Pool Hall'; }catch(err){ console.warn('failed saving setting', err); } });
+    appNameInput.addEventListener('change', async (e)=>{ const val = e.target.value; try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ app_name: val }) }); customAppName = val || null; applyAppTitle(); }catch(err){ console.warn('failed saving setting', err); } });
     appNameRow.appendChild(appNameLabel); appNameRow.appendChild(appNameInput);
     const appNameHelp = document.createElement('div'); appNameHelp.style.fontSize='12px'; appNameHelp.style.opacity='0.7'; appNameHelp.style.marginTop='4px'; appNameHelp.textContent = 'Display name shown in the header';
     appNameRow.appendChild(appNameHelp);
@@ -2997,7 +3010,8 @@
       const settings = settingsRes.ok ? await settingsRes.json() : {};
       const currency = settings.currency || localStorage.getItem('currency') || '$';
       localStorage.setItem('currency', currency);
-      title.textContent = settings.app_name || 'Pool Hall';
+      customAppName = settings.app_name || null;
+      applyAppTitle();
       if(settings.public_base_url) localStorage.setItem('public_base_url', settings.public_base_url);
       else localStorage.removeItem('public_base_url');
     }catch(e){ console.warn('settings load failed', e); if(!localStorage.getItem('currency')) localStorage.setItem('currency','$'); }
