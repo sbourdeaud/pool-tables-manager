@@ -69,8 +69,12 @@ pool-tables-manager/
 ### Core Endpoints
 
 **Settings**
-- `GET /api/settings` - Get all settings
-- `PATCH /api/settings` - Update settings
+- `GET /api/settings` - Get all settings (the `smtp_pass` value is never returned; `smtp_pass_set` indicates whether one is stored)
+- `PATCH /api/settings` - Update settings (SMTP keys: `smtp_host`, `smtp_port`, `smtp_secure`, `smtp_user`, `smtp_pass`, `smtp_from`; also `maintenance_alert_email`)
+
+**Email**
+- `POST /api/admin/smtp/test` - Send a test email using the configured SMTP settings (`{ to }`)
+- `POST /api/reports/email` - Email a financial report (`{ to, format: 'html'|'pdf', report, pdfBase64? }`); the PDF is generated client-side and sent as a base64 attachment
 
 **Table Types**
 - `GET /api/table-types` - List all table types
@@ -314,7 +318,9 @@ Docker Compose sets:
 - Table inventory (bulk creation, number editing)
 - Drink menu management (multilingual support, VAT rate per drink)
 - Subscription management
-- Financial reports (day/week/month/quarter/year)
+- Financial reports (day/week/month/quarter/year), with a "Send" button to email the report as HTML or a client-generated PDF
+- SMTP configuration (Settings) plus a test-email button
+- Table maintenance alerts emailed once per cycle when a table's usage crosses its type's max
 - VAT (TVA) reports with CSV export and period closures (French compliance)
 - Settings (currency, app name, subscriber discount, public base URL for QR codes, fiscal/legal information)
 - Clear session history (closed VAT periods are protected from deletion)

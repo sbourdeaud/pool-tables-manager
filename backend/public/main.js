@@ -2041,6 +2041,60 @@
 
     form.appendChild(oidcSection);
 
+    // Email (SMTP) settings
+    const smtpSection = document.createElement('div');
+    smtpSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    smtpSection.style.padding = '12px';
+    smtpSection.style.borderRadius = '6px';
+    const smtpTitle = document.createElement('h3'); smtpTitle.textContent = 'Email (SMTP) Settings'; smtpTitle.style.marginTop = '0'; smtpSection.appendChild(smtpTitle);
+    const smtpHelp = document.createElement('div'); smtpHelp.style.fontSize = '12px'; smtpHelp.style.opacity = '0.7'; smtpHelp.style.marginBottom = '8px';
+    smtpHelp.textContent = 'Used to email reports and maintenance alerts. The SMTP password is stored on the server and is never shown here again.';
+    smtpSection.appendChild(smtpHelp);
+
+    const saveSetting = async (key, value) => { try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ [key]: value }) }); }catch(err){ console.warn('failed saving setting', key, err); } };
+    const smtpFields = [
+      ['smtp_host', 'SMTP Host', 'text'],
+      ['smtp_port', 'SMTP Port', 'number'],
+      ['smtp_user', 'SMTP Username', 'text'],
+      ['smtp_from', 'From Address', 'text'],
+      ['maintenance_alert_email', 'Maintenance Alert Email', 'text']
+    ];
+    for(const [key, label, type] of smtpFields){
+      const row = document.createElement('div');
+      const lab = document.createElement('label'); lab.textContent = label + ': '; lab.style.fontWeight = '600';
+      const input = document.createElement('input'); input.type = type; input.style.marginLeft = '8px'; input.style.width = '260px'; input.value = settings[key] || '';
+      input.addEventListener('change', (e)=> saveSetting(key, e.target.value));
+      row.appendChild(lab); row.appendChild(input); smtpSection.appendChild(row);
+    }
+
+    const secureRow = document.createElement('div');
+    const secureLab = document.createElement('label'); secureLab.textContent = 'Use TLS/SSL (secure): '; secureLab.style.fontWeight = '600';
+    const secureInput = document.createElement('input'); secureInput.type = 'checkbox'; secureInput.style.marginLeft = '8px'; secureInput.checked = settings.smtp_secure === 'true';
+    secureInput.addEventListener('change', (e)=> saveSetting('smtp_secure', e.target.checked ? 'true' : 'false'));
+    secureRow.appendChild(secureLab); secureRow.appendChild(secureInput); smtpSection.appendChild(secureRow);
+
+    const passRow = document.createElement('div');
+    const passLab = document.createElement('label'); passLab.textContent = 'SMTP Password: '; passLab.style.fontWeight = '600';
+    const passInput = document.createElement('input'); passInput.type = 'password'; passInput.style.marginLeft = '8px'; passInput.style.width = '260px';
+    passInput.placeholder = settings.smtp_pass_set ? '•••••• (stored — type to replace)' : 'not set';
+    passInput.addEventListener('change', (e)=>{ if(e.target.value) saveSetting('smtp_pass', e.target.value); });
+    passRow.appendChild(passLab); passRow.appendChild(passInput); smtpSection.appendChild(passRow);
+
+    const smtpTestRow = document.createElement('div'); smtpTestRow.style.marginTop = '8px';
+    const smtpTestBtn = document.createElement('button'); smtpTestBtn.textContent = 'Send Test Email';
+    smtpTestBtn.addEventListener('click', async ()=>{
+      const to = prompt('Send test email to:');
+      if(!to) return;
+      try{
+        const resp = await fetch('/api/admin/smtp/test', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ to }) });
+        const body = await resp.json().catch(()=>null);
+        if(!resp.ok) alert('Test failed: ' + (body?.error || resp.status)); else alert('Test email sent.');
+      }catch(err){ alert('Test failed: ' + err.message); }
+    });
+    smtpTestRow.appendChild(smtpTestBtn); smtpSection.appendChild(smtpTestRow);
+
+    form.appendChild(smtpSection);
+
     // Danger Zone Section
     const dangerZone = document.createElement('div');
     dangerZone.style.marginTop = '32px';
@@ -2164,6 +2218,68 @@
     form.appendChild(backBtn);
 
     app.appendChild(form);
+  }
+
+  // Build the financial-report jsPDF document (shared by "Export to PDF" and "Send").
+  function buildFinancialReportPdf(report, fd, currency){
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 15;
+    const contentWidth = pageWidth - (2 * margin);
+
+    pdf.setFontSize(20);
+    pdf.text('Financial Report', margin, 20);
+    pdf.setFontSize(12);
+    pdf.text(`${fd.periodType === 'day' ? new Date(fd.date).toLocaleDateString() : fd.periodType === 'week' ? `Week of ${new Date(fd.weekDate).toLocaleDateString()}` : fd.periodType === 'month' ? `${getMonthName(parseInt(fd.month))} ${fd.year}` : fd.periodType === 'quarter' ? `Q${fd.quarter} ${fd.year}` : fd.year}`, margin, 28);
+
+    pdf.setFontSize(14);
+    pdf.text('Summary:', margin, 40);
+    pdf.setFontSize(11);
+    pdf.text(`Total Revenue: ${currency}${(report.totalRevenue/100).toFixed(2)}`, margin + 5, 48);
+
+    let yPos = 56;
+    pdf.text('Breakdown:', margin + 5, yPos);
+    yPos += 8;
+    for(const [typeName, amount] of Object.entries(report.byTableType)){
+      pdf.text(`  ${typeName} Tables: ${currency}${(amount/100).toFixed(2)}`, margin + 10, yPos);
+      yPos += 6;
+    }
+    pdf.text(`  Drinks/Bar: ${currency}${(report.drinksTotal/100).toFixed(2)}`, margin + 10, yPos);
+    yPos += 6;
+    pdf.text(`  Subscriptions: ${currency}${(report.subscriptionsTotal/100).toFixed(2)}`, margin + 10, yPos);
+
+    const pieChart = document.getElementById('pieChart');
+    if(pieChart){
+      pdf.addPage();
+      pdf.setFontSize(16);
+      pdf.text('Revenue Distribution', margin, 20);
+      const aspectRatio = pieChart.height / pieChart.width;
+      const maxChartHeight = pageHeight - 50;
+      let pdfChartWidth = contentWidth;
+      let pdfChartHeight = pdfChartWidth * aspectRatio;
+      if(pdfChartHeight > maxChartHeight){ pdfChartHeight = maxChartHeight; pdfChartWidth = pdfChartHeight / aspectRatio; }
+      const pieImg = pieChart.toDataURL('image/png', 1.0);
+      const xPos = margin + (contentWidth - pdfChartWidth) / 2;
+      pdf.addImage(pieImg, 'PNG', xPos, 30, pdfChartWidth, pdfChartHeight);
+    }
+
+    const lineChart = document.getElementById('lineChart');
+    if(lineChart){
+      pdf.addPage();
+      pdf.setFontSize(16);
+      pdf.text(fd.periodType === 'week' ? 'Daily Revenue' : fd.periodType === 'month' ? 'Daily Revenue' : 'Weekly Revenue', margin, 20);
+      const aspectRatio = lineChart.height / lineChart.width;
+      const maxChartHeight = pageHeight - 50;
+      let pdfChartWidth = contentWidth;
+      let pdfChartHeight = pdfChartWidth * aspectRatio;
+      if(pdfChartHeight > maxChartHeight){ pdfChartHeight = maxChartHeight; pdfChartWidth = pdfChartHeight / aspectRatio; }
+      const lineImg = lineChart.toDataURL('image/png', 1.0);
+      const xPos = margin + (contentWidth - pdfChartWidth) / 2;
+      pdf.addImage(lineImg, 'PNG', xPos, 30, pdfChartWidth, pdfChartHeight);
+    }
+    return pdf;
   }
 
   async function renderReports(){
@@ -2575,93 +2691,8 @@
         exportPdfBtn.style.border = 'none';
         exportPdfBtn.style.borderRadius = '8px';
         exportPdfBtn.style.cursor = 'pointer';
-        exportPdfBtn.addEventListener('click', async ()=>{
-          const { jsPDF } = window.jspdf;
-          const pdf = new jsPDF('p', 'mm', 'a4');
-          const pageWidth = pdf.internal.pageSize.getWidth();
-          const pageHeight = pdf.internal.pageSize.getHeight();
-          const margin = 15;
-          const contentWidth = pageWidth - (2 * margin);
-          
-          // Title
-          pdf.setFontSize(20);
-          pdf.text(`Financial Report`, margin, 20);
-          pdf.setFontSize(12);
-          pdf.text(`${fd.periodType === 'day' ? new Date(fd.date).toLocaleDateString() : fd.periodType === 'week' ? `Week of ${new Date(fd.weekDate).toLocaleDateString()}` : fd.periodType === 'month' ? `${getMonthName(parseInt(fd.month))} ${fd.year}` : fd.periodType === 'quarter' ? `Q${fd.quarter} ${fd.year}` : fd.year}`, margin, 28);
-          
-          // Summary
-          pdf.setFontSize(14);
-          pdf.text('Summary:', margin, 40);
-          pdf.setFontSize(11);
-          pdf.text(`Total Revenue: ${currency}${(report.totalRevenue/100).toFixed(2)}`, margin + 5, 48);
-          
-          let yPos = 56;
-          pdf.text('Breakdown:', margin + 5, yPos);
-          yPos += 8;
-          
-          for(const [typeName, amount] of Object.entries(report.byTableType)){
-            pdf.text(`  ${typeName} Tables: ${currency}${(amount/100).toFixed(2)}`, margin + 10, yPos);
-            yPos += 6;
-          }
-          pdf.text(`  Drinks/Bar: ${currency}${(report.drinksTotal/100).toFixed(2)}`, margin + 10, yPos);
-          yPos += 6;
-          pdf.text(`  Subscriptions: ${currency}${(report.subscriptionsTotal/100).toFixed(2)}`, margin + 10, yPos);
-          
-          // Add charts as images with proper scaling
-          const pieChart = document.getElementById('pieChart');
-          if(pieChart){
-            pdf.addPage();
-            pdf.setFontSize(16);
-            pdf.text('Revenue Distribution', margin, 20);
-            
-            // Get chart dimensions and calculate aspect ratio
-            const chartWidth = pieChart.width;
-            const chartHeight = pieChart.height;
-            const aspectRatio = chartHeight / chartWidth;
-            
-            // Calculate dimensions to fit in page
-            const maxChartHeight = pageHeight - 50;
-            let pdfChartWidth = contentWidth;
-            let pdfChartHeight = pdfChartWidth * aspectRatio;
-            
-            // Scale down if too tall
-            if(pdfChartHeight > maxChartHeight){
-              pdfChartHeight = maxChartHeight;
-              pdfChartWidth = pdfChartHeight / aspectRatio;
-            }
-            
-            const pieImg = pieChart.toDataURL('image/png', 1.0);
-            const xPos = margin + (contentWidth - pdfChartWidth) / 2;
-            pdf.addImage(pieImg, 'PNG', xPos, 30, pdfChartWidth, pdfChartHeight);
-          }
-          
-          const lineChart = document.getElementById('lineChart');
-          if(lineChart){
-            pdf.addPage();
-            pdf.setFontSize(16);
-            pdf.text(fd.periodType === 'week' ? 'Daily Revenue' : fd.periodType === 'month' ? 'Daily Revenue' : 'Weekly Revenue', margin, 20);
-            
-            // Get chart dimensions and calculate aspect ratio
-            const chartWidth = lineChart.width;
-            const chartHeight = lineChart.height;
-            const aspectRatio = chartHeight / chartWidth;
-            
-            // Calculate dimensions to fit in page
-            const maxChartHeight = pageHeight - 50;
-            let pdfChartWidth = contentWidth;
-            let pdfChartHeight = pdfChartWidth * aspectRatio;
-            
-            // Scale down if too tall
-            if(pdfChartHeight > maxChartHeight){
-              pdfChartHeight = maxChartHeight;
-              pdfChartWidth = pdfChartHeight / aspectRatio;
-            }
-            
-            const lineImg = lineChart.toDataURL('image/png', 1.0);
-            const xPos = margin + (contentWidth - pdfChartWidth) / 2;
-            pdf.addImage(lineImg, 'PNG', xPos, 30, pdfChartWidth, pdfChartHeight);
-          }
-          
+        exportPdfBtn.addEventListener('click', ()=>{
+          const pdf = buildFinancialReportPdf(report, fd, currency);
           pdf.save(`report-${fd.periodType}-${fd.periodType === 'day' ? fd.date : fd.periodType === 'week' ? fd.weekDate : fd.periodType === 'month' ? `${fd.year}-${fd.month}` : fd.periodType === 'quarter' ? `${fd.year}-Q${fd.quarter}` : fd.year}.pdf`);
         });
         
@@ -2722,8 +2753,67 @@
           XLSX.writeFile(wb, `report-${fd.periodType}-${fd.periodType === 'day' ? fd.date : fd.periodType === 'month' ? `${fd.year}-${fd.month}` : fd.periodType === 'quarter' ? `${fd.year}-Q${fd.quarter}` : fd.year}.xlsx`);
         });
         
+        const sendReportBtn = document.createElement('button');
+        sendReportBtn.textContent = '✉️ Send';
+        sendReportBtn.style.padding = '10px 16px';
+        sendReportBtn.style.background = '#2563eb';
+        sendReportBtn.style.color = '#fff';
+        sendReportBtn.style.fontWeight = '600';
+        sendReportBtn.style.border = 'none';
+        sendReportBtn.style.borderRadius = '8px';
+        sendReportBtn.style.cursor = 'pointer';
+        sendReportBtn.addEventListener('click', async ()=>{
+          const to = prompt('Email this report to:');
+          if(!to) return;
+          const fmt = (prompt('Format: html or pdf', 'html') || 'html').trim().toLowerCase();
+          if(fmt !== 'html' && fmt !== 'pdf') return alert('Format must be html or pdf');
+
+          const periodLabel = fd.periodType === 'day' ? new Date(fd.date).toLocaleDateString()
+            : fd.periodType === 'week' ? `Week of ${new Date(fd.weekDate).toLocaleDateString()}`
+            : fd.periodType === 'month' ? `${getMonthName(parseInt(fd.month))} ${fd.year}`
+            : fd.periodType === 'quarter' ? `Q${fd.quarter} ${fd.year}` : String(fd.year);
+
+          const payload = {
+            to,
+            format: fmt,
+            report: {
+              title: 'Financial Report',
+              periodLabel,
+              currency,
+              totalRevenue: report.totalRevenue,
+              byTableType: report.byTableType,
+              drinksTotal: report.drinksTotal,
+              subscriptionsTotal: report.subscriptionsTotal
+            }
+          };
+
+          if(fmt === 'pdf'){
+            try{
+              const pdf = buildFinancialReportPdf(report, fd, currency);
+              payload.pdfBase64 = pdf.output('datauristring').split(',')[1];
+            }catch(e){ return alert('Failed to build PDF: ' + e.message); }
+          }
+
+          sendReportBtn.disabled = true;
+          try{
+            const resp = await fetch('/api/reports/email', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+            const body = await resp.json().catch(()=>null);
+            if(!resp.ok){
+              const msg = body?.error === 'smtp_not_configured' ? 'SMTP is not configured (see Settings)' : (body?.error || resp.status);
+              alert('Failed to send report: ' + msg);
+            } else {
+              alert('Report sent to ' + to);
+            }
+          }catch(e){
+            alert('Failed to send report: ' + e.message);
+          } finally {
+            sendReportBtn.disabled = false;
+          }
+        });
+
         exportSection.appendChild(exportPdfBtn);
         exportSection.appendChild(exportExcelBtn);
+        exportSection.appendChild(sendReportBtn);
         reportCard.appendChild(exportSection);
         
         // Show detailed charges for daily reports

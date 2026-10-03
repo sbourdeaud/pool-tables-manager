@@ -7,6 +7,7 @@ const session = require('express-session');
 const { Issuer, generators } = require('openid-client');
 const bcrypt = require('bcryptjs');
 const prisma = require('./src/prismaClient');
+const { sendMail } = require('./src/mailer');
 
 const app = express();
 app.use(cors());
@@ -264,6 +265,43 @@ function parseMaxUsedHours(value){
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
+// After a session's usage is added to a table, email the configured address exactly
+// once per maintenance cycle, i.e. on the transition from below to at/above the max.
+// Never throws: alerting must not break checkout/end.
+async function checkAndSendMaintenanceAlert(tableId, secondsAdded){
+  try{
+    const alertSetting = await prisma.setting.findUnique({ where: { key: 'maintenance_alert_email' } });
+    const to = alertSetting && alertSetting.value ? String(alertSetting.value).trim() : '';
+    if(!to || !tableId) return;
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT p.number, p.used_since_maintenance_seconds, tt.max_used_hours
+       FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id
+       WHERE p.id::text = $1`,
+      tableId
+    );
+    const r = Array.isArray(rows) ? rows[0] : rows;
+    if(!r || r.max_used_hours == null) return;
+
+    const maxSeconds = Number(r.max_used_hours) * 3600;
+    const current = Number(r.used_since_maintenance_seconds) || 0;
+    const added = Math.max(0, Math.round(Number(secondsAdded) || 0));
+    const previous = current - added;
+
+    if(previous < maxSeconds && current >= maxSeconds){
+      await sendMail({
+        to,
+        subject: `Maintenance needed: Table #${r.number}`,
+        html: `<p>Table <b>#${r.number}</b> has reached its maintenance threshold.</p>
+               <p>Used since last maintenance: <b>${(current/3600).toFixed(1)}h</b> of ${r.max_used_hours}h.</p>
+               <p>Please take the table out of service for maintenance.</p>`
+      });
+    }
+  } catch(e){
+    console.error('maintenance alert failed', e);
+  }
+}
+
 // Admin OIDC test endpoint
 app.get('/api/admin/oidc/test', async (req, res) => {
   try {
@@ -274,6 +312,20 @@ app.get('/api/admin/oidc/test', async (req, res) => {
   } catch (err) {
     console.error('OIDC test error', err);
     res.status(500).json({ error: 'oidc_test_failed', message: err.message });
+  }
+});
+
+// Admin: send a test email using the configured SMTP settings
+app.post('/api/admin/smtp/test', async (req, res) => {
+  try {
+    const to = String((req.body && req.body.to) || '').trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'invalid_email' });
+    await sendMail({ to, subject: 'Pool Tables Manager SMTP test', html: '<p>Your SMTP settings are working.</p>' });
+    res.json({ success: true });
+  } catch (err) {
+    if(err.message === 'smtp_not_configured') return res.status(400).json({ error: 'smtp_not_configured' });
+    console.error('smtp test failed', err);
+    res.status(500).json({ error: 'email_failed', message: err.message });
   }
 });
 
@@ -291,6 +343,11 @@ app.get('/api/settings', async (req, res) => {
   try {
     const rows = await prisma.setting.findMany();
     const obj = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    // Never expose the SMTP password; expose only whether one is stored.
+    if(Object.prototype.hasOwnProperty.call(obj, 'smtp_pass')){
+      obj.smtp_pass_set = !!obj.smtp_pass;
+      delete obj.smtp_pass;
+    }
     res.json(obj);
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
@@ -332,6 +389,48 @@ app.delete('/api/admin/clear-history', async (req, res) => {
   } catch (e) { 
     console.error(e); 
     res.status(500).json({ error: 'db_error' }); 
+  }
+});
+
+// Email a financial report (HTML body, optionally with a client-generated PDF attachment)
+app.post('/api/reports/email', requireAuth, async (req, res) => {
+  try {
+    const { to, format, report, pdfBase64 } = req.body || {};
+    const email = String(to || '').trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
+
+    const fmt = format === 'pdf' ? 'pdf' : 'html';
+    const r = report || {};
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    const cur = esc(r.currency || '$');
+    const money = c => `${cur}${((Number(c) || 0) / 100).toFixed(2)}`;
+    const breakdownRows = Object.entries(r.byTableType || {})
+      .map(([name, amt]) => `<tr><td>${esc(name)} Tables</td><td style="text-align:right">${money(amt)}</td></tr>`)
+      .join('');
+
+    const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;color:#222">
+      <h2 style="margin:0 0 4px">${esc(r.title || 'Financial Report')}</h2>
+      <p style="color:#666;margin:0 0 16px">${esc(r.periodLabel || '')}</p>
+      <table style="border-collapse:collapse;width:100%">
+        <tr><td style="padding:6px 0"><b>Total Revenue</b></td><td style="text-align:right;padding:6px 0"><b>${money(r.totalRevenue)}</b></td></tr>
+        ${breakdownRows}
+        <tr><td style="padding:6px 0">Drinks/Bar</td><td style="text-align:right;padding:6px 0">${money(r.drinksTotal)}</td></tr>
+        <tr><td style="padding:6px 0">Subscriptions</td><td style="text-align:right;padding:6px 0">${money(r.subscriptionsTotal)}</td></tr>
+      </table>
+    </div>`;
+
+    const attachments = [];
+    if(fmt === 'pdf'){
+      if(!pdfBase64) return res.status(400).json({ error: 'missing_pdf' });
+      attachments.push({ filename: 'report.pdf', content: String(pdfBase64), encoding: 'base64', contentType: 'application/pdf' });
+    }
+
+    await sendMail({ to: email, subject: `${r.title || 'Financial Report'}${r.periodLabel ? ' — ' + r.periodLabel : ''}`, html, attachments });
+    res.json({ success: true });
+  } catch (err) {
+    if(err.message === 'smtp_not_configured') return res.status(400).json({ error: 'smtp_not_configured' });
+    console.error('report email failed', err);
+    res.status(500).json({ error: 'email_failed' });
   }
 });
 
@@ -1115,6 +1214,7 @@ app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
     await prisma.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, row.table_id);
     const elapsedSeconds = row.started_at ? (Date.now() - new Date(row.started_at).getTime()) / 1000 : 0;
     await addTableUsage(prisma, row.table_id, elapsedSeconds);
+    await checkAndSendMaintenanceAlert(row.table_id, elapsedSeconds);
     res.json({ id: row.id });
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
@@ -1184,6 +1284,8 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     const receiptItems = saleItems.map(i => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, totalCents: i.totalCents, vatRatePercent: i.vatRatePercent }));
     if(tableCharge > 0) receiptItems.unshift({ description: 'Table Time', quantity: 1, unitPrice: tableCharge, totalCents: tableCharge, vatRatePercent: tableVatRate });
 
+    const elapsedSeconds = session.startedAt ? (Date.now() - new Date(session.startedAt).getTime()) / 1000 : 0;
+
     const result = await prisma.$transaction(async (tx) => {
       // Persist the table-time charge as a durable, VAT-tagged sale record
       if(tableCharge > 0){
@@ -1238,12 +1340,12 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
 
       // Record this session's duration against the table's usage counters
-      const elapsedSeconds = session.startedAt ? (Date.now() - new Date(session.startedAt).getTime()) / 1000 : 0;
       await addTableUsage(tx, session.tableId, elapsedSeconds);
 
       return receipt;
     });
 
+    await checkAndSendMaintenanceAlert(session.tableId, elapsedSeconds);
     res.json({ receiptNumber: result.number, year: result.year, totalTtcCents: result.totalTtcCents, vatCents: result.vatCents, discountCents: result.discountCents });
   } catch (err) { console.error(err); res.status(500).json({ error: 'checkout_failed' }); }
 });
