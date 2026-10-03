@@ -55,6 +55,11 @@ app.get('/table:tableNumber', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'table.html'));
 });
 
+// Public live table-status board (no authentication, no PIN)
+app.get('/status', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'status.html'));
+});
+
 // Serve admin and dashboard routes only to authenticated users
 app.get('/admin', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -1569,6 +1574,33 @@ app.post('/api/patrons', async (req, res) => {
 });
 
 app.get('/api/patrons', requireAuth, async (req, res) => { try{ const list = await prisma.user.findMany({ where: { role: 'user' } }); res.json(list); }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); } });
+
+// Public live table-status board data. Unauthenticated by design: exposes only
+// table number, table type, status, and (when occupied) player count and start
+// time. Never exposes session ids, PINs, tab items, or amounts.
+app.get('/api/public/tables', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const [tables, types, sessions] = await Promise.all([
+      prisma.poolTable.findMany({ orderBy: { number: 'asc' } }),
+      prisma.tableType.findMany(),
+      prisma.session.findMany({ where: { status: 'active' } })
+    ]);
+    const typeNameById = Object.fromEntries((types || []).map(t => [t.id, t.name_en || t.name_fr || null]));
+    const activeByTableId = Object.fromEntries((sessions || []).map(s => [s.tableId, s]));
+    const out = (tables || []).map(tb => {
+      const session = activeByTableId[tb.id];
+      const status = tb.status === 'maintenance' ? 'maintenance' : (session ? 'occupied' : 'available');
+      const entry = { number: tb.number, typeName: typeNameById[tb.tableTypeId] || null, status };
+      if (status === 'occupied') {
+        entry.numberOfPlayers = session.numberOfPlayers || 1;
+        entry.startedAt = session.startedAt;
+      }
+      return entry;
+    });
+    res.json(out);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
 
 // Public table view - get session info by table number
 app.get('/api/public/table/:tableNumber', async (req, res) => {

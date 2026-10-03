@@ -125,6 +125,7 @@ pool-tables-manager/
 - `GET /api/closures` - List past closures
 
 **Public Access**
+- `GET /api/public/tables` - Unauthenticated live table-status board data: table number, type, and status (`available`/`occupied`/`maintenance`); includes `numberOfPlayers` and `startedAt` only when occupied. Never exposes PINs, session IDs, or tab data
 - `GET /api/public/table/:tableNumber` - Get table session info (requires PIN)
 - `POST /api/public/table/:tableNumber/order` - Submit a drink order (requires PIN) — see Pending Orders above
 
@@ -203,6 +204,12 @@ The frontend (`main.js`) is a vanilla JavaScript SPA with no framework dependenc
 - Auto-refresh every 60 seconds
 - Real-time tab display
 - Mobile-friendly layout
+
+**Public Status Board (`status.html`, `/status`):**
+- No authentication or PIN required
+- Polls `/api/public/tables` every 5 seconds for live availability
+- Tiles grouped by table type, color-coded (green available, red occupied, grey maintenance)
+- Occupied tiles show player count and a live-ticking duration; no PINs, session IDs, or tab amounts are exposed
 
 ## Key Workflows
 

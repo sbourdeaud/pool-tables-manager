@@ -38,3 +38,53 @@ describe('Public table endpoint', () => {
     expect(typeof res.body.tableCharge).toBe('number');
   });
 });
+
+describe('Public table status board endpoint', () => {
+  const agent = request.agent(app);
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  test('returns all tables with status without authentication', async () => {
+    prisma.poolTable.findMany.mockResolvedValue([
+      { id: 'tbl-1', tableTypeId: 'tt-1', number: 1, status: 'available' },
+      { id: 'tbl-2', tableTypeId: 'tt-1', number: 2, status: 'occupied' },
+      { id: 'tbl-3', tableTypeId: 'tt-2', number: 3, status: 'maintenance' }
+    ]);
+    prisma.tableType.findMany.mockResolvedValue([
+      { id: 'tt-1', name_en: 'Pool' },
+      { id: 'tt-2', name_en: 'Snooker' }
+    ]);
+    const started = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    prisma.session.findMany.mockResolvedValue([
+      { id: 'sess-2', tableId: 'tbl-2', status: 'active', startedAt: started, numberOfPlayers: 3, pin: '9999' }
+    ]);
+
+    const res = await agent.get('/api/public/tables');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { number: 1, typeName: 'Pool', status: 'available' },
+      { number: 2, typeName: 'Pool', status: 'occupied', numberOfPlayers: 3, startedAt: started },
+      { number: 3, typeName: 'Snooker', status: 'maintenance' }
+    ]);
+  });
+
+  test('never exposes session ids, PINs, or tab data', async () => {
+    prisma.poolTable.findMany.mockResolvedValue([
+      { id: 'tbl-2', tableTypeId: 'tt-1', number: 2, status: 'occupied' }
+    ]);
+    prisma.tableType.findMany.mockResolvedValue([{ id: 'tt-1', name_en: 'Pool' }]);
+    prisma.session.findMany.mockResolvedValue([
+      { id: 'sess-2', tableId: 'tbl-2', status: 'active', startedAt: new Date().toISOString(), numberOfPlayers: 2, pin: '1234' }
+    ]);
+
+    const res = await agent.get('/api/public/tables');
+    expect(res.status).toBe(200);
+    const serialized = JSON.stringify(res.body);
+    expect(serialized).not.toContain('pin');
+    expect(serialized).not.toContain('1234');
+    expect(serialized).not.toContain('sess-2');
+    expect(serialized).not.toContain('sessionId');
+  });
+});

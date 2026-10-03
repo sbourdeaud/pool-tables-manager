@@ -70,10 +70,13 @@ module.exports = {
   poolTable: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), count: mk() },
   tableType: { findMany: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
-  tabLineItem: { findMany: mk(), findFirst: mk(), create: mk(), update: mk(), delete: mk() },
+  tabLineItem: { findMany: mk(), findFirst: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   user,
   subscription,
   drink: { findMany: mk(), create: mk(), findUnique: mk(), update: mk(), delete: mk() },
+  // Plain (non-jest.fn) default so it survives jest.resetAllMocks() in suites
+  // that don't restore stateful mocks; the public table endpoint expects an array.
+  pendingOrder: { findMany: async () => [], findUnique: mk(), create: mk(), update: mk() },
 
   // Raw helpers
   $queryRaw: mk(),

@@ -231,10 +231,12 @@
   // Navigation
   const navDashboard = document.getElementById('navDashboard');
   const navAdmin = document.getElementById('navAdmin');
+  const navStatus = document.getElementById('navStatus');
   const logoLink = document.getElementById('logoLink');
 
   navDashboard.addEventListener('click', e => { e.preventDefault(); renderDashboard(); });
   navAdmin.addEventListener('click', e => { e.preventDefault(); renderAdminDashboard(); });
+  if(navStatus) navStatus.addEventListener('click', e => { e.preventDefault(); window.open('/status', '_blank', 'noopener'); });
   logoLink.addEventListener('click', e => { e.preventDefault(); playPoolBallSound(); renderDashboard(); });
 
   // Views

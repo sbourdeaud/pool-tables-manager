@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Table Status</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #ffffff;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .page-header {
+      max-width: 1200px;
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .page-title { font-size: 28px; font-weight: 700; }
+    .page-subtitle { font-size: 14px; opacity: 0.6; }
+    .conn-status {
+      font-size: 13px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .conn-status.reconnecting {
+      background: rgba(245, 158, 11, 0.15);
+      color: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+    .groups { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
+    .type-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 20px;
+    }
+    .type-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .type-badge {
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .type-count { font-size: 14px; opacity: 0.7; }
+    .tables-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+    }
+    .table-tile {
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-left-width: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 104px;
+    }
+    .table-tile.available {
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.1));
+      border-left-color: rgba(16, 185, 129, 0.7);
+    }
+    .table-tile.occupied {
+      background: linear-gradient(180deg, rgba(220, 38, 38, 0.15), rgba(185, 28, 28, 0.1));
+      border-left-color: rgba(220, 38, 38, 0.7);
+    }
+    .table-tile.maintenance {
+      background: linear-gradient(180deg, rgba(107, 114, 128, 0.18), rgba(75, 85, 99, 0.12));
+      border-left-color: rgba(156, 163, 175, 0.7);
+    }
+    .table-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .table-num { font-size: 22px; font-weight: 700; }
+    .table-status-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.75; }
+    .table-meta { font-size: 13px; opacity: 0.85; display: flex; flex-direction: column; gap: 4px; }
+    .table-meta .duration { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .empty { text-align: center; opacity: 0.6; padding: 48px 20px; }
+    .error { text-align: center; color: #ef4444; padding: 48px 20px; }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <div>
+      <div class="page-title">Table Status</div>
+      <div class="page-subtitle">Live availability — updates automatically</div>
+    </div>
+    <div class="conn-status" id="connStatus">Live</div>
+  </div>
+  <div class="groups" id="groups">
+    <div class="empty">Loading…</div>
+  </div>
+
+  <script>
+    (function(){
+      const groupsEl = document.getElementById('groups');
+      const connEl = document.getElementById('connStatus');
+      const POLL_MS = 5000;
+      const palette = ['#2563eb','#059669','#d97706','#7c3aed','#e11d48','#06b6d4'];
+      let lastTables = null;
+
+      function hashCode(str){ let h=0; for(let i=0;i<str.length;i++){ h = ((h<<5)-h) + str.charCodeAt(i); h |= 0 } return h; }
+
+      function formatDuration(startedAt){
+        const start = new Date(startedAt).getTime();
+        if(isNaN(start)) return '';
+        const elapsed = Math.max(0, Date.now() - start);
+        const h = Math.floor(elapsed / 3600000);
+        const m = Math.floor((elapsed % 3600000) / 60000);
+        const s = Math.floor((elapsed % 60000) / 1000);
+        return `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+      }
+
+      function statusLabel(status){
+        if(status === 'occupied') return 'Occupied';
+        if(status === 'maintenance') return 'Maintenance';
+        return 'Available';
+      }
+
+      function groupByType(tables){
+        const groups = {};
+        for(const tb of tables){
+          const key = tb.typeName || 'Other';
+          if(!groups[key]) groups[key] = [];
+          groups[key].push(tb);
+        }
+        return groups;
+      }
+
+      function setConnection(ok){
+        if(ok){
+          connEl.textContent = 'Live';
+          connEl.classList.remove('reconnecting');
+        } else {
+          connEl.textContent = 'Reconnecting…';
+          connEl.classList.add('reconnecting');
+        }
+      }
+
+      function render(tables){
+        const groups = groupByType(tables);
+        const names = Object.keys(groups).sort();
+        if(names.length === 0){
+          groupsEl.innerHTML = '<div class="empty">No tables configured</div>';
+          return;
+        }
+        let html = '';
+        for(const name of names){
+          const color = palette[Math.abs(hashCode(name)) % palette.length];
+          const list = groups[name].slice().sort((a,b)=>a.number-b.number);
+          html += `
+            <div class="type-card">
+              <div class="type-header">
+                <div class="type-badge" style="background:${color}">${name}</div>
+                <div class="type-count">${list.length} table${list.length===1?'':'s'}</div>
+              </div>
+              <div class="tables-grid">
+                ${list.map(tb => {
+                  const status = tb.status || 'available';
+                  const meta = status === 'occupied'
+                    ? `<div class="table-meta">
+                         <span>${tb.numberOfPlayers || 1} player${(tb.numberOfPlayers||1)>1?'s':''}</span>
+                         <span class="duration" data-started="${tb.startedAt || ''}">${formatDuration(tb.startedAt)}</span>
+                       </div>`
+                    : '';
+                  return `
+                    <div class="table-tile ${status}">
+                      <div class="table-top">
+                        <div class="table-num">#${tb.number}</div>
+                        <div class="table-status-label">${statusLabel(status)}</div>
+                      </div>
+                      ${meta}
+                    </div>`;
+                }).join('')}
+              </div>
+            </div>`;
+        }
+        groupsEl.innerHTML = html;
+      }
+
+      function tickDurations(){
+        document.querySelectorAll('.duration[data-started]').forEach(el => {
+          const started = el.getAttribute('data-started');
+          if(started) el.textContent = formatDuration(started);
+        });
+      }
+
+      async function load(){
+        try {
+          const res = await fetch('/api/public/tables', { headers: { 'Accept': 'application/json' } });
+          if(!res.ok) throw new Error('bad status ' + res.status);
+          const tables = await res.json();
+          lastTables = tables;
+          render(tables);
+          setConnection(true);
+        } catch(e){
+          console.error('Failed to load table status', e);
+          if(lastTables) render(lastTables);
+          setConnection(false);
+        }
+      }
+
+      load();
+      setInterval(load, POLL_MS);
+      setInterval(tickDurations, 1000);
+    })();
+  </script>
+</body>
+</html>
