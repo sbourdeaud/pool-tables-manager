@@ -1,8 +1,8 @@
-FROM node:18-bullseye-slim
+FROM node:22-bookworm-slim
 WORKDIR /app
-# Install system deps required by Prisma (OpenSSL 1.1)
+# Install system deps required by Prisma (OpenSSL 3 is provided by the base image)
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates openssl libssl1.1 \
+	&& apt-get install -y --no-install-recommends ca-certificates openssl \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
