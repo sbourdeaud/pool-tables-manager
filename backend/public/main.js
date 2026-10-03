@@ -562,6 +562,8 @@
     const container = document.createElement('div'); container.style.display = 'grid'; container.style.gap = '16px';
 
     for(const [typeId, group] of Object.entries(byType)){
+      // Only show table types that actually have tables configured
+      if(group.tables.length === 0) continue;
       const typeCard = document.createElement('div'); typeCard.className = 'type-card card';
       const color = palette[Math.abs(hashCode(String(typeId))) % palette.length];
       const header = document.createElement('div'); header.className = 'type-header';
@@ -838,7 +840,6 @@
         fulfillBtn.disabled = true;
         try{
           await fetch('/api/pending-orders/' + order.id + '/fulfill', { method: 'POST' });
-          playPoolBallSound();
         }catch(e){ console.error(e); alert('Failed to fulfill order'); }
         renderDashboard(); // refresh whole dashboard so the table's tab total reflects the newly billed items
       });
@@ -1291,7 +1292,7 @@
           // Check if settling player is a subscriber
           const isSubscriber = document.getElementById('settleSubscriber')?.checked || false;
           
-          await fetch('/api/sessions/' + sessionId + '/settle', {
+          const settleRes = await fetch('/api/sessions/' + sessionId + '/settle', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
@@ -1300,14 +1301,21 @@
               isSubscriber: isSubscriber
             })
           });
+
+          if(!settleRes.ok){
+            const body = await settleRes.json().catch(()=>null);
+            alert('Settlement failed (' + settleRes.status + '): ' + (body && body.error ? body.error : 'unknown error'));
+            return; // keep the modal open and do not change the player count
+          }
           
           // Update player count
           const newCount = Math.max(1, (originalPlayerCount)-1);
-          await fetch('/api/sessions/' + sessionId, {
+          const patchRes = await fetch('/api/sessions/' + sessionId, {
             method:'PATCH',
             headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ numberOfPlayers: newCount })
           });
+          if(!patchRes.ok) console.warn('Failed to update player count after settlement:', patchRes.status);
           
           hideModal();
           // Delay to ensure database updates are visible, then force refresh
@@ -1560,18 +1568,43 @@
       completeBtn.style.color = '#fff';
       completeBtn.style.fontWeight = '600';
       completeBtn.addEventListener('click', async ()=>{
-        if(confirm('Complete payment and end session?')){
-          // Open the print window synchronously so the popup is not blocked
-          const printWindow = window.open('', '', 'width=300,height=600');
-          const res = await fetch('/api/sessions/' + sessionId + '/checkout', { method: 'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ discountCents: currentDiscountCents }) });
-          if(res.ok){
-            const receipt = await res.json();
-            alert(`Payment complete — Receipt #${receipt.receiptNumber}/${receipt.year}`);
-            await printFinalReceipt(receipt, currency, detail, numberOfPlayers, printWindow);
-          } else {
-            if(printWindow) printWindow.close();
-            await fetch('/api/sessions/' + sessionId + '/end', { method: 'PATCH' });
-          }
+        if(!confirm('Complete payment and end session?')) return;
+        const res = await fetch('/api/sessions/' + sessionId + '/checkout', { method: 'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ discountCents: currentDiscountCents }) });
+        if(res.ok){
+          const receipt = await res.json();
+          // Show a confirmation with the invoice number and VAT, and let the user
+          // print on demand (no print window is opened automatically).
+          checkoutContent.innerHTML = '';
+          const summary = document.createElement('div');
+          summary.innerHTML = `<div style="font-size:18px;font-weight:700;margin-bottom:8px">Payment complete</div>
+            <div style="font-size:15px;margin-bottom:4px">Receipt / Invoice #${receipt.receiptNumber}/${receipt.year}</div>
+            <div style="opacity:0.85">Total (TTC): ${currency}${(receipt.totalTtcCents/100).toFixed(2)}</div>
+            <div style="opacity:0.85">VAT (TVA): ${currency}${(receipt.vatCents/100).toFixed(2)}</div>`;
+          checkoutContent.appendChild(summary);
+
+          const receiptActions = document.createElement('div');
+          receiptActions.style.display = 'flex';
+          receiptActions.style.gap = '8px';
+          receiptActions.style.marginTop = '16px';
+
+          const printReceiptBtn = document.createElement('button');
+          printReceiptBtn.textContent = '🖨 Print Receipt';
+          printReceiptBtn.style.flex = '1';
+          printReceiptBtn.style.background = '#10b981';
+          printReceiptBtn.style.color = '#fff';
+          printReceiptBtn.style.fontWeight = '600';
+          printReceiptBtn.addEventListener('click', ()=>{ printFinalReceipt(receipt, currency, detail, numberOfPlayers); });
+
+          const doneBtn = document.createElement('button');
+          doneBtn.textContent = 'Close';
+          doneBtn.style.flex = '1';
+          doneBtn.addEventListener('click', ()=>{ hideModal(); renderDashboard(); });
+
+          receiptActions.appendChild(printReceiptBtn);
+          receiptActions.appendChild(doneBtn);
+          checkoutContent.appendChild(receiptActions);
+        } else {
+          await fetch('/api/sessions/' + sessionId + '/end', { method: 'PATCH' });
           hideModal();
           renderDashboard();
         }
@@ -1647,6 +1680,10 @@
   // Definitive fiscal receipt printed right after checkout: includes the sequential
   // invoice number and the VAT breakdown (required on French receipts).
   async function printFinalReceipt(receipt, currency, detail, players, preOpenedWindow){
+    // Open the window synchronously (within the click gesture) so popup blockers allow it.
+    const printWindow = preOpenedWindow || window.open('', '', 'width=300,height=600');
+    if(!printWindow){ alert('Please allow popups to print the invoice receipt.'); return; }
+
     let appName = 'Pool Tables Manager';
     try{
       const res = await fetch('/api/settings');
@@ -1657,8 +1694,6 @@
     const lines = receipt.items || [];
     const grossTtc = lines.reduce((s, l) => s + (l.totalCents || 0), 0);
     const { rows } = vatRowsForLines(lines, currency);
-    const printWindow = preOpenedWindow || window.open('', '', 'width=300,height=600');
-    if(!printWindow){ alert('Please allow popups to print the invoice receipt.'); return; }
 
     const info = await resolveTableInfo(detail);
     const startStr = detail && detail.session ? new Date(detail.session.startedAt).toLocaleString() : 'N/A';
