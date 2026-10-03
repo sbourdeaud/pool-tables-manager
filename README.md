@@ -14,6 +14,24 @@ A full-featured pool hall management system with session tracking, billing, subs
 - **Authentication**: OIDC integration or local admin authentication
 - **Multi-language**: English and French support
 
+## Screenshots
+
+**Dashboard** — live sessions with running timers, tabs, per-table QR codes, and one-click actions:
+
+![Dashboard with two active sessions](docs/screenshots/dashboard.png)
+
+**Admin panel** — drinks menu, table types & inventory, subscriptions, reports, and settings:
+
+![Admin panel](docs/screenshots/admin-panel.png)
+
+**Public table status board** (`/status`) — no login required, updates automatically as tables are used or freed:
+
+![Public status board](docs/screenshots/public-status.png)
+
+**Player table view** — the page players reach by scanning the table's QR code (PIN-protected): live timer, tab, and drink ordering from their phone:
+
+![Player table view](docs/screenshots/table-view.png)
+
 ## Quick Start
 
 **New Deployment** (empty database):
