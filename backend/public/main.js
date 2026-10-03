@@ -690,7 +690,7 @@
           }
         } else {
           // Available table - show start button
-          const avail = document.createElement('div'); avail.textContent = '✓ Available'; avail.style.color='rgba(255,255,255,0.5)'; avail.style.fontSize='14px'; avail.style.marginBottom='8px';
+          const avail = document.createElement('div'); avail.textContent = '✓ Available'; avail.style.color='var(--fg)'; avail.style.opacity='0.6'; avail.style.fontSize='14px'; avail.style.marginBottom='8px';
           middle.appendChild(avail);
           
           const startBtn = document.createElement('button'); startBtn.className='start-btn'; startBtn.innerHTML='▶ Start Session';
@@ -924,7 +924,7 @@
         modalDrinksList.appendChild(existingHeader);
         
         for(const item of existingItems){
-          const itemRow = document.createElement('div'); itemRow.style.display='flex'; itemRow.style.justifyContent='space-between'; itemRow.style.alignItems='center'; itemRow.style.gap='8px'; itemRow.style.marginBottom='4px'; itemRow.style.padding='4px'; itemRow.style.background='rgba(255,255,255,0.03)'; itemRow.style.borderRadius='4px';
+          const itemRow = document.createElement('div'); itemRow.style.display='flex'; itemRow.style.justifyContent='space-between'; itemRow.style.alignItems='center'; itemRow.style.gap='8px'; itemRow.style.marginBottom='4px'; itemRow.style.padding='4px'; itemRow.style.background='var(--surface)'; itemRow.style.borderRadius='4px';
           const itemInfo = document.createElement('div'); itemInfo.textContent = `${item.quantity}x ${item.description} — ${localStorage.getItem('currency')||'$'}${(item.totalCents/100).toFixed(2)}`;
           const removeBtn = document.createElement('button'); removeBtn.innerHTML = '<span style="font-size:20px;font-weight:bold">×</span>'; removeBtn.className='icon-btn'; removeBtn.title='Remove';
           removeBtn.addEventListener('click', async ()=>{
@@ -937,7 +937,7 @@
           modalDrinksList.appendChild(itemRow);
         }
         
-        const divider = document.createElement('hr'); divider.style.margin='16px 0'; divider.style.border='none'; divider.style.borderTop='1px solid rgba(255,255,255,0.1)';
+        const divider = document.createElement('hr'); divider.style.margin='16px 0'; divider.style.border='none'; divider.style.borderTop='1px solid var(--border)';
         modalDrinksList.appendChild(divider);
       }
       
@@ -1032,7 +1032,7 @@
       const infoDiv = document.createElement('div');
       infoDiv.style.marginBottom = '16px';
       infoDiv.style.padding = '12px';
-      infoDiv.style.background = 'rgba(255,255,255,0.03)';
+      infoDiv.style.background = 'var(--surface)';
       infoDiv.style.borderRadius = '8px';
       infoDiv.innerHTML = `<div style="font-weight:600; margin-bottom:4px">Settling for 1 player leaving</div><div style="opacity:0.7; font-size:14px">Select items and table charge portion</div>`;
       settlementContent.appendChild(infoDiv);
@@ -1090,7 +1090,7 @@
         noTableOption.style.gap = '8px';
         noTableOption.style.padding = '8px';
         noTableOption.style.borderRadius = '6px';
-        noTableOption.style.border = '1px solid rgba(255,255,255,0.1)';
+        noTableOption.style.border = '1px solid var(--border)';
         noTableOption.style.cursor = 'pointer';
         noTableOption.innerHTML = `<input type="radio" name="tableOption" value="none" checked style="cursor:pointer"/> No table charge (${currency}0.00)`;
         tableOptions.appendChild(noTableOption);
@@ -1101,7 +1101,7 @@
         shareOption.style.gap = '8px';
         shareOption.style.padding = '8px';
         shareOption.style.borderRadius = '6px';
-        shareOption.style.border = '1px solid rgba(255,255,255,0.1)';
+        shareOption.style.border = '1px solid var(--border)';
         shareOption.style.cursor = 'pointer';
         const playerShare = nonSubscriberCount > 0 ? Math.round(tableCharge / nonSubscriberCount) : 0;
         const displayText = nonSubscriberCount > 0 
@@ -1116,7 +1116,7 @@
         fullOption.style.gap = '8px';
         fullOption.style.padding = '8px';
         fullOption.style.borderRadius = '6px';
-        fullOption.style.border = '1px solid rgba(255,255,255,0.1)';
+        fullOption.style.border = '1px solid var(--border)';
         fullOption.style.cursor = 'pointer';
         fullOption.innerHTML = `<input type="radio" name="tableOption" value="full" style="cursor:pointer"/> Full table charge (${currency}${(tableCharge/100).toFixed(2)})`;
         tableOptions.appendChild(fullOption);
@@ -1150,7 +1150,7 @@
           itemRow.style.gap = '8px';
           itemRow.style.padding = '8px';
           itemRow.style.borderRadius = '6px';
-          itemRow.style.border = '1px solid rgba(255,255,255,0.1)';
+          itemRow.style.border = '1px solid var(--border)';
           
           const itemInfo = document.createElement('div');
           itemInfo.style.flex = '1';
@@ -1389,7 +1389,7 @@
         itemRow.style.alignItems = 'center';
         itemRow.style.gap = '8px';
         itemRow.style.padding = '8px';
-        itemRow.style.background = 'rgba(255,255,255,0.03)';
+        itemRow.style.background = 'var(--surface)';
         itemRow.style.borderRadius = '6px';
         itemRow.style.marginBottom = '6px';
         
@@ -1441,7 +1441,7 @@
       discountRow.style.justifyContent = 'space-between';
       discountRow.style.alignItems = 'center';
       discountRow.style.padding = '8px';
-      discountRow.style.background = 'rgba(255,255,255,0.05)';
+      discountRow.style.background = 'var(--surface-strong)';
       discountRow.style.borderRadius = '6px';
       discountRow.style.marginBottom = '12px';
       
@@ -1502,7 +1502,7 @@
       totalRow.style.fontSize = '20px';
       totalRow.style.fontWeight = '700';
       totalRow.style.paddingTop = '8px';
-      totalRow.style.borderTop = '1px solid rgba(255,255,255,0.2)';
+      totalRow.style.borderTop = '1px solid var(--border-strong)';
       totalRow.innerHTML = `<div>Total:</div><div id="totalAmount">${currency}${(subtotalCents/100).toFixed(2)}</div>`;
       
       totalsContainer.appendChild(subtotalRow);
@@ -1577,7 +1577,7 @@
         const splitInfo = document.createElement('div');
         splitInfo.style.marginTop = '12px';
         splitInfo.style.padding = '8px';
-        splitInfo.style.background = 'rgba(255,255,255,0.03)';
+        splitInfo.style.background = 'var(--surface)';
         splitInfo.style.borderRadius = '6px';
         splitInfo.style.fontSize = '14px';
         splitInfo.style.textAlign = 'center';
@@ -1963,7 +1963,7 @@
 
     // Fiscal / Legal Information (for French VAT reporting & receipts)
     const fiscalSection = document.createElement('div');
-    fiscalSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    fiscalSection.style.border = '1px dashed var(--border)';
     fiscalSection.style.padding = '12px';
     fiscalSection.style.borderRadius = '6px';
     const fiscalTitle = document.createElement('h3'); fiscalTitle.textContent = 'Fiscal / Legal Information'; fiscalTitle.style.marginTop = '0'; fiscalSection.appendChild(fiscalTitle);
@@ -1992,7 +1992,7 @@
 
     // OIDC Settings
     const oidcSection = document.createElement('div');
-    oidcSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    oidcSection.style.border = '1px dashed var(--border)';
     oidcSection.style.padding = '12px';
     oidcSection.style.borderRadius = '6px';
     const oidcTitle = document.createElement('h3'); oidcTitle.textContent = 'OpenID Connect (OIDC) Settings'; oidcTitle.style.marginTop = '0'; oidcSection.appendChild(oidcTitle);
@@ -2043,7 +2043,7 @@
 
     // Email (SMTP) settings
     const smtpSection = document.createElement('div');
-    smtpSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    smtpSection.style.border = '1px dashed var(--border)';
     smtpSection.style.padding = '12px';
     smtpSection.style.borderRadius = '6px';
     const smtpTitle = document.createElement('h3'); smtpTitle.textContent = 'Email (SMTP) Settings'; smtpTitle.style.marginTop = '0'; smtpSection.appendChild(smtpTitle);
@@ -2434,21 +2434,21 @@
         for(const [typeName, amount] of Object.entries(report.byTableType)){
           const row = document.createElement('div');
           row.style.padding = '8px 0';
-          row.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+          row.style.borderBottom = '1px solid var(--border)';
           row.innerHTML = `<span style="opacity:0.8">${typeName}:</span> <span style="float:right; font-weight:600">${currency}${(amount/100).toFixed(2)}</span>`;
           reportCard.appendChild(row);
         }
         
         const drinksRow = document.createElement('div');
         drinksRow.style.padding = '8px 0';
-        drinksRow.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+        drinksRow.style.borderBottom = '1px solid var(--border)';
         drinksRow.style.marginTop = '12px';
         drinksRow.innerHTML = `<span style="opacity:0.8">Bar/Drinks:</span> <span style="float:right; font-weight:600">${currency}${(report.drinksTotal/100).toFixed(2)}</span>`;
         reportCard.appendChild(drinksRow);
         
         const subsRow = document.createElement('div');
         subsRow.style.padding = '8px 0';
-        subsRow.style.borderBottom = '1px solid rgba(255,255,255,0.1)';
+        subsRow.style.borderBottom = '1px solid var(--border)';
         subsRow.innerHTML = `<span style="opacity:0.8">Subscriptions:</span> <span style="float:right; font-weight:600">${currency}${(report.subscriptionsTotal/100).toFixed(2)}</span>`;
         reportCard.appendChild(subsRow);
         
@@ -2646,8 +2646,8 @@
             const dowCard = document.createElement('div');
             dowCard.style.padding = '12px';
             dowCard.style.borderRadius = '8px';
-            dowCard.style.background = 'rgba(255,255,255,0.03)';
-            dowCard.style.border = '1px solid rgba(255,255,255,0.06)';
+            dowCard.style.background = 'var(--surface)';
+            dowCard.style.border = '1px solid var(--border)';
             
             const dowName = document.createElement('div');
             dowName.style.fontWeight = '600';
@@ -2827,7 +2827,7 @@
             const sessCard = document.createElement('div');
             sessCard.style.padding = '12px';
             sessCard.style.marginTop = '12px';
-            sessCard.style.background = 'rgba(255,255,255,0.03)';
+            sessCard.style.background = 'var(--surface)';
             sessCard.style.borderRadius = '8px';
             
             const sessHeader = document.createElement('div');
@@ -2920,7 +2920,7 @@
     // --- TVA (VAT) Report ---
     const vatSection = document.createElement('div');
     vatSection.style.marginTop = '40px';
-    vatSection.style.borderTop = '1px solid rgba(255,255,255,0.1)';
+    vatSection.style.borderTop = '1px solid var(--border)';
     vatSection.style.paddingTop = '24px';
     const vatH = document.createElement('h2'); vatH.textContent = 'TVA (VAT) Report'; vatSection.appendChild(vatH);
     const vatHelp = document.createElement('div'); vatHelp.style.fontSize='12px'; vatHelp.style.opacity='0.7'; vatHelp.style.marginBottom='12px';
@@ -2992,7 +2992,7 @@
           <table style="border-collapse:collapse">
             <thead><tr><th style="text-align:left;padding:4px 12px">VAT Rate</th><th style="text-align:left;padding:4px 12px">Total HT</th><th style="text-align:left;padding:4px 12px">TVA</th><th style="text-align:left;padding:4px 12px">Total TTC</th></tr></thead>
             <tbody>${rateRows || '<tr><td style="padding:4px 12px" colspan="4">No sales in this period</td></tr>'}</tbody>
-            <tfoot><tr style="font-weight:600;border-top:1px solid rgba(255,255,255,0.2)">
+            <tfoot><tr style="font-weight:600;border-top:1px solid var(--border-strong)">
               <td style="padding:4px 12px">Total</td>
               <td style="padding:4px 12px">${currency}${(data.grandHtCents/100).toFixed(2)}</td>
               <td style="padding:4px 12px">${currency}${(data.grandVatCents/100).toFixed(2)}</td>
@@ -3072,7 +3072,7 @@
     const ul = document.createElement('ul'); ul.style.listStyle='none'; ul.style.padding='0';
     const now = new Date();
     for(const s of list){
-      const li = document.createElement('li'); li.style.padding='12px'; li.style.marginBottom='8px'; li.style.borderRadius='8px'; li.style.background='rgba(255,255,255,0.03)';
+      const li = document.createElement('li'); li.style.padding='12px'; li.style.marginBottom='8px'; li.style.borderRadius='8px'; li.style.background='var(--surface)';
       const activeFrom = new Date(s.active_from);
       const daysSince = Math.floor((now - activeFrom) / (1000*60*60*24));
       const isDue = daysSince >= 30;
