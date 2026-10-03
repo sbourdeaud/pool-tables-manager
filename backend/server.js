@@ -1346,7 +1346,15 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     });
 
     await checkAndSendMaintenanceAlert(session.tableId, elapsedSeconds);
-    res.json({ receiptNumber: result.number, year: result.year, totalTtcCents: result.totalTtcCents, vatCents: result.vatCents, discountCents: result.discountCents });
+    res.json({
+      receiptNumber: result.number,
+      year: result.year,
+      totalTtcCents: result.totalTtcCents,
+      subtotalHtCents: result.subtotalHtCents,
+      vatCents: result.vatCents,
+      discountCents: result.discountCents,
+      items: JSON.parse(result.itemsJson || '[]')
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'checkout_failed' }); }
 });
 

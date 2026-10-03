@@ -127,19 +127,22 @@
 
   // The header title is derived from two independent, asynchronously-loaded sources:
   // the admin-configured "Application Name" setting, and the active locale's default
-  // app_title string. The configured app name always takes priority when set, regardless
-  // of which source finishes loading last.
-  let customAppName = null;
-  let localeAppTitle = null;
+  // app_title string. Both are cached in localStorage so the correct title is shown
+  // immediately on load (no flash), and the configured app name always takes priority.
+  let customAppName = localStorage.getItem('app_name') || null;
+  let localeAppTitle = localStorage.getItem('app_title') || null;
   function applyAppTitle(){
     title.textContent = customAppName || localeAppTitle || 'Pool Hall';
   }
+  applyAppTitle();
 
   async function loadAppName(){
     try{
       const res = await fetch('/api/settings');
       const settings = res.ok ? await res.json() : {};
-      customAppName = settings.app_name || null;
+      customAppName = (settings.app_name && settings.app_name.trim()) ? settings.app_name.trim() : null;
+      if(customAppName) localStorage.setItem('app_name', customAppName);
+      else localStorage.removeItem('app_name');
       applyAppTitle();
     }catch(err){
       console.warn('Failed to load app name', err);
@@ -220,6 +223,7 @@
   async function loadLocale(locale){
     const bundle = await fetchLocale(locale);
     localeAppTitle = bundle.app_title;
+    if(localeAppTitle) localStorage.setItem('app_title', localeAppTitle);
     applyAppTitle();
   }
 
@@ -1557,11 +1561,15 @@
       completeBtn.style.fontWeight = '600';
       completeBtn.addEventListener('click', async ()=>{
         if(confirm('Complete payment and end session?')){
+          // Open the print window synchronously so the popup is not blocked
+          const printWindow = window.open('', '', 'width=300,height=600');
           const res = await fetch('/api/sessions/' + sessionId + '/checkout', { method: 'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ discountCents: currentDiscountCents }) });
           if(res.ok){
             const receipt = await res.json();
             alert(`Payment complete — Receipt #${receipt.receiptNumber}/${receipt.year}`);
+            await printFinalReceipt(receipt, currency, detail, numberOfPlayers, printWindow);
           } else {
+            if(printWindow) printWindow.close();
             await fetch('/api/sessions/' + sessionId + '/end', { method: 'PATCH' });
           }
           hideModal();
@@ -1595,6 +1603,117 @@
     }catch(e){ checkoutContent.innerHTML = '<div>Failed loading session details</div>'; }
   }
   
+  // Resolve display info (table name/type) for a session detail object
+  async function resolveTableInfo(detail){
+    let tableName = 'N/A';
+    let tableType = '';
+    if(detail && detail.session && detail.session.tableId){
+      try{
+        const [tablesRes, typesRes] = await Promise.all([fetch('/api/tables'), fetch('/api/table-types')]);
+        if(tablesRes.ok){
+          const tables = await tablesRes.json();
+          const table = tables.find(t => t.id === detail.session.tableId);
+          if(table){
+            tableName = table.name || `Table #${table.number || 'N/A'}`;
+            if(typesRes.ok){
+              const types = await typesRes.json();
+              const type = types.find(tt => tt.id === table.tableTypeId);
+              if(type) tableType = ` (${type.name_en || type.name || ''})`;
+            }
+          }
+        }
+      }catch(err){ console.warn('Failed to fetch table info', err); }
+    }
+    return { tableName, tableType };
+  }
+
+  // Per-rate VAT breakdown for tax-inclusive line items
+  function vatRowsForLines(lines, currency){
+    const buckets = {};
+    let vatTotal = 0;
+    for(const line of lines){
+      const rate = line.vatRatePercent != null ? line.vatRatePercent : 20;
+      const vat = Math.round(line.totalCents - line.totalCents / (1 + rate / 100));
+      vatTotal += vat;
+      if(!buckets[rate]) buckets[rate] = 0;
+      buckets[rate] += vat;
+    }
+    const rows = Object.keys(buckets).sort().map(rate =>
+      `<tr><td>VAT ${rate}%</td><td style="text-align:right">${currency}${(buckets[rate]/100).toFixed(2)}</td></tr>`
+    ).join('');
+    return { vatTotal, rows };
+  }
+
+  // Definitive fiscal receipt printed right after checkout: includes the sequential
+  // invoice number and the VAT breakdown (required on French receipts).
+  async function printFinalReceipt(receipt, currency, detail, players, preOpenedWindow){
+    let appName = 'Pool Tables Manager';
+    try{
+      const res = await fetch('/api/settings');
+      const settings = res.ok ? await res.json() : {};
+      appName = settings.app_name || 'Pool Tables Manager';
+    }catch(err){ console.warn('Failed to load app name for receipt', err); }
+
+    const lines = receipt.items || [];
+    const grossTtc = lines.reduce((s, l) => s + (l.totalCents || 0), 0);
+    const { rows } = vatRowsForLines(lines, currency);
+    const printWindow = preOpenedWindow || window.open('', '', 'width=300,height=600');
+    if(!printWindow){ alert('Please allow popups to print the invoice receipt.'); return; }
+
+    const info = await resolveTableInfo(detail);
+    const startStr = detail && detail.session ? new Date(detail.session.startedAt).toLocaleString() : 'N/A';
+    const endStr = new Date().toLocaleString();
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Invoice #${receipt.receiptNumber}/${receipt.year}</title>
+          <style>
+            body { font-family: monospace; font-size: 12px; margin: 20px; }
+            h2 { text-align: center; margin-bottom: 6px; }
+            h3 { text-align: center; margin: 0 0 12px; }
+            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+            th, td { padding: 4px; text-align: left; }
+            th { border-bottom: 2px solid #000; }
+            .totals { border-top: 2px solid #000; font-weight: bold; }
+            .info { margin-bottom: 10px; }
+          </style>
+        </head>
+        <body>
+          <h2>${appName}</h2>
+          <h3>RECEIPT / INVOICE #${receipt.receiptNumber}/${receipt.year}</h3>
+          <div class="info">
+            <div>Table: ${info.tableName}${info.tableType}</div>
+            <div>Start: ${startStr}</div>
+            <div>End: ${endStr}</div>
+            <div>Players: ${players || 1}</div>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Item</th><th>Qty</th><th style="text-align:right">VAT</th><th style="text-align:right">Price</th><th style="text-align:right">Total (TTC)</th></tr>
+            </thead>
+            <tbody>
+              ${lines.map(l => `<tr><td>${l.description}</td><td>${l.quantity}</td><td style="text-align:right">${(l.vatRatePercent != null ? l.vatRatePercent : 20)}%</td><td style="text-align:right">${currency}${(l.unitPrice/100).toFixed(2)}</td><td style="text-align:right">${currency}${(l.totalCents/100).toFixed(2)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+          <table class="totals">
+            <tr><td>Subtotal (TTC):</td><td style="text-align:right">${currency}${(grossTtc/100).toFixed(2)}</td></tr>
+            ${receipt.discountCents > 0 ? `<tr><td>Discount:</td><td style="text-align:right">-${currency}${(receipt.discountCents/100).toFixed(2)}</td></tr>` : ''}
+            <tr><td>TOTAL (TTC):</td><td style="text-align:right">${currency}${(receipt.totalTtcCents/100).toFixed(2)}</td></tr>
+            <tr><td>Total HT:</td><td style="text-align:right">${currency}${((receipt.totalTtcCents - receipt.vatCents)/100).toFixed(2)}</td></tr>
+          </table>
+          <table>
+            <tr><td>of which VAT (TVA):</td><td style="text-align:right">${currency}${(receipt.vatCents/100).toFixed(2)}</td></tr>
+            ${rows}
+          </table>
+          <div style="text-align:center; margin-top:20px">Thank you!</div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  }
+
   async function printSettlementReceipt(sessionId, tableSettlement, selectedItems, itemsData, currency){
     // Fetch app name from settings
     let appName = 'Pool Tables Manager';
@@ -1611,6 +1730,7 @@
     // Fetch session and table info
     let tableName = 'N/A';
     let tableType = '';
+    let tableVatRate = 20;
     let startTime = 'N/A';
     
     try{
@@ -1635,6 +1755,7 @@
               const type = types.find(tt => tt.id === table.tableTypeId);
               if(type){
                 tableType = ` (${type.name_en || type.name || ''})`;
+                tableVatRate = type.vatRatePercent != null ? type.vatRatePercent : 20;
               }
             }
           }
@@ -1652,7 +1773,7 @@
     // Add table charge settlement if any
     if(tableSettlement > 0){
       subtotal += tableSettlement;
-      itemsHTML += `<tr><td>Table Charge (Player Share)</td><td>1</td><td style="text-align:right">${currency}${(tableSettlement/100).toFixed(2)}</td><td style="text-align:right">${currency}${(tableSettlement/100).toFixed(2)}</td></tr>`;
+      itemsHTML += `<tr><td>Table Charge (Player Share)</td><td>1</td><td style="text-align:right">${tableVatRate}%</td><td style="text-align:right">${currency}${(tableSettlement/100).toFixed(2)}</td><td style="text-align:right">${currency}${(tableSettlement/100).toFixed(2)}</td></tr>`;
     }
     
     // Add settled drinks
@@ -1662,10 +1783,34 @@
         const settleQty = selectedItem.quantity;
         const settleTotal = settleQty * item.unitPrice;
         subtotal += settleTotal;
-        itemsHTML += `<tr><td>${item.description}</td><td>${settleQty}</td><td style="text-align:right">${currency}${(item.unitPrice/100).toFixed(2)}</td><td style="text-align:right">${currency}${(settleTotal/100).toFixed(2)}</td></tr>`;
+        itemsHTML += `<tr><td>${item.description}</td><td>${settleQty}</td><td style="text-align:right">${item.vatRatePercent != null ? item.vatRatePercent : 20}%</td><td style="text-align:right">${currency}${(item.unitPrice/100).toFixed(2)}</td><td style="text-align:right">${currency}${(settleTotal/100).toFixed(2)}</td></tr>`;
       }
     }
     
+    // VAT breakdown for the printed settlement (prices are tax-inclusive)
+    let vatTotal = 0;
+    const vatBuckets = {};
+    if(tableSettlement > 0){
+      const vat = Math.round(tableSettlement - tableSettlement / (1 + tableVatRate / 100));
+      vatTotal += vat;
+      if(!vatBuckets[String(tableVatRate)]) vatBuckets[String(tableVatRate)] = 0;
+      vatBuckets[String(tableVatRate)] += vat;
+    }
+    for(const selectedItem of selectedItems){
+      const item = itemsData.find(i => i.id === selectedItem.itemId);
+      if(item){
+        const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+        const lineTotal = selectedItem.quantity * item.unitPrice;
+        const vat = Math.round(lineTotal - lineTotal / (1 + rate / 100));
+        vatTotal += vat;
+        if(!vatBuckets[String(rate)]) vatBuckets[String(rate)] = 0;
+        vatBuckets[String(rate)] += vat;
+      }
+    }
+    const vatBreakdownHTML = Object.keys(vatBuckets).sort().map(rate =>
+      `<tr><td>VAT ${rate}%:</td><td style="text-align:right">${currency}${(vatBuckets[rate]/100).toFixed(2)}</td></tr>`
+    ).join('');
+
     printWindow.document.write(`
       <html>
         <head>
@@ -1694,6 +1839,7 @@
               <tr>
                 <th>Item</th>
                 <th>Qty</th>
+                <th style="text-align:right">VAT</th>
                 <th style="text-align:right">Price</th>
                 <th style="text-align:right">Total</th>
               </tr>
@@ -1704,15 +1850,19 @@
           </table>
           <table>
             <tr class="totals">
-              <td>SETTLEMENT TOTAL</td>
+              <td>SETTLEMENT TOTAL (TTC)</td>
               <td></td>
               <td></td>
               <td style="text-align:right">${currency}${(subtotal/100).toFixed(2)}</td>
             </tr>
           </table>
+          <table>
+            <tr><td>of which VAT (TVA):</td><td style="text-align:right">${currency}${(vatTotal/100).toFixed(2)}</td></tr>
+            ${vatBreakdownHTML}
+          </table>
           <div style="margin-top: 20px; text-align: center; font-size: 10px;">
             <p>Thank you!</p>
-            <p>This is a partial settlement. Remaining charges will be settled when the session ends.</p>
+            <p>This is a partial settlement (not an invoice). Remaining charges will be settled when the session ends.</p>
           </div>
         </body>
       </html>
@@ -1735,6 +1885,7 @@
     const printWindow = window.open('', '', 'width=300,height=600');
     const items = detail.items || [];
     const tableCharge = detail.tableCharge || 0;
+    let tableVatRate = 20;
     
     let subtotal = tableCharge;
     let itemsHTML = '';
@@ -1745,7 +1896,7 @@
       const elapsedMs = Date.now() - started.getTime();
       const hoursCharged = Math.ceil(elapsedMs / 3600000);
       const hourlyRate = tableCharge / hoursCharged;
-      itemsHTML += `<tr><td>Table Time (${hoursCharged}h)</td><td>1</td><td style="text-align:right">${currency}${(hourlyRate/100).toFixed(2)}/h</td><td style="text-align:right">${currency}${(tableCharge/100).toFixed(2)}</td></tr>`;
+      itemsHTML += `<tr><td>Table Time (${hoursCharged}h)</td><td>1</td><td style="text-align:right">${tableVatRate}%</td><td style="text-align:right">${currency}${(hourlyRate/100).toFixed(2)}/h</td><td style="text-align:right">${currency}${(tableCharge/100).toFixed(2)}</td></tr>`;
     }
     
     // Add drinks and other items
@@ -1754,7 +1905,7 @@
       const qty = Number(adjItem.qtyInput.value) || 0;
       const total = qty * item.unitPrice;
       subtotal += total;
-      return `<tr><td>${item.description}</td><td>${qty}</td><td style="text-align:right">${currency}${(item.unitPrice/100).toFixed(2)}</td><td style="text-align:right">${currency}${(total/100).toFixed(2)}</td></tr>`;
+      return `<tr><td>${item.description}</td><td>${qty}</td><td style="text-align:right">${item.vatRatePercent != null ? item.vatRatePercent : 20}%</td><td style="text-align:right">${currency}${(item.unitPrice/100).toFixed(2)}</td><td style="text-align:right">${currency}${(total/100).toFixed(2)}</td></tr>`;
     }).join('');
     
     const discountVal = Number(discountValue) || 0;
@@ -1785,6 +1936,7 @@
               const type = types.find(tt => tt.id === table.tableTypeId);
               if(type){
                 tableType = ` (${type.name_en || type.name || ''})`;
+                tableVatRate = type.vatRatePercent != null ? type.vatRatePercent : 20;
               }
             }
           }
@@ -1797,6 +1949,29 @@
     const startTime = detail.session ? new Date(detail.session.startedAt).toLocaleString() : 'N/A';
     const endTime = new Date().toLocaleString();
     
+    // VAT breakdown for the printed proforma (prices are tax-inclusive)
+    let vatTotal = 0;
+    const vatBuckets = {};
+    if(tableCharge > 0){
+      const vat = Math.round(tableCharge - tableCharge / (1 + tableVatRate / 100));
+      vatTotal += vat;
+      if(!vatBuckets[String(tableVatRate)]) vatBuckets[String(tableVatRate)] = 0;
+      vatBuckets[String(tableVatRate)] += vat;
+    }
+    adjustedItems.forEach((adjItem, idx) => {
+      const item = items[idx];
+      const qty = Number(adjItem.qtyInput.value) || 0;
+      const lineTotal = qty * item.unitPrice;
+      const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+      const vat = Math.round(lineTotal - lineTotal / (1 + rate / 100));
+      vatTotal += vat;
+      if(!vatBuckets[String(rate)]) vatBuckets[String(rate)] = 0;
+      vatBuckets[String(rate)] += vat;
+    });
+    const vatBreakdownHTML = Object.keys(vatBuckets).sort().map(rate =>
+      `<tr><td>VAT ${rate}%:</td><td style="text-align:right">${currency}${(vatBuckets[rate]/100).toFixed(2)}</td></tr>`
+    ).join('');
+
     printWindow.document.write(`
       <html>
         <head>
@@ -1813,6 +1988,7 @@
         </head>
         <body>
           <h2>${appName}</h2>
+          <h3 style="font-weight:normal;margin-bottom:14px">PROFORMA — not an invoice</h3>
           <div class="info">
             <div>Table: ${tableName}${tableType}</div>
             <div>Start: ${startTime}</div>
@@ -1821,16 +1997,20 @@
           </div>
           <table>
             <thead>
-              <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
+              <tr><th>Item</th><th>Qty</th><th style="text-align:right">VAT</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr>
             </thead>
             <tbody>
               ${itemsHTML}
             </tbody>
           </table>
           <table class="totals">
-            <tr><td>Subtotal:</td><td style="text-align:right">${currency}${(subtotal/100).toFixed(2)}</td></tr>
+            <tr><td>Subtotal (TTC):</td><td style="text-align:right">${currency}${(subtotal/100).toFixed(2)}</td></tr>
             ${discountCents > 0 ? `<tr><td>Discount:</td><td style="text-align:right">-${currency}${(discountCents/100).toFixed(2)}</td></tr>` : ''}
-            <tr><td>TOTAL:</td><td style="text-align:right">${currency}${(finalTotal/100).toFixed(2)}</td></tr>
+            <tr><td>TOTAL (TTC):</td><td style="text-align:right">${currency}${(finalTotal/100).toFixed(2)}</td></tr>
+            <tr><td>of which VAT (TVA):</td><td style="text-align:right">${currency}${(vatTotal/100).toFixed(2)}</td></tr>
+          </table>
+          <table>
+            ${vatBreakdownHTML}
           </table>
           <div style="text-align:center; margin-top:20px">Thank you!</div>
         </body>
@@ -1900,8 +2080,30 @@
     
     const appNameRow = document.createElement('div');
     const appNameLabel = document.createElement('label'); appNameLabel.textContent = 'Application Name: '; appNameLabel.style.fontWeight='600';
-    const appNameInput = document.createElement('input'); appNameInput.type='text'; appNameInput.style.marginLeft='8px'; appNameInput.style.width='200px'; appNameInput.value = settings.app_name || 'Pool Hall'; appNameInput.placeholder = 'Pool Hall';
-    appNameInput.addEventListener('change', async (e)=>{ const val = e.target.value; try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ app_name: val }) }); customAppName = val || null; applyAppTitle(); }catch(err){ console.warn('failed saving setting', err); } });
+    const appNameInput = document.createElement('input'); appNameInput.type='text'; appNameInput.style.marginLeft='8px'; appNameInput.style.width='200px'; appNameInput.value = settings.app_name || ''; appNameInput.placeholder = 'Pool Hall';
+    appNameInput.addEventListener('change', async (e)=>{
+      const val = (e.target.value || '').trim();
+      try{
+        const resp = await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ app_name: val }) });
+        if(!resp.ok){
+          // Settings writes require an authenticated admin session; surface the failure
+          // instead of silently updating the header and losing the value on reload.
+          alert(resp.status === 401
+            ? 'Please log in as an admin to save settings. The application name was not saved.'
+            : 'Failed to save the application name (error ' + resp.status + ').');
+          e.target.value = settings.app_name || '';
+          if(resp.status === 401) checkAuthOnLoad();
+          return;
+        }
+        customAppName = val || null;
+        if(customAppName) localStorage.setItem('app_name', customAppName); else localStorage.removeItem('app_name');
+        applyAppTitle();
+      }catch(err){
+        console.warn('failed saving setting', err);
+        alert('Failed to save the application name.');
+        e.target.value = settings.app_name || '';
+      }
+    });
     appNameRow.appendChild(appNameLabel); appNameRow.appendChild(appNameInput);
     const appNameHelp = document.createElement('div'); appNameHelp.style.fontSize='12px'; appNameHelp.style.opacity='0.7'; appNameHelp.style.marginTop='4px'; appNameHelp.textContent = 'Display name shown in the header';
     appNameRow.appendChild(appNameHelp);
@@ -3115,7 +3317,9 @@
       const settings = settingsRes.ok ? await settingsRes.json() : {};
       const currency = settings.currency || localStorage.getItem('currency') || '$';
       localStorage.setItem('currency', currency);
-      customAppName = settings.app_name || null;
+      customAppName = (settings.app_name && settings.app_name.trim()) ? settings.app_name.trim() : null;
+      if(customAppName) localStorage.setItem('app_name', customAppName);
+      else localStorage.removeItem('app_name');
       applyAppTitle();
       if(settings.public_base_url) localStorage.setItem('public_base_url', settings.public_base_url);
       else localStorage.removeItem('public_base_url');

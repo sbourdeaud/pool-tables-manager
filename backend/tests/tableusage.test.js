@@ -47,7 +47,7 @@ describe('Table usage / maintenance tracking', () => {
 
     const tx = {
       tabLineItem: { create: jest.fn(async () => ({})) },
-      receipt: { create: jest.fn(async () => ({ number: 1, year: 2026, totalTtcCents: 2500, vatCents: 417, discountCents: 0 })) },
+      receipt: { create: jest.fn(async () => ({ number: 1, year: 2026, totalTtcCents: 2500, subtotalHtCents: 2083, vatCents: 417, discountCents: 0, itemsJson: JSON.stringify([{ description: 'Table Time', quantity: 1, unitPrice: 2500, totalCents: 2500, vatRatePercent: 20 }]) })) },
       $executeRawUnsafe: jest.fn(async () => ({})),
       $queryRawUnsafe: jest.fn(async () => [{ next: 1 }])
     };
@@ -58,6 +58,12 @@ describe('Table usage / maintenance tracking', () => {
     const usageCall = tx.$executeRawUnsafe.mock.calls.find(c => String(c[0]).includes('total_used_seconds'));
     expect(usageCall).toBeTruthy();
     expect(usageCall[2]).toBe('tbl-1');
+    // The receipt payload must carry everything needed to print the invoice
+    expect(res.body.receiptNumber).toBe(1);
+    expect(res.body.vatCents).toBe(417);
+    expect(res.body.subtotalHtCents).toBe(2083);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(res.body.items[0].vatRatePercent).toBe(20);
   });
 
   test('leaving maintenance resets the since-maintenance counter but not lifetime', async () => {
