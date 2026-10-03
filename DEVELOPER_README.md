@@ -60,6 +60,9 @@ pool-tables-manager/
 - `TabLineItem.vatRatePercent` / `vatAmountCents` - VAT rate and amount snapshotted at the time of sale (independent of later rate changes)
 - `TabLineItem.voidedAt` / `voidedBy` / `voidReason` / `correctedFromId` - Anti-tamper audit trail: line items are never hard-deleted or overwritten. Deleting or correcting an item soft-voids the original and, if a replacement is needed, inserts a new row linked back via `correctedFromId`
 - `Drink.vatRatePercent` / `TableType.vatRatePercent` - VAT rate applied to that item/table-time when sold (20% standard, 10% reduced, 0% exempt)
+- `PoolTable.totalUsedSeconds` - lifetime usage in seconds; never reset
+- `PoolTable.usedSinceMaintenanceSeconds` - usage in seconds since the table last left maintenance; reset to 0 when an admin moves a table from `maintenance` back to `available`
+- `TableType.maxUsedHours` - optional maintenance threshold in hours (NULL = no limit). The dashboard flags a table when its current-cycle usage (stored `usedSinceMaintenanceSeconds` + the active session's elapsed time) reaches this value
 
 ## Backend API
 
@@ -71,12 +74,12 @@ pool-tables-manager/
 
 **Table Types**
 - `GET /api/table-types` - List all table types
-- `POST /api/table-types` - Create table type
-- `PUT /api/table-types/:id` - Update table type
+- `POST /api/table-types` - Create table type (accepts optional `maxUsedHours`)
+- `PUT /api/table-types/:id` - Update table type (accepts optional `maxUsedHours`; blank/null clears the limit)
 - `DELETE /api/table-types/:id` - Delete table type
 
 **Tables**
-- `GET /api/tables` - List all tables
+- `GET /api/tables` - List all tables (includes `totalUsedSeconds` and `usedSinceMaintenanceSeconds`)
 - `POST /api/tables` - Create single table
 - `POST /api/tables/bulk` - Create multiple tables (quantity-based)
 - `PUT /api/tables/:id` - Update table (number, type, status)

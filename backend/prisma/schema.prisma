@@ -23,6 +23,7 @@ model TableType {
   name_fr           String?
   base_hourly_cents Int
   vatRatePercent    Int      @default(20) @map("vat_rate_percent")
+  maxUsedHours      Int?     @map("max_used_hours")
   createdAt         DateTime @default(now()) @map("created_at")
 }
 
@@ -31,6 +32,8 @@ model PoolTable {
   tableTypeId String  @map("table_type_id")
   number      Int      @unique
   status      String   @default("available")
+  totalUsedSeconds Int            @default(0) @map("total_used_seconds")
+  usedSinceMaintenanceSeconds Int @default(0) @map("used_since_maintenance_seconds")
   createdAt   DateTime @default(now()) @map("created_at")
 
   @@index([tableTypeId])

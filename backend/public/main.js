@@ -362,8 +362,8 @@
     const currency = localStorage.getItem('currency') || '$';
     
     const typeForm = document.createElement('form');
-    typeForm.innerHTML = `<input name="name_en" placeholder="Type name (EN)" required /> <input name="base_hourly" placeholder="Hourly rate (${currency})" type="number" step="0.01" min="0" required /> <label>VAT: <select name="vat_rate"><option value="20">20%</option><option value="10">10%</option><option value="0">0%</option></select></label> <button type="submit">Add Table Type</button>`;
-    typeForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const fd = Object.fromEntries(new FormData(typeForm).entries()); const cents = Math.round(parseFloat(fd.base_hourly || 0) * 100); const vatRatePercent = Math.round(parseFloat(fd.vat_rate || 20)); await fetch('/api/table-types', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name_en: fd.name_en, name_fr: fd.name_en, base_hourly_cents: cents, vatRatePercent }) }); renderTableManagement(); });
+    typeForm.innerHTML = `<input name="name_en" placeholder="Type name (EN)" required /> <input name="base_hourly" placeholder="Hourly rate (${currency})" type="number" step="0.01" min="0" required /> <label>VAT: <select name="vat_rate"><option value="20">20%</option><option value="10">10%</option><option value="0">0%</option></select></label> <input name="max_hours" placeholder="Max used (h, optional)" type="number" step="1" min="0" /> <button type="submit">Add Table Type</button>`;
+    typeForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const fd = Object.fromEntries(new FormData(typeForm).entries()); const cents = Math.round(parseFloat(fd.base_hourly || 0) * 100); const vatRatePercent = Math.round(parseFloat(fd.vat_rate || 20)); await fetch('/api/table-types', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name_en: fd.name_en, name_fr: fd.name_en, base_hourly_cents: cents, vatRatePercent, maxUsedHours: fd.max_hours }) }); renderTableManagement(); });
     app.appendChild(typeForm);
 
     const addTableForm = document.createElement('form');
@@ -396,7 +396,7 @@
     const typesHeader = document.createElement('h3'); typesHeader.textContent = 'Types'; list.appendChild(typesHeader);
     for(const t of types){
       const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px'; row.style.alignItems='center';
-      row.innerHTML = `<div style="flex:1">${t.name_en} — ${currency}${(t.base_hourly_cents/100).toFixed(2)}/hour — VAT ${t.vatRatePercent != null ? t.vatRatePercent : 20}%</div>`;
+      row.innerHTML = `<div style="flex:1">${t.name_en} — ${currency}${(t.base_hourly_cents/100).toFixed(2)}/hour — VAT ${t.vatRatePercent != null ? t.vatRatePercent : 20}% — Max used: ${t.maxUsedHours != null ? t.maxUsedHours + 'h' : 'none'}</div>`;
       
       const editBtn = document.createElement('button'); 
       editBtn.textContent = 'Edit'; 
@@ -410,13 +410,15 @@
         }
         const newVat = prompt(`VAT rate % for ${t.name_en} (e.g. 20, 10, 0):`, t.vatRatePercent != null ? t.vatRatePercent : 20);
         if(newVat === null) return;
+        const newMax = prompt(`Max used hours before maintenance for ${t.name_en} (blank = no limit):`, t.maxUsedHours != null ? t.maxUsedHours : '');
+        if(newMax === null) return;
         const vatRatePercent = Math.round(parseFloat(newVat));
         const cents = Math.round(rateFloat * 100);
         try{
           const resp = await fetch('/api/table-types/' + t.id, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ name_en: t.name_en, name_fr: t.name_fr, base_hourly_cents: cents, vatRatePercent })
+            body: JSON.stringify({ name_en: t.name_en, name_fr: t.name_fr, base_hourly_cents: cents, vatRatePercent, maxUsedHours: newMax })
           });
           if(!resp.ok){
             alert('Failed to update table type');
@@ -443,7 +445,7 @@
       const sess = sessions.find(s => s.tableId === tb.id && s.status === 'active');
       const tableType = types.find(t => t.id === tb.tableTypeId);
       const typeName = tableType ? tableType.name_en : 'Unknown';
-      const txt = document.createElement('div'); txt.style.flex = '1'; txt.textContent = `#${tb.number} — Type: ${typeName} — Status: ${tb.status}`;
+      const txt = document.createElement('div'); txt.style.flex = '1'; txt.textContent = `#${tb.number} — Type: ${typeName} — Status: ${tb.status} — Used: ${((tb.usedSinceMaintenanceSeconds||0)/3600).toFixed(1)}h since maintenance (${((tb.totalUsedSeconds||0)/3600).toFixed(1)}h lifetime)`;
       row.appendChild(txt);
       
       // Edit number button
@@ -610,6 +612,17 @@
         const status = document.createElement('div'); status.className = 'table-status'; status.textContent = tb.status;
         top.appendChild(num); top.appendChild(status);
         tile.appendChild(top);
+
+        // Maintenance warning: current-cycle usage (stored + live active session) vs the type's max.
+        const maxHours = group.type.maxUsedHours;
+        const activeSeconds = sess && sess.startedAt ? Math.max(0, (Date.now() - new Date(sess.startedAt).getTime()) / 1000) : 0;
+        const cycleSeconds = (tb.usedSinceMaintenanceSeconds || 0) + activeSeconds;
+        if(maxHours != null && maxHours > 0 && cycleSeconds >= maxHours * 3600){
+          const warn = document.createElement('div');
+          warn.className = 'table-maintenance-warning';
+          warn.textContent = `⚠ Maintenance due — ${(cycleSeconds/3600).toFixed(1)}h / ${maxHours}h used`;
+          tile.appendChild(warn);
+        }
 
         const middle = document.createElement('div'); middle.style.display='flex'; middle.style.flexDirection='column'; middle.style.gap='8px';
         

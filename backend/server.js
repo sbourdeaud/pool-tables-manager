@@ -245,6 +245,25 @@ async function voidTabLineItem(id, actor, reason){
   });
 }
 
+// Accumulate a completed session's duration onto its table's usage counters.
+// total_used_seconds is the lifetime figure; used_since_maintenance_seconds is
+// reset when the table is taken out of maintenance. `db` may be a transaction client.
+async function addTableUsage(db, tableId, seconds){
+  const secs = Math.max(0, Math.round(Number(seconds) || 0));
+  if(!tableId || secs <= 0) return;
+  await db.$executeRawUnsafe(
+    `UPDATE "PoolTable" SET total_used_seconds = total_used_seconds + $1, used_since_maintenance_seconds = used_since_maintenance_seconds + $1 WHERE id::text = $2`,
+    secs, tableId
+  );
+}
+
+// Normalize the optional per-table-type maintenance threshold (hours). Empty/invalid -> null (no limit).
+function parseMaxUsedHours(value){
+  if(value === null || value === '' || typeof value === 'undefined') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+
 // Admin OIDC test endpoint
 app.get('/api/admin/oidc/test', async (req, res) => {
   try {
@@ -919,15 +938,17 @@ app.get('/api/table-types', requireAuth, async (req, res) => {
 });
 
 app.post('/api/table-types', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents, vatRatePercent } = req.body;
-  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+  const { name_en, name_fr, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20, maxUsedHours: parseMaxUsedHours(maxUsedHours) } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update table type
 app.put('/api/table-types/:id', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents, vatRatePercent } = req.body;
+  const { name_en, name_fr, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
   try {
-    const updated = await prisma.tableType.update({ where: { id: req.params.id }, data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 } });
+    const data = { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 };
+    if (typeof maxUsedHours !== 'undefined') data.maxUsedHours = parseMaxUsedHours(maxUsedHours);
+    const updated = await prisma.tableType.update({ where: { id: req.params.id }, data });
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
@@ -944,8 +965,8 @@ app.delete('/api/table-types/:id', requireAuth, async (req, res) => {
 
 app.get('/api/tables', requireAuth, async (req, res) => {
   try {
-    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_type_id, number, status, created_at FROM "PoolTable" ORDER BY created_at ASC`);
-    const mapped = rows.map(r => ({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, createdAt: r.created_at }));
+    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_type_id, number, status, total_used_seconds, used_since_maintenance_seconds, created_at FROM "PoolTable" ORDER BY created_at ASC`);
+    const mapped = rows.map(r => ({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, totalUsedSeconds: r.total_used_seconds || 0, usedSinceMaintenanceSeconds: r.used_since_maintenance_seconds || 0, createdAt: r.created_at }));
     res.json(mapped);
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
@@ -1011,16 +1032,25 @@ app.put('/api/tables/:id', requireAuth, async (req, res) => {
     const params = [];
     if (typeof number !== 'undefined') { params.push(number); updates.push(`number = $${params.length}`); }
     if (typeof status !== 'undefined') { params.push(status); updates.push(`status = $${params.length}`); }
+
+    // Leaving maintenance starts a fresh "since maintenance" usage counter; the
+    // lifetime total is never reset.
+    if (typeof status !== 'undefined' && status === 'available') {
+      const current = await prisma.$queryRawUnsafe(`SELECT status FROM "PoolTable" WHERE id::text = $1`, req.params.id);
+      const prev = Array.isArray(current) ? current[0] : current;
+      if (prev && prev.status === 'maintenance') updates.push(`used_since_maintenance_seconds = 0`);
+    }
+
     if (typeof tableTypeId !== 'undefined') { params.push(tableTypeId); updates.push(`table_type_id = $${params.length}::uuid`); }
     if (updates.length === 0) return res.status(400).json({ error: 'no_updates' });
     params.push(req.params.id);
-    const sql = `UPDATE "PoolTable" SET ${updates.join(', ')} WHERE id::text = $${params.length} RETURNING id, table_type_id, number, status, created_at`;
+    const sql = `UPDATE "PoolTable" SET ${updates.join(', ')} WHERE id::text = $${params.length} RETURNING id, table_type_id, number, status, total_used_seconds, used_since_maintenance_seconds, created_at`;
     console.log('[PUT /api/tables/:id] SQL:', sql);
     console.log('[PUT /api/tables/:id] Params:', params);
     const out = await prisma.$queryRawUnsafe(sql, ...params);
     const r = Array.isArray(out) ? out[0] : out;
     console.log('[PUT /api/tables/:id] Result:', r);
-    res.json({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, createdAt: r.created_at });
+    res.json({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, totalUsedSeconds: r.total_used_seconds || 0, usedSinceMaintenanceSeconds: r.used_since_maintenance_seconds || 0, createdAt: r.created_at });
   } catch (e) { console.error('[PUT /api/tables/:id] Error:', e); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -1079,10 +1109,12 @@ app.post('/api/sessions', requireAuth, async (req, res) => {
 app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   try {
     // end session and free table using raw SQL
-    const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1 RETURNING id, table_id`, req.params.id);
+    const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1 RETURNING id, table_id, started_at`, req.params.id);
     const row = Array.isArray(out) ? out[0] : out;
     if(!row) return res.status(404).json({ error: 'not_found' });
     await prisma.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, row.table_id);
+    const elapsedSeconds = row.started_at ? (Date.now() - new Date(row.started_at).getTime()) / 1000 : 0;
+    await addTableUsage(prisma, row.table_id, elapsedSeconds);
     res.json({ id: row.id });
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
@@ -1204,6 +1236,10 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
 
       await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1`, session.id);
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
+
+      // Record this session's duration against the table's usage counters
+      const elapsedSeconds = session.startedAt ? (Date.now() - new Date(session.startedAt).getTime()) / 1000 : 0;
+      await addTableUsage(tx, session.tableId, elapsedSeconds);
 
       return receipt;
     });
