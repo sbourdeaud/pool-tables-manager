@@ -7,7 +7,10 @@ A full-featured pool hall management system with session tracking, billing, subs
 - **Session Management**: Track active sessions, players, and table usage
 - **Billing System**: Automated time-based billing with subscriber discounts
 - **Subscriptions**: Monthly subscription management with automatic discounts
+- **Pending Orders**: Players can order drinks from their phone (PIN-protected); staff fulfill them from a dashboard queue with an audio notification
+- **QR Codes**: Each active table shows a QR code linking directly to its player view, with a configurable public hostname
 - **Reporting**: Financial reports by day/week/month/quarter/year
+- **French VAT (TVA) Compliance**: Per-item VAT rates, an anti-tamper sale audit trail, sequential receipts, period closures, and a VAT report with CSV export — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication
 - **Multi-language**: English and French support
 
@@ -31,6 +34,7 @@ The application will automatically initialize the database and apply all migrati
 - **[DEPLOYMENT.md](DEPLOYMENT.md)**: Complete deployment guide for new and existing instances
 - **[DEVELOPER_README.md](DEVELOPER_README.md)**: API documentation and development guide
 - **[USER_GUIDE.md](USER_GUIDE.md)**: User documentation and feature overview
+- **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
 - **[backend/tests/README.md](backend/tests/README.md)**: Testing documentation and CI integration
 
 ## Architecture

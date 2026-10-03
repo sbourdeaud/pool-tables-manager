@@ -189,6 +189,47 @@
       margin-top: 16px;
       font-size: 14px;
     }
+    .order-section {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 2px solid rgba(255, 255, 255, 0.1);
+    }
+    .order-drink-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    .order-drink-info { flex: 1; }
+    .order-drink-name { font-weight: 500; }
+    .order-drink-price { font-size: 13px; opacity: 0.7; margin-top: 2px; }
+    .order-qty-controls { display: flex; align-items: center; gap: 10px; }
+    .order-qty-btn {
+      width: 32px; height: 32px; border-radius: 8px; border: none;
+      background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 18px; font-weight: 700;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .order-qty-btn:hover { background: rgba(255, 255, 255, 0.22); }
+    .order-qty-value { min-width: 22px; text-align: center; font-weight: 600; }
+    .order-submit-row { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .order-basket-total { font-weight: 700; font-size: 18px; }
+    .order-place-btn {
+      padding: 12px 24px; font-size: 15px; font-weight: 600; background: #10b981; color: #fff;
+      border: none; border-radius: 10px; cursor: pointer; transition: all 0.2s;
+    }
+    .order-place-btn:hover { background: #059669; transform: translateY(-1px); }
+    .order-place-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .order-status-msg { margin-top: 12px; font-size: 14px; text-align: center; }
+    .order-status-msg.success { color: #10b981; }
+    .order-status-msg.error { color: #ef4444; }
+    .pending-order-card {
+      padding: 12px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 8px; margin-bottom: 8px; font-size: 14px;
+    }
+    .pending-order-title { font-weight: 600; margin-bottom: 4px; }
   </style>
 </head>
 <body>
@@ -397,6 +438,34 @@
             <div class="total-amount">${currency}${(data.totalCents/100).toFixed(2)}</div>
           </div>
         `;
+
+        // Pending drink orders this player already placed, awaiting staff fulfillment
+        if(data.pendingOrders && data.pendingOrders.length > 0){
+          html += '<div class="order-section"><div class="section-title">Your Orders (Pending)</div>';
+          for(const order of data.pendingOrders){
+            const desc = order.items.map(i => `${i.quantity} × ${i.description}`).join(', ');
+            html += `
+              <div class="pending-order-card">
+                <div class="pending-order-title">⏳ Being prepared — ${currency}${(order.totalCents/100).toFixed(2)}</div>
+                <div>${desc}</div>
+              </div>
+            `;
+          }
+          html += '</div>';
+        }
+
+        // Order drinks section
+        html += `
+          <div class="order-section">
+            <div class="section-title">Order Drinks</div>
+            <div id="orderDrinksList"><div class="loading">Loading menu...</div></div>
+            <div class="order-submit-row">
+              <div class="order-basket-total" id="orderBasketTotal">${currency}0.00</div>
+              <button class="order-place-btn" id="placeOrderBtn" disabled>Place Order</button>
+            </div>
+            <div class="order-status-msg" id="orderStatusMsg"></div>
+          </div>
+        `;
         
         container.innerHTML = html;
         
@@ -411,10 +480,111 @@
             durationEl.textContent = `${hours}:${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
           }
         }, 1000);
+
+        renderOrderDrinks();
         
         } catch(e){
           console.error(e);
           container.innerHTML = '<div class="error">Error loading table information</div>';
+        }
+      }
+
+      // --- Drink ordering ---
+      let drinksMenuCache = null;
+      const basket = {}; // drinkId -> quantity
+
+      function basketTotalCents(){
+        if(!drinksMenuCache) return 0;
+        return drinksMenuCache.reduce((sum, d) => sum + (basket[d.id] || 0) * d.price_cents, 0);
+      }
+
+      function refreshOrderUI(){
+        const totalEl = document.getElementById('orderBasketTotal');
+        const btn = document.getElementById('placeOrderBtn');
+        if(!totalEl || !btn) return;
+        const total = basketTotalCents();
+        totalEl.textContent = `${currency}${(total/100).toFixed(2)}`;
+        btn.disabled = total <= 0;
+      }
+
+      async function renderOrderDrinks(){
+        const listEl = document.getElementById('orderDrinksList');
+        if(!listEl) return;
+        try {
+          if(!drinksMenuCache){
+            drinksMenuCache = await fetch('/api/drinks').then(r => r.json());
+          }
+          listEl.innerHTML = drinksMenuCache.map(d => `
+            <div class="order-drink-row" data-drink-id="${d.id}">
+              <div class="order-drink-info">
+                <div class="order-drink-name">${d.name}</div>
+                <div class="order-drink-price">${currency}${(d.price_cents/100).toFixed(2)}</div>
+              </div>
+              <div class="order-qty-controls">
+                <button class="order-qty-btn" data-action="dec" type="button">−</button>
+                <div class="order-qty-value" data-qty-for="${d.id}">${basket[d.id] || 0}</div>
+                <button class="order-qty-btn" data-action="inc" type="button">+</button>
+              </div>
+            </div>
+          `).join('');
+
+          listEl.querySelectorAll('.order-drink-row').forEach(row => {
+            const drinkId = row.dataset.drinkId;
+            row.querySelector('[data-action="inc"]').addEventListener('click', () => {
+              basket[drinkId] = Math.min(50, (basket[drinkId] || 0) + 1);
+              row.querySelector('[data-qty-for]').textContent = basket[drinkId];
+              refreshOrderUI();
+            });
+            row.querySelector('[data-action="dec"]').addEventListener('click', () => {
+              basket[drinkId] = Math.max(0, (basket[drinkId] || 0) - 1);
+              row.querySelector('[data-qty-for]').textContent = basket[drinkId];
+              refreshOrderUI();
+            });
+          });
+
+          refreshOrderUI();
+
+          const placeBtn = document.getElementById('placeOrderBtn');
+          placeBtn.addEventListener('click', placeOrder);
+        } catch(e){
+          console.error('Failed to load drinks menu', e);
+          listEl.innerHTML = '<div class="error">Could not load drinks menu</div>';
+        }
+      }
+
+      async function placeOrder(){
+        const items = Object.entries(basket)
+          .filter(([, qty]) => qty > 0)
+          .map(([drinkId, quantity]) => ({ drinkId, quantity }));
+        if(items.length === 0) return;
+
+        const btn = document.getElementById('placeOrderBtn');
+        const statusEl = document.getElementById('orderStatusMsg');
+        btn.disabled = true;
+        statusEl.className = 'order-status-msg';
+        statusEl.textContent = 'Placing order...';
+
+        try {
+          const response = await fetch(`/api/public/table/${tableNumber}/order`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin, items })
+          });
+          if(!response.ok){
+            statusEl.className = 'order-status-msg error';
+            statusEl.textContent = 'Could not place order. Please try again or ask staff for help.';
+            btn.disabled = false;
+            return;
+          }
+          for(const key of Object.keys(basket)) delete basket[key];
+          statusEl.className = 'order-status-msg success';
+          statusEl.textContent = 'Order sent! A staff member will bring it shortly.';
+          loadTableData();
+        } catch(e){
+          console.error(e);
+          statusEl.className = 'order-status-msg error';
+          statusEl.textContent = 'Could not place order. Please try again or ask staff for help.';
+          btn.disabled = false;
         }
       }
       

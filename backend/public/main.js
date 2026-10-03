@@ -13,6 +13,9 @@
   const settlementModal = document.getElementById('settlementModal');
   const settlementContent = document.getElementById('settlementContent');
   const settlementClose = document.getElementById('settlementClose');
+  const qrModal = document.getElementById('qrModal');
+  const qrModalContent = document.getElementById('qrModalContent');
+  const qrClose = document.getElementById('qrClose');
   
   // Audio system for UI feedback
   let audioContext = null;
@@ -20,6 +23,10 @@
   
   // Duration update interval
   let durationUpdateInterval = null;
+
+  // Pending drink orders polling (dashboard panel)
+  let pendingOrdersInterval = null;
+  let knownPendingOrderIds = new Set();
   
   function initAudio(){
     if(!audioContext && audioEnabled){
@@ -71,6 +78,38 @@
     const audio = new Audio('/sounds/pool-ball.mp3');
     audio.volume = 0.5;
     audio.play().catch(err => console.log('Audio play failed:', err));
+  }
+
+  // Renders a single bell-like tone (fundamental + inharmonic overtones, like a real bell/triangle)
+  // with a sharp attack and long exponential decay.
+  function ringBell({freq, duration, overtones, gain, startAt}){
+    initAudio();
+    if(!audioContext) return;
+    const t0 = audioContext.currentTime + (startAt || 0);
+    const master = audioContext.createGain();
+    master.gain.setValueAtTime(0, t0);
+    master.gain.linearRampToValueAtTime(gain, t0 + 0.005);
+    master.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    master.connect(audioContext.destination);
+
+    const partials = [1, ...overtones];
+    const partialGains = [1, 0.5, 0.3, 0.18];
+    partials.forEach((mult, i) => {
+      const osc = audioContext.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq * mult;
+      const g = audioContext.createGain();
+      g.gain.value = (partialGains[i] || 0.1);
+      osc.connect(g); g.connect(master);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.1);
+    });
+  }
+
+  // "Bright Triangle" notification chime, played when a new drink order arrives on the dashboard.
+  function playNewOrderChime(){
+    if(!audioEnabled) return;
+    ringBell({ freq: 2200, duration: 1.8, gain: 0.25, overtones: [2.4, 3.1, 4.2], startAt: 0 });
   }
   
   const checkoutModal = document.getElementById('checkoutModal');
@@ -251,14 +290,19 @@
     addForm.innerHTML = `
       <input name="drink_name" placeholder="Drink Name" required />
       <label>Price: <input name="drink_price" placeholder="0.00" type="number" step="0.01" min="0" required style="width:100px" /> ${currency}</label>
-      <label><input type="checkbox" name="taxable" checked /> Taxable</label>
+      <label>VAT: <select name="vat_rate">
+        <option value="20">20% (standard)</option>
+        <option value="10">10% (consumption sur place)</option>
+        <option value="0">0% (exempt)</option>
+      </select></label>
       <button type="submit">Add Drink</button>
     `;
     addForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(addForm).entries());
       const priceCents = Math.round(parseFloat(fd.drink_price || 0) * 100);
-      await fetch('/api/admin/drinks', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ name_en: fd.drink_name, name_fr: fd.drink_name, price_cents: priceCents, taxable: !!fd.taxable }) });
+      const vatRatePercent = Math.round(parseFloat(fd.vat_rate || 20));
+      await fetch('/api/admin/drinks', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ name_en: fd.drink_name, name_fr: fd.drink_name, price_cents: priceCents, vatRatePercent }) });
       renderAdmin();
     });
     app.appendChild(addForm);
@@ -268,15 +312,18 @@
     const ul = document.createElement('ul');
     for(const d of list){
       const li = document.createElement('li');
-      li.textContent = `${d.name} — ${currency}${(d.price_cents/100).toFixed(2)}`;
+      li.textContent = `${d.name} — ${currency}${(d.price_cents/100).toFixed(2)} — VAT ${d.vatRatePercent != null ? d.vatRatePercent : 20}%`;
       const edit = document.createElement('button'); edit.textContent = 'Edit';
       edit.addEventListener('click', async ()=>{
         const newName = prompt('Drink Name', d.name);
         if(!newName) return;
         const newPrice = prompt('Price (' + currency + ')', (d.price_cents/100).toFixed(2));
         if(!newPrice) return;
+        const newVat = prompt('VAT rate % (e.g. 20, 10, 0)', d.vatRatePercent != null ? d.vatRatePercent : 20);
+        if(newVat === null) return;
         const priceCents = Math.round(parseFloat(newPrice) * 100);
-        await fetch('/api/admin/drinks/' + d.id, { method: 'PUT', headers: { 'Content-Type':'application/json'}, body: JSON.stringify({ name_en: newName, name_fr: newName, price_cents: priceCents, taxable: true }) });
+        const vatRatePercent = Math.round(parseFloat(newVat));
+        await fetch('/api/admin/drinks/' + d.id, { method: 'PUT', headers: { 'Content-Type':'application/json'}, body: JSON.stringify({ name_en: newName, name_fr: newName, price_cents: priceCents, vatRatePercent }) });
         renderAdmin();
       });
       const del = document.createElement('button'); del.textContent = 'Delete';
@@ -300,8 +347,8 @@
     const currency = localStorage.getItem('currency') || '$';
     
     const typeForm = document.createElement('form');
-    typeForm.innerHTML = `<input name="name_en" placeholder="Type name (EN)" required /> <input name="base_hourly" placeholder="Hourly rate (${currency})" type="number" step="0.01" min="0" required /> <button type="submit">Add Table Type</button>`;
-    typeForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const fd = Object.fromEntries(new FormData(typeForm).entries()); const cents = Math.round(parseFloat(fd.base_hourly || 0) * 100); await fetch('/api/table-types', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name_en: fd.name_en, name_fr: fd.name_en, base_hourly_cents: cents }) }); renderTableManagement(); });
+    typeForm.innerHTML = `<input name="name_en" placeholder="Type name (EN)" required /> <input name="base_hourly" placeholder="Hourly rate (${currency})" type="number" step="0.01" min="0" required /> <label>VAT: <select name="vat_rate"><option value="20">20%</option><option value="10">10%</option><option value="0">0%</option></select></label> <button type="submit">Add Table Type</button>`;
+    typeForm.addEventListener('submit', async (e)=>{ e.preventDefault(); const fd = Object.fromEntries(new FormData(typeForm).entries()); const cents = Math.round(parseFloat(fd.base_hourly || 0) * 100); const vatRatePercent = Math.round(parseFloat(fd.vat_rate || 20)); await fetch('/api/table-types', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name_en: fd.name_en, name_fr: fd.name_en, base_hourly_cents: cents, vatRatePercent }) }); renderTableManagement(); });
     app.appendChild(typeForm);
 
     const addTableForm = document.createElement('form');
@@ -334,7 +381,7 @@
     const typesHeader = document.createElement('h3'); typesHeader.textContent = 'Types'; list.appendChild(typesHeader);
     for(const t of types){
       const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px'; row.style.alignItems='center';
-      row.innerHTML = `<div style="flex:1">${t.name_en} — ${currency}${(t.base_hourly_cents/100).toFixed(2)}/hour</div>`;
+      row.innerHTML = `<div style="flex:1">${t.name_en} — ${currency}${(t.base_hourly_cents/100).toFixed(2)}/hour — VAT ${t.vatRatePercent != null ? t.vatRatePercent : 20}%</div>`;
       
       const editBtn = document.createElement('button'); 
       editBtn.textContent = 'Edit'; 
@@ -346,12 +393,15 @@
           alert('Invalid rate. Please enter a positive number.');
           return;
         }
+        const newVat = prompt(`VAT rate % for ${t.name_en} (e.g. 20, 10, 0):`, t.vatRatePercent != null ? t.vatRatePercent : 20);
+        if(newVat === null) return;
+        const vatRatePercent = Math.round(parseFloat(newVat));
         const cents = Math.round(rateFloat * 100);
         try{
           const resp = await fetch('/api/table-types/' + t.id, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ name_en: t.name_en, name_fr: t.name_fr, base_hourly_cents: cents })
+            body: JSON.stringify({ name_en: t.name_en, name_fr: t.name_fr, base_hourly_cents: cents, vatRatePercent })
           });
           if(!resp.ok){
             alert('Failed to update table type');
@@ -456,7 +506,19 @@
       clearInterval(durationUpdateInterval);
       durationUpdateInterval = null;
     }
-    
+    if(pendingOrdersInterval){
+      clearInterval(pendingOrdersInterval);
+      pendingOrdersInterval = null;
+    }
+
+    // Pending Orders panel - sits above the Tables grid so staff see new orders immediately
+    const pendingOrdersPanel = document.createElement('div');
+    pendingOrdersPanel.id = 'pendingOrdersPanel';
+    pendingOrdersPanel.style.marginBottom = '20px';
+    app.appendChild(pendingOrdersPanel);
+    await refreshPendingOrdersPanel(pendingOrdersPanel);
+    pendingOrdersInterval = setInterval(() => refreshPendingOrdersPanel(pendingOrdersPanel), 10000);
+
     const h = document.createElement('h2'); h.textContent = 'Tables'; app.appendChild(h);
     // fetch types, tables and sessions in parallel
     const [typesRes, tablesRes, sessionsRes] = await Promise.all([fetch('/api/table-types'), fetch('/api/tables'), fetch('/api/sessions')]);
@@ -586,6 +648,18 @@
               tabLabel.innerHTML = `<svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" style="display:inline-block;vertical-align:middle;margin-right:6px"><path d="M2,5H22V20H2V5M20,18V7H4V18H20M17,8A2,2 0 0,0 19,10V15A2,2 0 0,0 17,17H7A2,2 0 0,0 5,15V10A2,2 0 0,0 7,8H17M17,13V12C17,10.9 16.33,10 15.5,10C14.67,10 14,10.9 14,12V13C14,14.1 14.67,15 15.5,15C16.33,15 17,14.1 17,13M15.5,11A0.5,0.5 0 0,1 16,11.5V13.5A0.5,0.5 0 0,1 15.5,14A0.5,0.5 0 0,1 15,13.5V11.5A0.5,0.5 0 0,1 15.5,11M13,13V12C13,10.9 12.33,10 11.5,10C10.67,10 14,10.9 10,12V13C10,14.1 10.67,15 11.5,15C12.33,15 13,14.1 13,13M11.5,11A0.5,0.5 0 0,1 12,11.5V13.5A0.5,0.5 0 0,1 11.5,14A0.5,0.5 0 0,1 11,13.5V11.5A0.5,0.5 0 0,1 11.5,11M8,15H9V10H8L7,10.5V11.5L8,11V15Z"/></svg>Tab: ${localStorage.getItem('currency')||'$'}${(detail.totalCents/100).toFixed(2)}`;
             }catch(e){}
           })();
+
+          // Player-facing QR code: scanning takes the player straight to their table's
+          // live view (/table<N>?pin=<pin>) without needing to type the PIN manually.
+          if(sess.pin){
+            const qrRow = document.createElement('div'); qrRow.className = 'table-qr-row';
+            const qrThumb = document.createElement('div'); qrThumb.className = 'table-qr-thumb'; qrThumb.title = 'Click to enlarge';
+            qrThumb.innerHTML = buildQrSvg(tableSessionUrl(tb.number, sess.pin), 4, 2);
+            qrThumb.addEventListener('click', (evt)=>{ evt.stopPropagation(); showQrModal(tb.number, sess.pin); });
+            const qrCaption = document.createElement('div'); qrCaption.className = 'table-qr-caption'; qrCaption.textContent = 'Scan to track your time & tab';
+            qrRow.appendChild(qrThumb); qrRow.appendChild(qrCaption);
+            middle.appendChild(qrRow);
+          }
         } else {
           // Available table - show start button
           const avail = document.createElement('div'); avail.textContent = '✓ Available'; avail.style.color='rgba(255,255,255,0.5)'; avail.style.fontSize='14px'; avail.style.marginBottom='8px';
@@ -684,6 +758,78 @@
     function hashCode(str){ let h=0; for(let i=0;i<str.length;i++){ h = ((h<<5)-h) + str.charCodeAt(i); h |= 0 } return h; }
   }
 
+  // Fetches pending drink orders and (re)renders the dashboard panel in-place.
+  // Plays an audio cue when a brand-new order arrives so staff notice it.
+  async function refreshPendingOrdersPanel(panelEl){
+    if(!panelEl || !panelEl.isConnected) return;
+    let orders;
+    try{
+      orders = await fetch('/api/pending-orders').then(r => r.ok ? r.json() : []);
+    }catch(e){ console.warn('failed to load pending orders', e); return; }
+
+    const newOrderArrived = orders.some(o => !knownPendingOrderIds.has(o.id));
+    knownPendingOrderIds = new Set(orders.map(o => o.id));
+    if(newOrderArrived) playNewOrderChime();
+
+    const currency = localStorage.getItem('currency') || '$';
+
+    if(orders.length === 0){
+      panelEl.innerHTML = '';
+      return;
+    }
+
+    const h = document.createElement('h2'); h.textContent = `🔔 Pending Orders (${orders.length})`; h.style.marginBottom = '12px';
+    const grid = document.createElement('div'); grid.style.display = 'grid'; grid.style.gap = '12px'; grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
+
+    for(const order of orders){
+      const card = document.createElement('div'); card.className = 'card';
+      card.style.borderLeft = '3px solid #f59e0b';
+      card.style.display = 'flex'; card.style.flexDirection = 'column'; card.style.gap = '8px';
+
+      const title = document.createElement('div'); title.style.fontWeight = '700';
+      title.textContent = `Table #${order.tableNumber ?? '?'}`;
+      card.appendChild(title);
+
+      const itemsList = document.createElement('div'); itemsList.style.fontSize = '14px'; itemsList.style.opacity = '0.9';
+      itemsList.textContent = order.items.map(i => `${i.quantity} × ${i.description}`).join(', ');
+      card.appendChild(itemsList);
+
+      const meta = document.createElement('div'); meta.style.fontSize = '12px'; meta.style.opacity = '0.6';
+      const minsAgo = Math.max(0, Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000));
+      meta.textContent = `${currency}${(order.totalCents/100).toFixed(2)} — ordered ${minsAgo === 0 ? 'just now' : minsAgo + ' min ago'}`;
+      card.appendChild(meta);
+
+      const actions = document.createElement('div'); actions.style.display = 'flex'; actions.style.gap = '8px'; actions.style.marginTop = '4px';
+      const fulfillBtn = document.createElement('button'); fulfillBtn.textContent = '✓ Fulfilled'; fulfillBtn.style.flex = '1';
+      fulfillBtn.style.background = '#10b981'; fulfillBtn.style.color = '#fff'; fulfillBtn.style.fontWeight = '600';
+      fulfillBtn.addEventListener('click', async ()=>{
+        fulfillBtn.disabled = true;
+        try{
+          await fetch('/api/pending-orders/' + order.id + '/fulfill', { method: 'POST' });
+          playPoolBallSound();
+        }catch(e){ console.error(e); alert('Failed to fulfill order'); }
+        renderDashboard(); // refresh whole dashboard so the table's tab total reflects the newly billed items
+      });
+      const cancelBtn = document.createElement('button'); cancelBtn.textContent = '✕ Cancel'; cancelBtn.style.flex = '1';
+      cancelBtn.addEventListener('click', async ()=>{
+        if(!confirm('Cancel/reject this order? It will not be added to the tab.')) return;
+        cancelBtn.disabled = true;
+        try{
+          await fetch('/api/pending-orders/' + order.id + '/cancel', { method: 'POST' });
+        }catch(e){ console.error(e); alert('Failed to cancel order'); }
+        refreshPendingOrdersPanel(panelEl);
+      });
+      actions.appendChild(fulfillBtn); actions.appendChild(cancelBtn);
+      card.appendChild(actions);
+
+      grid.appendChild(card);
+    }
+
+    panelEl.innerHTML = '';
+    panelEl.appendChild(h);
+    panelEl.appendChild(grid);
+  }
+
   // Modal helpers
   function hideModal(){ 
     modalBackdrop.style.display = 'none'; 
@@ -693,12 +839,43 @@
     checkoutModal.style.display = 'none';
     startSessionModal.style.display = 'none';
     settlementModal.style.display = 'none';
+    qrModal.style.display = 'none';
   }
   modalClose.addEventListener('click', ()=> hideModal());
   transferClose.addEventListener('click', ()=> hideModal());
   checkoutClose.addEventListener('click', ()=> hideModal());
   startSessionCancel.addEventListener('click', ()=> hideModal());
   settlementClose.addEventListener('click', ()=> hideModal());
+  qrClose.addEventListener('click', ()=> hideModal());
+
+  // Build an inline QR code SVG string for a given piece of text using the vendored qrcode-generator lib
+  function buildQrSvg(text, cellSize, margin){
+    const qr = qrcode(0, 'M'); // typeNumber 0 = auto-size, 'M' = medium error correction
+    qr.addData(text);
+    qr.make();
+    return qr.createSvgTag({ cellSize: cellSize || 5, margin: margin != null ? margin : 4 });
+  }
+
+  // Returns the player-facing URL for a table's active session, with the PIN pre-filled.
+  // Uses the admin-configured "Public Base URL" setting (Settings page) when set, so QR
+  // codes point at a LAN IP/FQDN reachable by players' phones instead of "localhost".
+  function tableSessionUrl(tableNumber, pin){
+    const base = (localStorage.getItem('public_base_url') || window.location.origin).replace(/\/+$/, '');
+    return `${base}/table${tableNumber}?pin=${pin}`;
+  }
+
+  function showQrModal(tableNumber, pin){
+    transferModal.style.display = 'none';
+    checkoutModal.style.display = 'none';
+    settlementModal.style.display = 'none';
+    document.getElementById('addDrinkModal').style.display = 'none';
+    startSessionModal.style.display = 'none';
+    const url = tableSessionUrl(tableNumber, pin);
+    qrModalContent.innerHTML = buildQrSvg(url, 6, 4) +
+      `<div class="qr-url">${url}</div>`;
+    qrModal.style.display = 'block';
+    modalBackdrop.style.display = 'flex';
+  }
 
   async function showAddDrinkModal(sessionId){
     modalDrinksList.innerHTML = '<div>Loading…</div>';
@@ -748,7 +925,7 @@
         const addBtn = document.createElement('button'); addBtn.textContent = 'Add';
         addBtn.addEventListener('click', async ()=>{
           const q = Number(qty.value) || 1;
-          await fetch('/api/sessions/' + sessionId + '/items', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ type:'menu_item', description: d.name, quantity: q, unitPrice: d.price_cents }) });
+          await fetch('/api/sessions/' + sessionId + '/items', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ type:'menu_item', description: d.name, quantity: q, unitPrice: d.price_cents, vatRatePercent: d.vatRatePercent }) });
           renderDashboard();
           showAddDrinkModal(sessionId);
         });
@@ -1305,6 +1482,7 @@
       totalsContainer.appendChild(totalRow);
       checkoutContent.appendChild(totalsContainer);
       
+      let currentDiscountCents = 0;
       function updateCheckoutTotals(){
         let newSubtotal = tableCharge;
         adjustedItems.forEach(item => {
@@ -1321,6 +1499,7 @@
         } else {
           discountCents = Math.round(discountVal * 100);
         }
+        currentDiscountCents = discountCents;
         
         const finalTotal = Math.max(0, newSubtotal - discountCents);
         
@@ -1350,7 +1529,13 @@
       completeBtn.style.fontWeight = '600';
       completeBtn.addEventListener('click', async ()=>{
         if(confirm('Complete payment and end session?')){
-          await fetch('/api/sessions/' + sessionId + '/end', { method: 'PATCH' });
+          const res = await fetch('/api/sessions/' + sessionId + '/checkout', { method: 'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ discountCents: currentDiscountCents }) });
+          if(res.ok){
+            const receipt = await res.json();
+            alert(`Payment complete — Receipt #${receipt.receiptNumber}/${receipt.year}`);
+          } else {
+            await fetch('/api/sessions/' + sessionId + '/end', { method: 'PATCH' });
+          }
           hideModal();
           renderDashboard();
         }
@@ -1694,6 +1879,22 @@
     appNameRow.appendChild(appNameHelp);
     form.appendChild(appNameRow);
     
+    const baseUrlRow = document.createElement('div');
+    const baseUrlLabel = document.createElement('label'); baseUrlLabel.textContent = 'Public Base URL: '; baseUrlLabel.style.fontWeight='600';
+    const baseUrlInput = document.createElement('input'); baseUrlInput.type='text'; baseUrlInput.style.marginLeft='8px'; baseUrlInput.style.width='240px'; baseUrlInput.value = settings.public_base_url || ''; baseUrlInput.placeholder = window.location.origin;
+    baseUrlInput.addEventListener('change', async (e)=>{
+      const val = e.target.value.trim().replace(/\/+$/, '');
+      try{
+        await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ public_base_url: val }) });
+        if(val) localStorage.setItem('public_base_url', val); else localStorage.removeItem('public_base_url');
+      }catch(err){ console.warn('failed saving setting', err); }
+    });
+    baseUrlRow.appendChild(baseUrlLabel); baseUrlRow.appendChild(baseUrlInput);
+    const baseUrlHelp = document.createElement('div'); baseUrlHelp.style.fontSize='12px'; baseUrlHelp.style.opacity='0.7'; baseUrlHelp.style.marginTop='4px';
+    baseUrlHelp.textContent = `Hostname/IP used in table QR codes so players' phones can reach this app (e.g. http://192.168.1.50:3000 or https://pool.example.com). Leave blank to use the address you're currently browsing from (${window.location.origin}).`;
+    baseUrlRow.appendChild(baseUrlHelp);
+    form.appendChild(baseUrlRow);
+
     const langRow = document.createElement('div');
     const langLabel = document.createElement('label'); langLabel.textContent = 'Language: '; langLabel.style.fontWeight='600';
     const selLang = document.createElement('select'); selLang.style.marginLeft='8px'; selLang.innerHTML = '<option value="en">English</option><option value="fr">Français</option>';
@@ -1731,6 +1932,35 @@
     const audioHelp = document.createElement('div'); audioHelp.style.fontSize='12px'; audioHelp.style.opacity='0.7'; audioHelp.style.marginTop='4px'; audioHelp.textContent = 'Play subtle click sounds when interacting with the UI';
     audioRow.appendChild(audioHelp);
     form.appendChild(audioRow);
+
+    // Fiscal / Legal Information (for French VAT reporting & receipts)
+    const fiscalSection = document.createElement('div');
+    fiscalSection.style.border = '1px dashed rgba(255,255,255,0.06)';
+    fiscalSection.style.padding = '12px';
+    fiscalSection.style.borderRadius = '6px';
+    const fiscalTitle = document.createElement('h3'); fiscalTitle.textContent = 'Fiscal / Legal Information'; fiscalTitle.style.marginTop = '0'; fiscalSection.appendChild(fiscalTitle);
+    const fiscalHelp = document.createElement('div'); fiscalHelp.style.fontSize='12px'; fiscalHelp.style.opacity='0.7'; fiscalHelp.style.marginBottom='8px';
+    fiscalHelp.textContent = 'Used on receipts and in the VAT (TVA) report. Consult your expert-comptable to confirm the correct values for your business.';
+    fiscalSection.appendChild(fiscalHelp);
+
+    const fiscalFields = [
+      ['legal_name', 'Legal Business Name'],
+      ['siret', 'SIRET'],
+      ['siren', 'SIREN'],
+      ['tva_number', 'TVA Intracommunautaire No.'],
+      ['legal_address', 'Registered Address'],
+      ['vat_regime', 'VAT Regime (e.g. réel normal, réel simplifié, franchise en base)'],
+      ['vat_periodicity', 'Declaration Periodicity (monthly/quarterly/annual)']
+    ];
+    for(const [key, label] of fiscalFields){
+      const row = document.createElement('div');
+      const lab = document.createElement('label'); lab.textContent = label + ': '; lab.style.fontWeight='600';
+      const input = document.createElement('input'); input.type='text'; input.style.marginLeft='8px'; input.style.width='260px'; input.value = settings[key] || '';
+      input.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ [key]: e.target.value }) }); }catch(err){ console.warn('failed saving setting', key, err); } });
+      row.appendChild(lab); row.appendChild(input);
+      fiscalSection.appendChild(row);
+    }
+    form.appendChild(fiscalSection);
 
     // OIDC Settings
     const oidcSection = document.createElement('div');
@@ -2568,6 +2798,129 @@
     setTimeout(() => {
       form.dispatchEvent(new Event('submit'));
     }, 100);
+
+    // --- TVA (VAT) Report ---
+    const vatSection = document.createElement('div');
+    vatSection.style.marginTop = '40px';
+    vatSection.style.borderTop = '1px solid rgba(255,255,255,0.1)';
+    vatSection.style.paddingTop = '24px';
+    const vatH = document.createElement('h2'); vatH.textContent = 'TVA (VAT) Report'; vatSection.appendChild(vatH);
+    const vatHelp = document.createElement('div'); vatHelp.style.fontSize='12px'; vatHelp.style.opacity='0.7'; vatHelp.style.marginBottom='12px';
+    vatHelp.textContent = 'Figures needed for your CA3/CA12 VAT declaration. Not legal/tax advice — confirm with your expert-comptable before filing.';
+    vatSection.appendChild(vatHelp);
+
+    const vatForm = document.createElement('form');
+    vatForm.innerHTML = `
+      <label>Period Type:
+        <select name="periodType" style="margin:8px">
+          <option value="month">Month</option>
+          <option value="quarter">Quarter</option>
+          <option value="year">Year</option>
+          <option value="day">Day</option>
+        </select>
+      </label>
+      <label id="vatDateLabel" style="display:none">Date: <input name="date" type="date" value="${todayStr}" style="margin:8px" /></label>
+      <label id="vatYearLabel">Year: <input name="year" type="number" value="${today.getFullYear()}" min="2020" max="2099" style="width:100px; margin:8px" /></label>
+      <label id="vatMonthLabel">Month: <input name="month" type="number" value="${today.getMonth()+1}" min="1" max="12" style="width:80px; margin:8px" /></label>
+      <label id="vatQuarterLabel" style="display:none">Quarter:
+        <select name="quarter" style="margin:8px">
+          <option value="1">Q1 (Jan-Mar)</option>
+          <option value="2">Q2 (Apr-Jun)</option>
+          <option value="3">Q3 (Jul-Sep)</option>
+          <option value="4">Q4 (Oct-Dec)</option>
+        </select>
+      </label>
+      <button type="submit" style="margin-left:8px">Generate VAT Report</button>
+      <button type="button" id="vatExportBtn" style="margin-left:8px">Export CSV</button>
+    `;
+    const vatPeriodType = vatForm.querySelector('[name="periodType"]');
+    const vatDateLabel = vatForm.querySelector('#vatDateLabel');
+    const vatYearLabel = vatForm.querySelector('#vatYearLabel');
+    const vatMonthLabel = vatForm.querySelector('#vatMonthLabel');
+    const vatQuarterLabel = vatForm.querySelector('#vatQuarterLabel');
+    vatPeriodType.addEventListener('change', ()=>{
+      const v = vatPeriodType.value;
+      vatDateLabel.style.display = v === 'day' ? '' : 'none';
+      vatYearLabel.style.display = v === 'day' ? 'none' : '';
+      vatMonthLabel.style.display = v === 'month' ? '' : 'none';
+      vatQuarterLabel.style.display = v === 'quarter' ? '' : 'none';
+    });
+    vatSection.appendChild(vatForm);
+
+    const vatResultDiv = document.createElement('div'); vatResultDiv.style.marginTop = '16px';
+    vatSection.appendChild(vatResultDiv);
+
+    function vatQueryParams(){
+      const fd = Object.fromEntries(new FormData(vatForm).entries());
+      return new URLSearchParams(fd).toString();
+    }
+
+    async function loadVatReport(){
+      vatResultDiv.innerHTML = 'Loading...';
+      try{
+        const qs = vatQueryParams();
+        const res = await fetch('/api/reports/vat?' + qs);
+        if(!res.ok) throw new Error('request failed');
+        const data = await res.json();
+        const rateRows = Object.entries(data.byRate || {}).map(([rate, v]) => `
+          <tr>
+            <td style="padding:4px 12px">${rate}%</td>
+            <td style="padding:4px 12px">${currency}${(v.htCents/100).toFixed(2)}</td>
+            <td style="padding:4px 12px">${currency}${(v.vatCents/100).toFixed(2)}</td>
+            <td style="padding:4px 12px">${currency}${(v.totalTtcCents/100).toFixed(2)}</td>
+          </tr>`).join('');
+        vatResultDiv.innerHTML = `
+          <div style="margin-bottom:8px">Period: <strong>${data.periodKey}</strong> ${data.closed ? ' — <span style="color:#f59e0b">🔒 Closed on ' + new Date(data.closedAt).toLocaleDateString() + '</span>' : ''}</div>
+          <table style="border-collapse:collapse">
+            <thead><tr><th style="text-align:left;padding:4px 12px">VAT Rate</th><th style="text-align:left;padding:4px 12px">Total HT</th><th style="text-align:left;padding:4px 12px">TVA</th><th style="text-align:left;padding:4px 12px">Total TTC</th></tr></thead>
+            <tbody>${rateRows || '<tr><td style="padding:4px 12px" colspan="4">No sales in this period</td></tr>'}</tbody>
+            <tfoot><tr style="font-weight:600;border-top:1px solid rgba(255,255,255,0.2)">
+              <td style="padding:4px 12px">Total</td>
+              <td style="padding:4px 12px">${currency}${(data.grandHtCents/100).toFixed(2)}</td>
+              <td style="padding:4px 12px">${currency}${(data.grandVatCents/100).toFixed(2)}</td>
+              <td style="padding:4px 12px">${currency}${(data.grandTotalTtcCents/100).toFixed(2)}</td>
+            </tr></tfoot>
+          </table>
+          <div style="margin-top:8px;font-size:12px;opacity:0.7">By category — Table: ${currency}${((data.byCategory.table||0)/100).toFixed(2)} · Drinks: ${currency}${((data.byCategory.drinks||0)/100).toFixed(2)} · Discounts: ${currency}${((data.byCategory.discount||0)/100).toFixed(2)} · Other: ${currency}${((data.byCategory.other||0)/100).toFixed(2)}</div>
+          <button id="closePeriodBtn" style="margin-top:12px" ${data.closed ? 'disabled' : ''}>${data.closed ? 'Period Closed' : '🔒 Close Period (lock for filing)'}</button>
+          <div id="closuresHistory" style="margin-top:20px"></div>
+        `;
+        const closeBtn = vatResultDiv.querySelector('#closePeriodBtn');
+        if(closeBtn && !data.closed){
+          closeBtn.addEventListener('click', async ()=>{
+            if(!confirm(`Close period ${data.periodKey}? Once closed, its sales records can no longer be erased via "Clear All Session History".`)) return;
+            const fd = Object.fromEntries(new FormData(vatForm).entries());
+            const resp = await fetch('/api/closures', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(fd) });
+            if(!resp.ok){ const body = await resp.json().catch(()=>({})); return alert('Failed to close period: ' + (body.error || resp.status)); }
+            alert('Period closed.');
+            loadVatReport();
+          });
+        }
+        await loadClosuresHistory();
+      }catch(err){
+        console.error(err);
+        vatResultDiv.innerHTML = '<div style="color:#ef4444">Failed to load VAT report</div>';
+      }
+    }
+
+    async function loadClosuresHistory(){
+      const histDiv = vatResultDiv.querySelector('#closuresHistory');
+      if(!histDiv) return;
+      try{
+        const res = await fetch('/api/closures');
+        const closures = res.ok ? await res.json() : [];
+        if(!closures.length){ histDiv.innerHTML = ''; return; }
+        histDiv.innerHTML = '<h4 style="margin-bottom:6px">Closed Periods</h4>' + closures.map(c => `<div style="font-size:12px;opacity:0.8">${c.periodType} ${c.periodKey} — TTC ${currency}${(c.totalTtcCents/100).toFixed(2)} (VAT ${currency}${(c.totalVatCents/100).toFixed(2)}) — closed ${new Date(c.closedAt).toLocaleDateString()} by ${c.closedBy || 'unknown'}</div>`).join('');
+      }catch(err){ console.warn('failed to load closures', err); }
+    }
+
+    vatForm.addEventListener('submit', (e)=>{ e.preventDefault(); loadVatReport(); });
+    vatForm.querySelector('#vatExportBtn').addEventListener('click', ()=>{
+      window.open('/api/reports/vat/export?' + vatQueryParams(), '_blank');
+    });
+
+    app.appendChild(vatSection);
+    setTimeout(()=> loadVatReport(), 150);
     
     const backBtn = document.createElement('button');
     backBtn.textContent = '← Back to Admin';
@@ -2645,6 +2998,8 @@
       const currency = settings.currency || localStorage.getItem('currency') || '$';
       localStorage.setItem('currency', currency);
       title.textContent = settings.app_name || 'Pool Hall';
+      if(settings.public_base_url) localStorage.setItem('public_base_url', settings.public_base_url);
+      else localStorage.removeItem('public_base_url');
     }catch(e){ console.warn('settings load failed', e); if(!localStorage.getItem('currency')) localStorage.setItem('currency','$'); }
   })();
 

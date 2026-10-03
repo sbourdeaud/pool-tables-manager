@@ -210,6 +210,36 @@ async function requireAuth(req, res, next){
 // Mount protection for admin-prefixed routes
 app.use('/api/admin', (req, res, next) => requireAuth(req, res, next));
 
+// --- VAT / anti-fraud helpers -------------------------------------------------
+// Prices in this app are stored VAT-included (TTC). Given a TTC total and a VAT
+// rate, back out the VAT portion: vat = total - total / (1 + rate/100).
+function vatAmountFromTotal(totalCents, ratePercent){
+  const rate = Number(ratePercent) || 0;
+  if(!totalCents || !rate) return 0;
+  const htCents = totalCents / (1 + rate / 100);
+  return Math.round(totalCents - htCents);
+}
+
+// Identify the logged-in staff member for audit trail purposes (void/correction logs).
+function getActorName(req){
+  const user = req.session && req.session.user;
+  if(!user) return 'unknown';
+  if(user.local) return user.username || 'admin';
+  if(user.userinfo) return user.userinfo.email || user.userinfo.preferred_username || user.userinfo.name || 'oidc_user';
+  return 'unknown';
+}
+
+// Soft-void a tab line item instead of hard-deleting it: French anti-fraud law
+// (CGI art. 286-I-3 bis / ISCA) requires that recorded sales are never destroyed.
+// The row is kept with voidedAt/voidedBy/voidReason set, and all reporting/read
+// queries filter it out via `voidedAt: null`.
+async function voidTabLineItem(id, actor, reason){
+  return prisma.tabLineItem.update({
+    where: { id },
+    data: { voidedAt: new Date(), voidedBy: actor, voidReason: reason || 'voided' }
+  });
+}
+
 // Admin OIDC test endpoint
 app.get('/api/admin/oidc/test', async (req, res) => {
   try {
@@ -254,19 +284,25 @@ app.patch('/api/settings', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-// Clear all session history (danger zone)
+// Clear all session history (danger zone). Sessions that fall within a closed
+// accounting period are preserved (French law requires closed-period sales records
+// be retained, not deleted) - only unclosed/test data can be wiped from here.
 app.delete('/api/admin/clear-history', async (req, res) => {
   try {
-    // Delete all tab line items for ended sessions
-    await prisma.$executeRaw`
+    const closures = await prisma.closurePeriod.findMany({ select: { fromDate: true, toDate: true } });
+    const protectedRanges = closures.map(c => `(ended_at >= '${c.fromDate.toISOString()}' AND ended_at <= '${c.toDate.toISOString()}')`);
+    const protectionClause = protectedRanges.length ? `AND NOT (${protectedRanges.join(' OR ')})` : '';
+
+    // Delete all tab line items for ended, unprotected sessions
+    await prisma.$executeRawUnsafe(`
       DELETE FROM "TabLineItem" 
-      WHERE session_id IN (SELECT id FROM "Session" WHERE status = 'ended')
-    `;
+      WHERE session_id IN (SELECT id FROM "Session" WHERE status = 'ended' ${protectionClause})
+    `);
     
-    // Delete all ended sessions
-    const result = await prisma.$executeRaw`
-      DELETE FROM "Session" WHERE status = 'ended'
-    `;
+    // Delete all ended, unprotected sessions
+    const result = await prisma.$executeRawUnsafe(`
+      DELETE FROM "Session" WHERE status = 'ended' ${protectionClause}
+    `);
     
     res.json({ success: true, message: 'Session history cleared' });
   } catch (e) { 
@@ -369,7 +405,8 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       const items = await prisma.tabLineItem.findMany({
         where: {
           sessionId: { in: sessionIds },
-          type: { notIn: ['meta', 'settlement', 'table_settlement'] }
+          type: { notIn: ['meta', 'settlement', 'table_settlement'] },
+          voidedAt: null
         }
       });
       drinksTotal = items.reduce((sum, item) => sum + (item.totalCents || 0), 0);
@@ -481,7 +518,8 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
           const items = await prisma.tabLineItem.findMany({
             where: {
               sessionId: { in: periodSessionIds },
-              type: { not: 'meta' }
+              type: { not: 'meta' },
+              voidedAt: null
             }
           });
           periodDrinks = items.reduce((sum, item) => sum + (item.totalCents || 0), 0);
@@ -542,7 +580,7 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
         const table = Array.isArray(tableData) ? tableData[0] : tableData;
         
         const items = await prisma.tabLineItem.findMany({
-          where: { sessionId: sess.id, type: { notIn: ['meta', 'settlement', 'table_settlement'] } }
+          where: { sessionId: sess.id, type: { notIn: ['meta', 'settlement', 'table_settlement'] }, voidedAt: null }
         });
         
         const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
@@ -607,6 +645,150 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'db_error' });
   }
+});
+
+// Resolve a periodType ('day'|'month'|'quarter'|'year') + query params into a date range,
+// along with a stable periodKey used for period-closure locking.
+function resolveVatPeriod(query){
+  const { periodType, year, month, quarter, date } = query;
+  let startDate, endDate, periodKey;
+  if(periodType === 'day'){
+    const d = new Date(date);
+    startDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    endDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    periodKey = date;
+  } else if(periodType === 'month'){
+    startDate = new Date(parseInt(year), parseInt(month)-1, 1);
+    endDate = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59, 999);
+    periodKey = `${year}-${String(month).padStart(2,'0')}`;
+  } else if(periodType === 'quarter'){
+    const q = parseInt(quarter);
+    const startMonth = (q-1) * 3;
+    startDate = new Date(parseInt(year), startMonth, 1);
+    endDate = new Date(parseInt(year), startMonth + 3, 0, 23, 59, 59, 999);
+    periodKey = `${year}-Q${q}`;
+  } else {
+    startDate = new Date(parseInt(year), 0, 1);
+    endDate = new Date(parseInt(year), 11, 31, 23, 59, 59, 999);
+    periodKey = `${year}`;
+  }
+  return { startDate, endDate, periodKey };
+}
+
+// Aggregate every non-voided tab line item in a date range, grouped by VAT rate.
+// Reporting is based on persisted sale records (not a live recomputation) so that
+// discounts and corrections are reflected, consistent with the anti-fraud ledger.
+async function aggregateVat(startDate, endDate){
+  const items = await prisma.tabLineItem.findMany({
+    where: { createdAt: { gte: startDate, lte: endDate }, voidedAt: null, type: { not: 'meta' } }
+  });
+
+  const byRate = {};
+  const byCategory = { table: 0, drinks: 0, discount: 0, other: 0 };
+  let grandTotalTtcCents = 0;
+  let grandVatCents = 0;
+
+  for(const item of items){
+    const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+    if(!byRate[rate]) byRate[rate] = { totalTtcCents: 0, vatCents: 0, htCents: 0 };
+    // Legacy rows (created before VAT snapshotting existed) have vat_rate_percent = null and
+    // vat_amount_cents defaulted to 0 by the DB - recompute their VAT live in that case rather
+    // than trusting the stored 0, which would understate VAT due.
+    const vat = item.vatRatePercent != null ? (item.vatAmountCents || 0) : vatAmountFromTotal(item.totalCents, rate);
+    byRate[rate].totalTtcCents += item.totalCents;
+    byRate[rate].vatCents += vat;
+    byRate[rate].htCents += (item.totalCents - vat);
+    grandTotalTtcCents += item.totalCents;
+    grandVatCents += vat;
+
+    const cat = item.type === 'table_time' || item.type === 'table_settlement' ? 'table'
+      : item.type === 'discount' ? 'discount'
+      : (item.type === 'drink' || item.type === 'menu_item') ? 'drinks'
+      : 'other';
+    byCategory[cat] += item.totalCents;
+  }
+
+  return {
+    byRate, byCategory,
+    grandTotalTtcCents,
+    grandVatCents,
+    grandHtCents: grandTotalTtcCents - grandVatCents,
+    lineCount: items.length,
+    items
+  };
+}
+
+// French VAT (TVA) report for a given period - the figures a business owner needs
+// to fill in their CA3/CA12 VAT declaration.
+app.get('/api/reports/vat', requireAuth, async (req, res) => {
+  try {
+    const { startDate, endDate, periodKey } = resolveVatPeriod(req.query);
+    const agg = await aggregateVat(startDate, endDate);
+    const closure = await prisma.closurePeriod.findUnique({ where: { periodType_periodKey: { periodType: req.query.periodType || 'month', periodKey } } }).catch(()=>null);
+    res.json({
+      periodKey,
+      fromDate: startDate,
+      toDate: endDate,
+      byRate: agg.byRate,
+      byCategory: agg.byCategory,
+      grandTotalTtcCents: agg.grandTotalTtcCents,
+      grandVatCents: agg.grandVatCents,
+      grandHtCents: agg.grandHtCents,
+      lineCount: agg.lineCount,
+      closed: !!closure,
+      closedAt: closure ? closure.closedAt : null
+    });
+  } catch(err){ console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// CSV export of the detailed VAT ledger for a period (for handing to an accountant)
+app.get('/api/reports/vat/export', requireAuth, async (req, res) => {
+  try {
+    const { startDate, endDate, periodKey } = resolveVatPeriod(req.query);
+    const agg = await aggregateVat(startDate, endDate);
+    const rows = [['Date','Session ID','Type','Description','Quantity','Unit Price (cents)','Total TTC (cents)','VAT Rate %','VAT (cents)','Total HT (cents)']];
+    for(const item of agg.items){
+      const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+      const vat = item.vatRatePercent != null ? (item.vatAmountCents || 0) : vatAmountFromTotal(item.totalCents, rate);
+      rows.push([
+        new Date(item.createdAt).toISOString(), item.sessionId, item.type, (item.description||'').replace(/,/g,';'),
+        item.quantity, item.unitPrice, item.totalCents, rate, vat, item.totalCents - vat
+      ]);
+    }
+    const csv = rows.map(r => r.join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="vat-report-${periodKey}.csv"`);
+    res.send(csv);
+  } catch(err){ console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Lock (close) a VAT period once it has been declared/filed. Closed periods can no
+// longer have their sales history cleared from the admin "clear history" tool.
+app.post('/api/closures', requireAuth, async (req, res) => {
+  try {
+    const { periodType } = req.body;
+    const { startDate, endDate, periodKey } = resolveVatPeriod(req.body);
+    const agg = await aggregateVat(startDate, endDate);
+    const closure = await prisma.closurePeriod.create({
+      data: {
+        periodType, periodKey, fromDate: startDate, toDate: endDate,
+        totalsJson: JSON.stringify(agg.byRate),
+        totalHtCents: agg.grandHtCents, totalVatCents: agg.grandVatCents, totalTtcCents: agg.grandTotalTtcCents,
+        closedBy: getActorName(req)
+      }
+    });
+    res.status(201).json(closure);
+  } catch(err){
+    if(err.code === 'P2002') return res.status(409).json({ error: 'already_closed' });
+    console.error(err); res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.get('/api/closures', requireAuth, async (req, res) => {
+  try {
+    const closures = await prisma.closurePeriod.findMany({ orderBy: { closedAt: 'desc' } });
+    res.json(closures);
+  } catch(err){ console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Reporting: aggregate totals over period
@@ -683,7 +865,7 @@ app.get('/api/drinks', async (req, res) => {
   const locale = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const list = await prisma.drink.findMany({ orderBy: { createdAt: 'asc' } });
-    const mapped = list.map(d => ({ id: d.id, name: locale === 'fr' && d.name_fr ? d.name_fr : d.name_en, price_cents: d.price_cents, taxable: d.taxable }));
+    const mapped = list.map(d => ({ id: d.id, name: locale === 'fr' && d.name_fr ? d.name_fr : d.name_en, price_cents: d.price_cents, taxable: d.taxable, vatRatePercent: d.vatRatePercent }));
     res.json(mapped);
   } catch (err) {
     console.error(err);
@@ -691,10 +873,10 @@ app.get('/api/drinks', async (req, res) => {
   }
 });
 
-app.post('/api/admin/drinks', async (req, res) => {
-  const { name_en, name_fr, price_cents, taxable } = req.body;
+app.post('/api/admin/drinks', requireAuth, async (req, res) => {
+  const { name_en, name_fr, price_cents, taxable, vatRatePercent } = req.body;
   try {
-    const created = await prisma.drink.create({ data: { name_en, name_fr, price_cents, taxable: !!taxable } });
+    const created = await prisma.drink.create({ data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20 } });
     res.status(201).json(created);
   } catch (err) {
     console.error(err);
@@ -703,7 +885,7 @@ app.post('/api/admin/drinks', async (req, res) => {
 });
 
 // Drink management: get single, update, delete
-app.get('/api/admin/drinks/:id', async (req, res) => {
+app.get('/api/admin/drinks/:id', requireAuth, async (req, res) => {
   try {
     const d = await prisma.drink.findUnique({ where: { id: req.params.id } });
     if (!d) return res.status(404).json({ error: 'not_found' });
@@ -711,15 +893,15 @@ app.get('/api/admin/drinks/:id', async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.put('/api/admin/drinks/:id', async (req, res) => {
-  const { name_en, name_fr, price_cents, taxable } = req.body;
+app.put('/api/admin/drinks/:id', requireAuth, async (req, res) => {
+  const { name_en, name_fr, price_cents, taxable, vatRatePercent } = req.body;
   try {
-    const updated = await prisma.drink.update({ where: { id: req.params.id }, data: { name_en, name_fr, price_cents, taxable: !!taxable } });
+    const updated = await prisma.drink.update({ where: { id: req.params.id }, data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20 } });
     res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
-app.delete('/api/admin/drinks/:id', async (req, res) => {
+app.delete('/api/admin/drinks/:id', requireAuth, async (req, res) => {
   try {
     await prisma.drink.delete({ where: { id: req.params.id } });
     res.status(204).end();
@@ -732,15 +914,15 @@ app.get('/api/table-types', requireAuth, async (req, res) => {
 });
 
 app.post('/api/table-types', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents } = req.body;
-  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+  const { name_en, name_fr, base_hourly_cents, vatRatePercent } = req.body;
+  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update table type
 app.put('/api/table-types/:id', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents } = req.body;
+  const { name_en, name_fr, base_hourly_cents, vatRatePercent } = req.body;
   try {
-    const updated = await prisma.tableType.update({ where: { id: req.params.id }, data: { name_en, name_fr, base_hourly_cents } });
+    const updated = await prisma.tableType.update({ where: { id: req.params.id }, data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 } });
     res.json(updated);
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
@@ -900,6 +1082,131 @@ app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+// Compute the live table-time charge (and the table type's VAT rate) for an active session
+async function getTableChargeForSession(session){
+  const tableRows = await prisma.$queryRawUnsafe(`
+    SELECT tt.base_hourly_cents, tt.vat_rate_percent
+    FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id
+    WHERE p.id::text = $1
+  `, session.tableId);
+  const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
+  if(!table || !session.startedAt) return { tableCharge: 0, hoursCharged: 0, vatRatePercent: 20 };
+
+  const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
+  const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
+  const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
+  const nonSubscriberCount = (session.numberOfPlayers || 1) - subscriberCount;
+  const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
+
+  const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+  const hoursCharged = Math.ceil(elapsedMs / 3600000);
+  let tableCharge = 0;
+  if(nonSubscriberCount > 0){
+    const baseCharge = hoursCharged * table.base_hourly_cents;
+    if(subscriberCount > 0){
+      const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
+      const discountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
+      tableCharge = Math.round(baseCharge * (1 - discountPercent / 100));
+    } else {
+      tableCharge = baseCharge;
+    }
+    tableCharge += tableSettlements;
+  }
+  return { tableCharge, hoursCharged, vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20 };
+}
+
+// Checkout: finalize and pay out a session. Persists the final table-time charge and
+// any discount as durable, VAT-tagged tab line items, issues a sequentially numbered
+// receipt (required for French anti-fraud compliance), then ends the session.
+app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
+  try {
+    const session = await prisma.session.findUnique({ where: { id: req.params.id } });
+    if(!session) return res.status(404).json({ error: 'not_found' });
+    if(session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
+
+    const discountCentsRequested = Math.max(0, Math.round(Number(req.body.discountCents) || 0));
+
+    const { tableCharge, vatRatePercent: tableVatRate } = await getTableChargeForSession(session);
+    const saleItems = await prisma.tabLineItem.findMany({
+      where: { sessionId: session.id, voidedAt: null, type: { notIn: ['meta', 'table_settlement', 'settlement'] } }
+    });
+
+    // Group every amount due (table time + drinks/other charges) by VAT rate bucket
+    const buckets = {}; // rate -> { totalCents, vatCents }
+    const addToBucket = (rate, cents) => {
+      const r = rate != null ? rate : 20;
+      if(!buckets[r]) buckets[r] = { totalCents: 0 };
+      buckets[r].totalCents += cents;
+    };
+    if(tableCharge > 0) addToBucket(tableVatRate, tableCharge);
+    for(const item of saleItems) addToBucket(item.vatRatePercent, item.totalCents);
+
+    const grossTotalCents = Object.values(buckets).reduce((s,b)=>s+b.totalCents, 0);
+    const discountCents = Math.min(discountCentsRequested, grossTotalCents);
+
+    const receiptItems = saleItems.map(i => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, totalCents: i.totalCents, vatRatePercent: i.vatRatePercent }));
+    if(tableCharge > 0) receiptItems.unshift({ description: 'Table Time', quantity: 1, unitPrice: tableCharge, totalCents: tableCharge, vatRatePercent: tableVatRate });
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Persist the table-time charge as a durable, VAT-tagged sale record
+      if(tableCharge > 0){
+        await tx.tabLineItem.create({ data: {
+          sessionId: session.id, type: 'table_time', description: 'Table Time',
+          quantity: 1, unitPrice: tableCharge, totalCents: tableCharge,
+          vatRatePercent: tableVatRate, vatAmountCents: vatAmountFromTotal(tableCharge, tableVatRate)
+        }});
+      }
+
+      // VAT due on the gross sale (before discount), and the discount split
+      // proportionally across VAT-rate buckets so each discount line keeps a
+      // well-defined rate (persisted as negative line items).
+      const rates = Object.keys(buckets);
+      let vatCents = 0;
+      let allocated = 0;
+      for(let idx = 0; idx < rates.length; idx++){
+        const rate = rates[idx];
+        const bucket = buckets[rate];
+        vatCents += vatAmountFromTotal(bucket.totalCents, Number(rate));
+
+        if(discountCents <= 0) continue;
+        const isLast = idx === rates.length - 1;
+        const share = isLast ? (discountCents - allocated) : Math.round(discountCents * (bucket.totalCents / grossTotalCents));
+        allocated += share;
+        if(share > 0){
+          vatCents -= vatAmountFromTotal(share, Number(rate));
+          await tx.tabLineItem.create({ data: {
+            sessionId: session.id, type: 'discount', description: 'Checkout discount',
+            quantity: 1, unitPrice: -share, totalCents: -share,
+            vatRatePercent: Number(rate), vatAmountCents: -vatAmountFromTotal(share, Number(rate))
+          }});
+        }
+      }
+
+      const totalTtcCents = grossTotalCents - discountCents;
+      const subtotalHtCents = totalTtcCents - vatCents;
+
+      // Sequential receipt number per year (advisory lock avoids race conditions on the sequence)
+      const year = new Date().getFullYear();
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('receipt_seq_' || $1::text))`, String(year));
+      const maxRow = await tx.$queryRawUnsafe(`SELECT COALESCE(MAX(number), 0) + 1 as next FROM "Receipt" WHERE year = $1`, year);
+      const nextNumber = Array.isArray(maxRow) ? Number(maxRow[0].next) : Number(maxRow.next);
+
+      const receipt = await tx.receipt.create({ data: {
+        number: nextNumber, year, sessionId: session.id,
+        itemsJson: JSON.stringify(receiptItems),
+        subtotalHtCents, vatCents, totalTtcCents, discountCents
+      }});
+
+      await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1`, session.id);
+      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
+
+      return receipt;
+    });
+
+    res.json({ receiptNumber: result.number, year: result.year, totalTtcCents: result.totalTtcCents, vatCents: result.vatCents, discountCents: result.discountCents });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'checkout_failed' }); }
+});
+
 // Update session (e.g., player count)
 app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
   try {
@@ -916,27 +1223,40 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
 });
 
 // Session partial settlement (when player leaves mid-session)
-app.post('/api/sessions/:id/settle', async (req, res) => {
+app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
   try {
     const { tableSettlementCents, items, isSubscriber } = req.body;
     const sessionId = req.params.id;
-    
-    // If table settlement amount is provided, add a negative line item for it
+    const actor = getActorName(req);
+
+    // If table settlement amount is provided, add a negative line item for it,
+    // snapshotting the table type's current VAT rate.
     if (tableSettlementCents && tableSettlementCents > 0) {
+      const sessionRow = await prisma.session.findUnique({ where: { id: sessionId } });
+      let tableVatRate = 20;
+      if(sessionRow){
+        const tableTypeRows = await prisma.$queryRawUnsafe(`
+          SELECT tt.vat_rate_percent FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id WHERE p.id::text = $1
+        `, sessionRow.tableId);
+        const tt = Array.isArray(tableTypeRows) ? tableTypeRows[0] : tableTypeRows;
+        if(tt && tt.vat_rate_percent != null) tableVatRate = tt.vat_rate_percent;
+      }
       await prisma.$queryRawUnsafe(
-        `INSERT INTO "TabLineItem" (id, session_id, type, description, quantity, unit_price, total_cents, created_at) 
-         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NOW())`,
+        `INSERT INTO "TabLineItem" (id, session_id, type, description, quantity, unit_price, total_cents, vat_rate_percent, vat_amount_cents, created_at) 
+         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, NOW())`,
         crypto.randomUUID(),
         sessionId,
         'table_settlement',
         'Table charge settlement',
         1,
         -tableSettlementCents,
-        -tableSettlementCents
+        -tableSettlementCents,
+        tableVatRate,
+        -vatAmountFromTotal(tableSettlementCents, tableVatRate)
       );
     }
     
-    // Update subscriber count if settling player is a subscriber
+    // Update subscriber count if settling player is a subscriber (metadata only, not a sale record)
     if(isSubscriber){
       const subscriberMeta = await prisma.tabLineItem.findFirst({
         where: { sessionId, type: 'meta', description: 'subscriber_count' }
@@ -955,7 +1275,9 @@ app.post('/api/sessions/:id/settle', async (req, res) => {
       }
     }
     
-    // For each selected drink item with quantity, adjust the original item
+    // For each selected drink item with quantity, settle part (or all) of it.
+    // The original sale row is never deleted/overwritten: it is voided and, if a
+    // partial quantity remains, a replacement row is inserted for the remainder.
     if (Array.isArray(items) && items.length > 0) {
       for (const settlementItem of items) {
         const { itemId, quantity } = settlementItem;
@@ -963,47 +1285,44 @@ app.post('/api/sessions/:id/settle', async (req, res) => {
         
         if(settleQty <= 0) continue;
         
-        // Get the original item
-        const itemRows = await prisma.$queryRawUnsafe(
-          `SELECT * FROM "TabLineItem" WHERE id::text = $1 AND session_id::text = $2`,
-          itemId,
-          sessionId
-        );
-        const item = Array.isArray(itemRows) ? itemRows[0] : null;
+        const item = await prisma.tabLineItem.findUnique({ where: { id: itemId } });
         
-        if (item && settleQty <= item.quantity) {
-          const settledAmount = Math.round(item.unit_price * settleQty);
+        if (item && item.sessionId === sessionId && !item.voidedAt && settleQty <= item.quantity) {
+          const settledAmount = Math.round(item.unitPrice * settleQty);
+          const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
           
           // Add negative line item to record this settlement
-          await prisma.$queryRawUnsafe(
-            `INSERT INTO "TabLineItem" (id, session_id, type, description, quantity, unit_price, total_cents, created_at) 
-             VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, NOW())`,
-            crypto.randomUUID(),
-            sessionId,
-            'settlement',
-            `Settlement: ${item.description}`,
-            -settleQty,
-            item.unit_price,
-            -settledAmount
-          );
+          await prisma.tabLineItem.create({
+            data: {
+              sessionId,
+              type: 'settlement',
+              description: `Settlement: ${item.description}`,
+              quantity: -settleQty,
+              unitPrice: item.unitPrice,
+              totalCents: -settledAmount,
+              vatRatePercent: rate,
+              vatAmountCents: -vatAmountFromTotal(settledAmount, rate)
+            }
+          });
           
-          // Update or delete the original item
+          // Void the original item, replacing it with the remaining quantity (if any)
+          await voidTabLineItem(item.id, actor, 'settled (partial payment)');
           const remainingQty = item.quantity - settleQty;
           if(remainingQty > 0){
-            // Reduce quantity
-            const remainingTotal = Math.round(item.unit_price * remainingQty);
-            await prisma.$queryRawUnsafe(
-              `UPDATE "TabLineItem" SET quantity = $1, total_cents = $2 WHERE id::text = $3`,
-              remainingQty,
-              remainingTotal,
-              itemId
-            );
-          } else {
-            // Delete completely if nothing remains
-            await prisma.$queryRawUnsafe(
-              `DELETE FROM "TabLineItem" WHERE id::text = $1`,
-              itemId
-            );
+            const remainingTotal = Math.round(item.unitPrice * remainingQty);
+            await prisma.tabLineItem.create({
+              data: {
+                sessionId,
+                type: item.type,
+                description: item.description,
+                quantity: remainingQty,
+                unitPrice: item.unitPrice,
+                totalCents: remainingTotal,
+                vatRatePercent: rate,
+                vatAmountCents: vatAmountFromTotal(remainingTotal, rate),
+                correctedFromId: item.id
+              }
+            });
           }
         }
       }
@@ -1021,7 +1340,7 @@ app.get('/api/sessions/:id', async (req, res) => {
   try {
     const s = await prisma.session.findUnique({ where: { id: req.params.id } });
     if(!s) return res.status(404).json({ error: 'not_found' });
-    const items = await prisma.tabLineItem.findMany({ where: { sessionId: req.params.id } });
+    const items = await prisma.tabLineItem.findMany({ where: { sessionId: req.params.id, voidedAt: null } });
     
     // Check for subscriber count meta item
     const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
@@ -1097,37 +1416,55 @@ app.get('/api/sessions/:id', async (req, res) => {
 // Add tab line item (menu item or custom)
 app.post('/api/sessions/:id/items', requireAuth, async (req, res) => {
   try{
-    const { type, description, quantity, unitPrice } = req.body; // unitPrice in cents
+    const { type, description, quantity, unitPrice, vatRatePercent } = req.body; // unitPrice in cents
     const qty = Number(quantity) || 1;
-    const item = await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: type||'custom', description, quantity: qty, unitPrice: Number(unitPrice)||0, totalCents: Math.round((Number(unitPrice)||0)*qty) } });
+    const totalCents = Math.round((Number(unitPrice)||0)*qty);
+    const rate = Number(vatRatePercent) || 20;
+    const item = await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: type||'custom', description, quantity: qty, unitPrice: Number(unitPrice)||0, totalCents, vatRatePercent: rate, vatAmountCents: vatAmountFromTotal(totalCents, rate) } });
     res.status(201).json(item);
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-// Delete tab line item
+// Delete (void) tab line item - kept for audit trail, never hard-deleted
 app.delete('/api/sessions/:sessionId/items/:itemId', requireAuth, async (req, res) => {
   try{
-    await prisma.tabLineItem.delete({ where: { id: req.params.itemId } });
+    await voidTabLineItem(req.params.itemId, getActorName(req), req.query.reason || 'removed by staff');
     res.status(204).end();
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-// Edit tab line item amount
+// Edit tab line item amount: the original row is voided and a replacement row is
+// inserted linked via correctedFromId, preserving a full audit trail of corrections.
 app.patch('/api/tab-items/:id', requireAuth, async (req, res) => {
   try{
     const { totalCents } = req.body;
-    const updated = await prisma.tabLineItem.update({
-      where: { id: req.params.id },
-      data: { totalCents: Number(totalCents) }
+    const original = await prisma.tabLineItem.findUnique({ where: { id: req.params.id } });
+    if(!original) return res.status(404).json({ error: 'not_found' });
+    const actor = getActorName(req);
+    await voidTabLineItem(original.id, actor, 'corrected: amount changed');
+    const newTotal = Number(totalCents);
+    const rate = original.vatRatePercent != null ? original.vatRatePercent : 20;
+    const updated = await prisma.tabLineItem.create({
+      data: {
+        sessionId: original.sessionId,
+        type: original.type,
+        description: original.description,
+        quantity: original.quantity,
+        unitPrice: original.unitPrice,
+        totalCents: newTotal,
+        vatRatePercent: rate,
+        vatAmountCents: vatAmountFromTotal(newTotal, rate),
+        correctedFromId: original.id
+      }
     });
     res.json(updated);
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
-// Delete tab line item (alternative endpoint)
-app.delete('/api/tab-items/:id', async (req, res) => {
+// Delete (void) tab line item (alternative endpoint) - kept for audit trail
+app.delete('/api/tab-items/:id', requireAuth, async (req, res) => {
   try{
-    await prisma.tabLineItem.delete({ where: { id: req.params.id } });
+    await voidTabLineItem(req.params.id, getActorName(req), req.query.reason || 'removed by staff');
     res.status(204).end();
   }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
@@ -1266,7 +1603,7 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     }
     
     // Get session details with items
-    const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id } });
+    const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
     
     // Check for subscriber count meta item
     const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
@@ -1321,7 +1658,13 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     }
     
     const total = itemsTotal + tableCharge;
-    
+
+    // Pending drink orders this player has placed, still awaiting staff fulfillment
+    const pendingOrders = await prisma.pendingOrder.findMany({
+      where: { sessionId: session.id, status: 'pending' },
+      orderBy: { createdAt: 'asc' }
+    });
+
     res.json({ 
       table: { 
         number: tableNumber, 
@@ -1335,11 +1678,155 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
       items: items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement'),
       totalCents: total,
       itemsTotal,
-      tableCharge
+      tableCharge,
+      pendingOrders: pendingOrders.map(o => ({ id: o.id, items: JSON.parse(o.itemsJson), totalCents: o.totalCents, createdAt: o.createdAt }))
     });
   } catch (e) { 
     console.error(e); 
     res.status(500).json({ error: 'db_error' }); 
+  }
+});
+
+// Public: place a drink order for a table (requires the table's session PIN).
+// Prices are always resolved server-side from the Drink table, never trusted from the client.
+app.post('/api/public/table/:tableNumber/order', async (req, res) => {
+  try {
+    const tableNumber = parseInt(req.params.tableNumber);
+    const { pin, items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'empty_order' });
+    }
+
+    const tables = await prisma.poolTable.findMany({ where: { number: tableNumber } });
+    const table = tables[0];
+    if (!table) return res.status(404).json({ error: 'table_not_found' });
+
+    const sessions = await prisma.session.findMany({ where: { tableId: table.id, status: 'active' } });
+    const session = sessions[0];
+    if (!session) return res.status(400).json({ error: 'no_active_session' });
+
+    if (!pin || session.pin !== pin) {
+      return res.status(403).json({ error: 'invalid_pin' });
+    }
+
+    // Resolve each requested drink against current catalog prices
+    const drinkIds = items.map(i => i.drinkId);
+    const drinks = await prisma.drink.findMany({ where: { id: { in: drinkIds } } });
+    const drinkById = Object.fromEntries(drinks.map(d => [d.id, d]));
+
+    const resolvedItems = [];
+    let totalCents = 0;
+    for (const reqItem of items) {
+      const drink = drinkById[reqItem.drinkId];
+      const quantity = Math.max(1, Math.min(50, parseInt(reqItem.quantity) || 1));
+      if (!drink) continue; // silently skip unknown/removed drinks
+      const totalForItem = drink.price_cents * quantity;
+      resolvedItems.push({
+        drinkId: drink.id,
+        description: drink.name_en,
+        quantity,
+        unitPriceCents: drink.price_cents,
+        totalCents: totalForItem,
+        vatRatePercent: drink.vatRatePercent
+      });
+      totalCents += totalForItem;
+    }
+
+    if (resolvedItems.length === 0) {
+      return res.status(400).json({ error: 'empty_order' });
+    }
+
+    const order = await prisma.pendingOrder.create({
+      data: {
+        sessionId: session.id,
+        tableId: table.id,
+        itemsJson: JSON.stringify(resolvedItems),
+        totalCents,
+        status: 'pending'
+      }
+    });
+
+    res.status(201).json({ id: order.id, items: resolvedItems, totalCents: order.totalCents, createdAt: order.createdAt });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Staff: list all pending drink orders across all tables, for the dashboard panel
+app.get('/api/pending-orders', requireAuth, async (req, res) => {
+  try {
+    const orders = await prisma.pendingOrder.findMany({ where: { status: 'pending' }, orderBy: { createdAt: 'asc' } });
+    const tableIds = [...new Set(orders.map(o => o.tableId))];
+    const tables = tableIds.length ? await prisma.poolTable.findMany({ where: { id: { in: tableIds } } }) : [];
+    const tableById = Object.fromEntries(tables.map(t => [t.id, t]));
+    res.json(orders.map(o => ({
+      id: o.id,
+      sessionId: o.sessionId,
+      tableId: o.tableId,
+      tableNumber: tableById[o.tableId]?.number ?? null,
+      items: JSON.parse(o.itemsJson),
+      totalCents: o.totalCents,
+      createdAt: o.createdAt
+    })));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Staff: fulfill a pending order - adds its items to the table's tab and marks it done
+app.post('/api/pending-orders/:id/fulfill', requireAuth, async (req, res) => {
+  try {
+    const order = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
+    if (!order) return res.status(404).json({ error: 'not_found' });
+    if (order.status !== 'pending') return res.status(400).json({ error: 'already_resolved' });
+
+    const session = await prisma.session.findUnique({ where: { id: order.sessionId } });
+    if (!session || session.status !== 'active') {
+      return res.status(409).json({ error: 'session_ended' });
+    }
+
+    const items = JSON.parse(order.itemsJson);
+    await prisma.$transaction([
+      ...items.map(item => {
+        const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+        return prisma.tabLineItem.create({
+          data: {
+            sessionId: order.sessionId,
+            type: 'drink',
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPriceCents,
+            totalCents: item.totalCents,
+            vatRatePercent: rate,
+            vatAmountCents: vatAmountFromTotal(item.totalCents, rate)
+          }
+        });
+      }),
+      prisma.pendingOrder.update({ where: { id: order.id }, data: { status: 'fulfilled', fulfilledAt: new Date() } })
+    ]);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Staff: cancel/reject a pending order without adding it to the tab
+app.post('/api/pending-orders/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    const order = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
+    if (!order) return res.status(404).json({ error: 'not_found' });
+    if (order.status !== 'pending') return res.status(400).json({ error: 'already_resolved' });
+
+    await prisma.pendingOrder.update({ where: { id: order.id }, data: { status: 'cancelled', fulfilledAt: new Date() } });
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
   }
 });
 
@@ -1371,10 +1858,10 @@ async function seedDefaults() {
     if (dcount === 0) {
       console.log('Seeding default drinks...');
       await prisma.$executeRawUnsafe(`
-        INSERT INTO "Drink" (id, name_en, name_fr, price_cents, taxable, created_at)
+        INSERT INTO "Drink" (id, name_en, name_fr, price_cents, taxable, vat_rate_percent, created_at)
         VALUES 
-          (gen_random_uuid(), 'Beer', 'Bière', 600, true, now()),
-          (gen_random_uuid(), 'Soda', 'Soda', 300, false, now())
+          (gen_random_uuid(), 'Beer', 'Bière', 600, true, 20, now()),
+          (gen_random_uuid(), 'Soda', 'Soda', 300, false, 10, now())
         ON CONFLICT DO NOTHING
       `);
       console.log('Default drinks seeded.');

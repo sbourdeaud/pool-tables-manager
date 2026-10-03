@@ -22,6 +22,7 @@ model TableType {
   name_en           String
   name_fr           String?
   base_hourly_cents Int
+  vatRatePercent    Int      @default(20) @map("vat_rate_percent")
   createdAt         DateTime @default(now()) @map("created_at")
 }
 
@@ -36,12 +37,13 @@ model PoolTable {
 }
 
 model Drink {
-  id          String @id @default(uuid())
-  name_en     String
-  name_fr     String?
-  price_cents Int
-  taxable     Boolean @default(true)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id             String @id @default(uuid())
+  name_en        String
+  name_fr        String?
+  price_cents    Int
+  taxable        Boolean @default(true)
+  vatRatePercent Int     @default(20) @map("vat_rate_percent")
+  createdAt      DateTime @default(now()) @map("created_at")
 }
 
 model Session {
@@ -57,14 +59,23 @@ model Session {
 }
 
 model TabLineItem {
-  id          String @id @default(uuid())
-  sessionId   String @map("session_id")
-  type        String
-  description String?
-  quantity    Float  @default(1)
-  unitPrice   Int    @map("unit_price")
-  totalCents  Int    @map("total_cents")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id               String   @id @default(uuid())
+  sessionId        String   @map("session_id")
+  type             String
+  description      String?
+  quantity         Float    @default(1)
+  unitPrice        Int      @map("unit_price")
+  totalCents       Int      @map("total_cents")
+  vatRatePercent   Int?     @map("vat_rate_percent")
+  vatAmountCents   Int?     @default(0) @map("vat_amount_cents")
+  createdAt        DateTime @default(now()) @map("created_at")
+  voidedAt         DateTime? @map("voided_at")
+  voidedBy         String?  @map("voided_by")
+  voidReason       String?  @map("void_reason")
+  correctedFromId  String?  @map("corrected_from_id")
+
+  @@index([sessionId])
+  @@index([voidedAt])
 }
 
 model Transaction {
@@ -91,4 +102,55 @@ model Setting {
   id    String @id @default(uuid())
   key   String @unique
   value String
+}
+
+// Sequentially numbered receipt issued when a table session is paid out (checkout).
+// Required for French anti-fraud compliance (CGI art. 286-I-3 bis / ISCA principles):
+// once created a receipt is never modified or deleted.
+model Receipt {
+  id               String   @id @default(uuid())
+  number           Int
+  year             Int
+  sessionId        String   @map("session_id")
+  itemsJson        String   @map("items_json")
+  subtotalHtCents  Int      @map("subtotal_ht_cents")
+  vatCents         Int      @map("vat_cents")
+  totalTtcCents    Int      @map("total_ttc_cents")
+  discountCents    Int      @default(0) @map("discount_cents")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([year, number])
+  @@index([sessionId])
+}
+
+// A locked accounting period (day/month/year). Once closed, the totals snapshot is
+// immutable and sales within the period can no longer be voided or corrected.
+model ClosurePeriod {
+  id           String   @id @default(uuid())
+  periodType   String   @map("period_type")
+  periodKey    String   @map("period_key")
+  fromDate     DateTime @map("from_date")
+  toDate       DateTime @map("to_date")
+  totalsJson   String   @map("totals_json")
+  totalHtCents Int      @map("total_ht_cents")
+  totalVatCents Int     @map("total_vat_cents")
+  totalTtcCents Int     @map("total_ttc_cents")
+  closedAt     DateTime @default(now()) @map("closed_at")
+  closedBy     String?  @map("closed_by")
+
+  @@unique([periodType, periodKey])
+}
+
+model PendingOrder {
+  id          String    @id @default(uuid())
+  sessionId   String    @map("session_id")
+  tableId     String    @map("table_id")
+  itemsJson   String    @map("items_json")
+  totalCents  Int       @map("total_cents")
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  fulfilledAt DateTime? @map("fulfilled_at")
+
+  @@index([sessionId])
+  @@index([status])
 }

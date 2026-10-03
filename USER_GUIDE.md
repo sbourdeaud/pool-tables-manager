@@ -11,12 +11,14 @@ Pool Tables Manager is a comprehensive solution for managing pool hall operation
 3. [Starting a Session](#starting-a-session)
 4. [Managing Active Sessions](#managing-active-sessions)
 5. [Adding Items to Tabs](#adding-items-to-tabs)
-6. [Player Settlements](#player-settlements)
-7. [Ending Sessions (Checkout)](#ending-sessions-checkout)
-8. [Subscriptions](#subscriptions)
-9. [Public Table View](#public-table-view)
-10. [Admin Features](#admin-features)
-11. [Reports](#reports)
+6. [Pending Orders (Player Self-Service)](#pending-orders-player-self-service)
+7. [Player Settlements](#player-settlements)
+8. [Ending Sessions (Checkout)](#ending-sessions-checkout)
+9. [Subscriptions](#subscriptions)
+10. [Public Table View](#public-table-view)
+11. [Admin Features](#admin-features)
+12. [Reports](#reports)
+13. [VAT (TVA) Reporting — France](#vat-tva-reporting--france)
 
 ---
 
@@ -143,6 +145,25 @@ From the session details:
 
 ---
 
+## Pending Orders (Player Self-Service)
+
+Players can order drinks themselves from the [Public Table View](#public-table-view) on their phone, without needing staff to walk over and take the order.
+
+### How it works
+
+1. A player on the table-specific page enters the table's **PIN code** and selects drinks from the menu.
+2. The order is submitted and appears instantly on the main dashboard under a new **"Pending Orders"** section at the top of the screen, above the Tables grid.
+3. A chime sound ("Bright Triangle") plays on the admin dashboard whenever a new order arrives, so staff don't need to keep watching the screen.
+4. Each pending order shows the table number, the items ordered, and the total.
+5. Staff reviews the order and clicks **✓ Fulfilled** once the drinks have been delivered.
+6. On fulfillment, the order's items are automatically added to that table's tab — no need to re-enter anything manually.
+
+**Security:** The PIN requirement prevents other players, or someone who isn't at the table, from placing orders against your tab.
+
+**Audio Cues:** The order-arrival chime respects the **Audio Cues** setting on the Settings page.
+
+---
+
 ## Player Settlements
 
 When a player wants to leave while others continue playing:
@@ -222,7 +243,7 @@ When starting a session:
 
 ## Public Table View
 
-Players can view their tab in real-time from any device.
+Players can view their tab in real-time from any device, and order drinks themselves.
 
 ### Accessing Table View
 
@@ -244,12 +265,15 @@ Example: `http://localhost:3000/table.html?number=5`
 - All items on the tab with quantities and prices
 - Table charge (hours and amount)
 - Running total
+- A drink menu they can order from directly (PIN required) — see [Pending Orders](#pending-orders-player-self-service)
 
 **Auto-Refresh:** View updates every 60 seconds automatically.
 
-### QR Codes (Optional)
+### QR Codes
 
-Consider creating QR codes linking to each table's URL for easy player access.
+Every active table tile on the dashboard shows a **QR code** that links directly to that table's view with its PIN pre-filled, so a player can simply scan it with their phone's camera to start monitoring their session — no need to type the URL or PIN manually. Click the QR code on the dashboard to enlarge it (handy for printing or displaying at the table).
+
+**Controlling the hostname used in QR codes:** By default, QR codes point at whatever address your browser used to load the admin dashboard (e.g. `http://localhost:3000`), which only works on the same machine. To make QR codes scannable from players' phones, set **Public Base URL** in Admin → Settings to the hostname/IP or FQDN your phones can actually reach, for example `http://192.168.1.50:3000` or `https://pool.example.com`. Leave it blank to fall back to the current browser address.
 
 ---
 
@@ -262,6 +286,7 @@ Access via menu (☰) → **Admin Panel**
 **Manage Table Types:**
 - Add new table types (e.g., "Billiards", "Carom")
 - Set hourly rates in your currency
+- Set the **VAT rate** applied to that table type's time charges (20%, 10%, or 0% — see [VAT (TVA) Reporting](#vat-tva-reporting--france))
 - Edit or delete existing types
 
 **Manage Tables:**
@@ -282,7 +307,7 @@ Access via menu (☰) → **Admin Panel**
 2. **Add New Item:**
    - Name (English and French)
    - Price
-   - Tax status
+   - VAT rate (20% standard, 10% reduced, or 0% exempt — see [VAT (TVA) Reporting](#vat-tva-reporting--france))
 3. **Edit/Delete:** Use buttons next to each item
 
 **Multi-Language Support:**
@@ -296,16 +321,18 @@ Access via menu (☰) → **Settings**
 **Available Settings:**
 
 - **Application Name:** Header display name (e.g., "Joe's Pool Hall")
+- **Public Base URL:** Hostname/IP or FQDN used when generating table QR codes (see [QR Codes](#qr-codes)); leave blank to use the address you're currently browsing from
 - **Language:** English or Français
 - **Currency:** $ (USD), € (EUR), or £ (GBP)
 - **Subscriber Discount:** Percentage discount (0-100%)
-- **Audio Cues:** Toggle UI click sounds
+- **Audio Cues:** Toggle UI click sounds and the new-order chime
+- **Fiscal / Legal Information:** Legal business name, SIRET, SIREN, TVA intracommunautaire number, registered address, VAT regime, and declaration periodicity — used on the VAT report and for your own records (see [VAT (TVA) Reporting](#vat-tva-reporting--france))
 
 **Danger Zone:**
 - **Clear All Session History:** Permanently deletes completed sessions
   - Requires double confirmation
   - Active sessions are NOT affected
-  - Use for cleanup or starting fresh
+  - Sessions inside a **closed VAT period** are also protected and will not be deleted
 
 ---
 
@@ -362,6 +389,41 @@ Generate detailed revenue reports for any time period.
 - Maintenance or paused tables
 
 **Auto-Load:** Current day report generates automatically when you open the Reports page.
+
+---
+
+## VAT (TVA) Reporting — France
+
+> ⚠️ **Not legal or tax advice.** Consult your *expert-comptable* to confirm these figures and procedures match your business's specific VAT regime before filing. See [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md) for the full conformity notes.
+
+Below the Financial Reports section, the Reports page has a dedicated **"TVA (VAT) Report"** panel for preparing your periodic VAT declaration (CA3/CA12).
+
+### Generating a VAT report
+
+1. Choose a **Period Type** (Month, Quarter, Year, or Day) and the specific period.
+2. Click **Generate VAT Report** to see a breakdown by VAT rate:
+   - Total HT (excluding VAT)
+   - TVA (VAT amount)
+   - Total TTC (including VAT)
+3. A breakdown by category (table time, drinks, discounts, other) is shown below the table.
+
+### Closing a period
+
+Once you've filed your declaration for a period with the tax authorities, click **🔒 Close Period (lock for filing)**. This:
+- Snapshots the period's totals for your records.
+- Prevents **Clear All Session History** from ever deleting sales within that period, so your filed figures always remain traceable in the database.
+
+Closed periods appear in a history list below the report, showing the period, totals, and who closed it.
+
+### Exporting for your accountant
+
+Click **Export CSV** to download every individual sale line in the selected period (date, table/session, description, quantity, unit price, VAT rate, VAT amount, HT amount) — handy for handing off to your accountant or for long-term archival.
+
+### Keeping VAT reports accurate
+
+- Set each drink's and table type's VAT rate correctly in Admin (see [Drink Menu Management](#drink-menu-management) and [Table Types & Inventory](#table-types--inventory)).
+- **Always use "✓ Checkout" → Complete Payment** to end sessions that generated revenue — this is what records the table-time charge and issues a sequential receipt. Ending a session any other way will leave that table-time charge out of the VAT report.
+- Fill in your **Fiscal / Legal Information** in Settings (SIRET, TVA number, VAT regime, etc.) so it's on hand when filing.
 
 ---
 
@@ -497,22 +559,28 @@ A: As long as session history is retained (until manually cleared via Settings).
 ✓ Custom charge support
 ✓ Table transfers
 ✓ Receipt printing
+✓ Player self-service drink ordering with audio-notified Pending Orders queue
+✓ QR codes for one-tap table access from a player's phone
 
 ### Admin Features
 ✓ Table type and inventory management
 ✓ Bulk table creation
-✓ Drink menu configuration
+✓ Drink menu configuration with VAT rates
 ✓ Subscription management
 ✓ Financial reporting (multiple periods)
+✓ VAT (TVA) reporting, CSV export, and period closures for French compliance
 ✓ Multi-currency support
 ✓ Subscriber discount system
 ✓ Session history management
+✓ Configurable public base URL for QR codes
+✓ Fiscal/legal business information
 
 ### Player Features
 ✓ Real-time tab viewing
 ✓ Auto-refreshing display
 ✓ Mobile-friendly interface
 ✓ PIN-protected access
+✓ Self-service drink ordering via QR code
 
 ---
 

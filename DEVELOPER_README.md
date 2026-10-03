@@ -35,24 +35,31 @@ pool-tables-manager/
 ### Database Schema
 
 **Core Tables:**
-- `TableType` - Pool table types (American, Snooker, etc.) with hourly rates
+- `TableType` - Pool table types (American, Snooker, etc.) with hourly rates and VAT rate
 - `PoolTable` - Individual tables with status (available, occupied, maintenance)
 - `Session` - Active/ended table sessions with timestamps, player count, PIN
-- `TabLineItem` - Tab items (drinks, charges, settlements) linked to sessions
-- `Drink` - Menu items with prices
+- `TabLineItem` - Tab items (drinks, charges, settlements) linked to sessions, with VAT snapshot and soft-void/correction audit fields
+- `Drink` - Menu items with prices and VAT rate
 - `Subscription` - Player subscriptions for discounts
-- `Setting` - Application settings (currency, app name, discount %)
+- `Setting` - Application settings (currency, app name, discount %, public base URL, fiscal info, etc.)
+- `PendingOrder` - Player-submitted drink orders awaiting staff fulfillment
+- `Receipt` - Sequentially-numbered receipts issued at checkout (per calendar year)
+- `ClosurePeriod` - Locked VAT accounting period snapshots (day/month/quarter/year)
 
 **Key Relationships:**
 - Session → PoolTable (many-to-one)
 - Session → TabLineItem (one-to-many)
+- Session → PendingOrder (one-to-many)
 - PoolTable → TableType (many-to-one)
 - Subscription → Session (many-to-one, optional)
 
 **Special Fields:**
 - `Session.pin` - 4-digit PIN for public table access
 - `Session.number_of_players` - Player count for charge splitting
-- `TabLineItem.type` - Categories: `menu_item`, `custom_charge`, `meta`, `settlement`, `table_settlement`
+- `TabLineItem.type` - Categories: `menu_item`/`drink`, `custom_charge`, `meta`, `settlement`, `table_settlement`, `table_time`, `discount`
+- `TabLineItem.vatRatePercent` / `vatAmountCents` - VAT rate and amount snapshotted at the time of sale (independent of later rate changes)
+- `TabLineItem.voidedAt` / `voidedBy` / `voidReason` / `correctedFromId` - Anti-tamper audit trail: line items are never hard-deleted or overwritten. Deleting or correcting an item soft-voids the original and, if a replacement is needed, inserts a new row linked back via `correctedFromId`
+- `Drink.vatRatePercent` / `TableType.vatRatePercent` - VAT rate applied to that item/table-time when sold (20% standard, 10% reduced, 0% exempt)
 
 ## Backend API
 
@@ -80,35 +87,49 @@ pool-tables-manager/
 - `GET /api/sessions/:id` - Get session details with tab items
 - `POST /api/sessions` - Start new session (generates PIN)
 - `PATCH /api/sessions/:id` - Update session (player count, etc.)
-- `PATCH /api/sessions/:id/end` - End session, calculate total
-- `POST /api/sessions/:id/settle` - Player settlement (reduce items/charges)
+- `PATCH /api/sessions/:id/end` - End session without generating a receipt (no VAT/table-time persistence; prefer `/checkout`)
+- `POST /api/sessions/:id/checkout` - End session, persist the table-time charge and any discount (VAT-tagged), issue a sequential receipt, and free the table
+- `POST /api/sessions/:id/settle` - Player settlement (reduce items/charges via soft-void + replacement row)
 - `POST /api/sessions/:id/transfer` - Transfer session to different table
 
 **Tab Items**
 - `POST /api/tab-items` - Add item to session tab
-- `PUT /api/tab-items/:id` - Update tab item
-- `DELETE /api/tab-items/:id` - Delete tab item
+- `PUT /api/tab-items/:id` - Update tab item (implemented as soft-void of the original + insertion of a corrected row)
+- `DELETE /api/tab-items/:id` - Soft-void a tab item (never hard-deleted)
 
 **Drinks (Menu)**
-- `GET /api/drinks` - List drinks (with language support)
-- `POST /api/admin/drinks` - Create drink
+- `GET /api/drinks` - List drinks (with language support), includes `vatRatePercent`
+- `POST /api/admin/drinks` - Create drink (accepts `vatRatePercent`)
 - `GET /api/admin/drinks/:id` - Get drink details
-- `PUT /api/admin/drinks/:id` - Update drink
+- `PUT /api/admin/drinks/:id` - Update drink (accepts `vatRatePercent`)
 - `DELETE /api/admin/drinks/:id` - Delete drink
 
 **Subscriptions**
 - `GET /api/subscriptions` - List all subscriptions
 - `POST /api/subscriptions` - Create subscription
 
+**Pending Orders (player self-service)**
+- `POST /api/public/table/:tableNumber/order` - Player submits a drink order from the table view (requires session PIN); snapshots each item's current VAT rate
+- `GET /api/pending-orders` - List pending orders for the admin dashboard panel
+- `POST /api/pending-orders/:id/fulfill` - Mark an order fulfilled; creates the corresponding VAT-tagged `TabLineItem`s on the table's tab
+- `POST /api/pending-orders/:id/cancel` - Cancel a pending order without adding it to the tab
+
 **Reports**
 - `GET /api/reports/financial` - Financial report by period (day/week/month/quarter/year)
 - `GET /api/reports` - Chart data for analytics
+- `GET /api/reports/vat` - VAT (TVA) breakdown by rate and category for a period (day/month/quarter/year), based on persisted (non-voided) `TabLineItem`s
+- `GET /api/reports/vat/export` - CSV export of the detailed VAT ledger for a period
+
+**Closures**
+- `POST /api/closures` - Lock a VAT period; snapshots totals into `ClosurePeriod` and protects its sessions from `clear-history`
+- `GET /api/closures` - List past closures
 
 **Public Access**
 - `GET /api/public/table/:tableNumber` - Get table session info (requires PIN)
+- `POST /api/public/table/:tableNumber/order` - Submit a drink order (requires PIN) — see Pending Orders above
 
 **Admin**
-- `DELETE /api/admin/clear-history` - Clear all ended sessions and tab data
+- `DELETE /api/admin/clear-history` - Clear all ended sessions and tab data (sessions inside a closed `ClosurePeriod` are preserved)
 
 ### UUID Handling Pattern
 
@@ -208,11 +229,10 @@ The frontend (`main.js`) is a vanilla JavaScript SPA with no framework dependenc
    - Player count decremented
 
 4. **Checkout (End Session)**
-   - Review final charges
-   - Calculate total (table + items)
+   - Review final charges, adjust discount if needed
+   - `POST /api/sessions/:id/checkout` persists the table-time charge and discount (VAT-tagged), issues a sequential receipt (per calendar year), ends the session, and frees the table — all in one transaction
    - Optional receipt printing
-   - Session marked as ended
-   - Table becomes available
+   - If checkout fails for any reason, the UI falls back to a bare session-end so staff are never blocked from freeing a table
 
 ### Revenue Calculation
 
@@ -220,13 +240,16 @@ The frontend (`main.js`) is a vanilla JavaScript SPA with no framework dependenc
 - Base: `hourlyRate * ceiledHours`
 - With subscribers playing: Apply discount % to non-subscribers
 - All subscribers: No charge
+- VAT rate applied is the table type's configured `vatRatePercent`, snapshotted onto the persisted `table_time` line item at checkout
 
 **Tab Items:**
 - Direct sum of item totals
 - Excludes: `meta`, `settlement`, `table_settlement` types
+- Each item has its `vatRatePercent`/`vatAmountCents` snapshotted at creation time
 
 **Report Exclusions:**
 - Settlement line items (negative) are filtered out
+- Voided/corrected line items (`voidedAt` set) are always excluded — the original row is kept for audit purposes but never counted twice
 - Only actual charges counted in revenue
 
 ### Subscriber Discount Logic
@@ -277,25 +300,30 @@ Docker Compose sets:
 ## Features
 
 ### Admin Features
-- Table type management (add/edit/delete with hourly rates)
+- Table type management (add/edit/delete with hourly rates and VAT rate)
 - Table inventory (bulk creation, number editing)
-- Drink menu management (multilingual support)
+- Drink menu management (multilingual support, VAT rate per drink)
 - Subscription management
 - Financial reports (day/week/month/quarter/year)
-- Settings (currency, app name, subscriber discount)
-- Clear session history
+- VAT (TVA) reports with CSV export and period closures (French compliance)
+- Settings (currency, app name, subscriber discount, public base URL for QR codes, fiscal/legal information)
+- Clear session history (closed VAT periods are protected from deletion)
 
 ### Operator Features
 - Start/end sessions with PIN generation
 - Real-time session monitoring
 - Quick drink additions
+- Pending Orders panel (player self-service orders, with audio notification) and fulfillment into the tab
 - Player settlements
 - Table transfers
 - Custom charges
+- Checkout with sequential receipt numbering
 - Receipt printing
 
 ### Player Features
 - Public table view with PIN access
+- QR code for one-tap access to the table view, pre-filled with the session PIN
+- Self-service drink ordering from the table view (PIN required)
 - Real-time tab viewing
 - Auto-refresh every 60 seconds
 
@@ -325,6 +353,8 @@ Critical operations use Prisma transactions:
 - Over-settlement (cannot settle more items than exist)
 - Concurrent table access (database locks)
 - Orphaned occupied tables (reset on startup)
+- Sale records are never hard-deleted or overwritten: deletions/corrections soft-void the original row (`voidedAt`/`voidedBy`/`voidReason`) and, where a replacement charge is needed, insert a new linked row (`correctedFromId`) — this underpins the VAT anti-tamper/audit-trail requirements
+- Receipt numbering race conditions avoided via `pg_advisory_xact_lock` inside the checkout transaction
 
 ## Performance Considerations
 
@@ -335,18 +365,20 @@ Critical operations use Prisma transactions:
 
 ## Security
 
-- No authentication system (trusted network assumption)
-- PIN protection for public table views
+- Admin dashboard requires authentication (local admin password or OIDC); `/api/admin/*` and all sale-mutating endpoints (tab item edit/delete, session settle/checkout, closures) require an authenticated session
+- PIN protection for public table views and self-service drink ordering
 - SQL injection prevention via parameterized queries
 - CORS not configured (same-origin only)
 
 ## Known Limitations
 
 - Single-language UI (English) with partial French support
-- No user authentication/authorization
 - No real-time WebSocket updates (polling-based)
 - Manual receipt printing (browser print dialog)
 - No payment integration
+- Checkout-modal quantity adjustments are cosmetic/display-only and are not sent to the server (pre-existing, unrelated to VAT work)
+- VAT reporting for sales recorded before the VAT-compliance feature shipped falls back to a default 20% rate assumption, since those legacy rows have no per-item VAT snapshot; see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
+- Table-time revenue is only persisted for VAT/receipt purposes when a session is ended via `POST /api/sessions/:id/checkout` (the "Complete Payment" button) — the legacy `PATCH /api/sessions/:id/end` route does not record a table-time sale line
 
 ## Future Enhancements
 
