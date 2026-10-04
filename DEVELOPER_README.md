@@ -285,7 +285,7 @@ if (subscriberCount > 0 && nonSubscriberCount > 0) {
 
 ### Prerequisites
 - Docker and Docker Compose
-- Node.js 18+ (for local development)
+- Node.js 20+ (22 recommended, matches the container image)
 - PostgreSQL (via Docker)
 
 ### Running with Docker

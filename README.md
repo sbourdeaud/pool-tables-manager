@@ -53,6 +53,7 @@ The application will automatically initialize the database and apply all migrati
 - **[DEVELOPER_README.md](DEVELOPER_README.md)**: API documentation and development guide
 - **[USER_GUIDE.md](USER_GUIDE.md)**: User documentation and feature overview
 - **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
+- **[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md)**: How the Node 22 / PostgreSQL 18 / Prisma 6 upgrade was performed, plus a reusable checklist
 - **[backend/tests/README.md](backend/tests/README.md)**: Testing documentation and CI integration
 
 ## Architecture
@@ -62,8 +63,8 @@ The application will automatically initialize the database and apply all migrati
 - `db`: PostgreSQL database
 
 **Technology Stack**:
-- Backend: Node.js 18, Express, Prisma ORM
-- Database: PostgreSQL 15
+- Backend: Node.js 22, Express, Prisma ORM
+- Database: PostgreSQL 18
 - Frontend: Vanilla JavaScript
 - Testing: Jest + Supertest
 - CI/CD: GitHub Actions

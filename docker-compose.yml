@@ -1,12 +1,12 @@
 services:
   db:
-    image: postgres:15
+    image: postgres:18
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: example
       POSTGRES_DB: pool_tables
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data_v18:/var/lib/postgresql
     ports:
       - "5432:5432"
   app:
@@ -19,4 +19,4 @@ services:
     depends_on:
       - db
 volumes:
-  db_data:
+  db_data_v18:
