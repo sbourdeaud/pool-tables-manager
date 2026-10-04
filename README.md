@@ -2,6 +2,9 @@
 
 A full-featured pool hall management system with session tracking, billing, subscriptions, and reporting.
 
+> [!NOTE]
+> **AI-generated code**: This application is coded using AI (built pair-programming style with [Kilo Code](https://github.com/Kilo-Org/kilocode), an agentic coding assistant). Review the code and test it in your own environment before using it in production.
+
 ## Features
 
 - **Session Management**: Track active sessions, players, and table usage
