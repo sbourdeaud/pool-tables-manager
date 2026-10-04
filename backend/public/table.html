@@ -4,32 +4,82 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Table View</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="apple-touch-icon" href="/favicon-180.png">
+  <script>
+    // Apply the saved (or system) theme before first paint to avoid a flash
+    (function(){
+      const saved = localStorage.getItem('theme');
+      const theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if(theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    })();
+  </script>
   <style>
+    :root {
+      --bg-grad: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+      --fg: #111827;
+      --surface: rgba(255, 255, 255, 0.85);
+      --inner: rgba(17, 24, 39, 0.04);
+      --inner-strong: rgba(17, 24, 39, 0.08);
+      --inner-hover: rgba(17, 24, 39, 0.16);
+      --border: rgba(17, 24, 39, 0.15);
+      --border-strong: rgba(17, 24, 39, 0.35);
+      --shadow: 0 8px 32px rgba(2, 6, 23, 0.12);
+    }
+    [data-theme="dark"] {
+      --bg-grad: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      --fg: #ffffff;
+      --surface: rgba(255, 255, 255, 0.05);
+      --inner: rgba(255, 255, 255, 0.03);
+      --inner-strong: rgba(255, 255, 255, 0.05);
+      --inner-hover: rgba(255, 255, 255, 0.22);
+      --border: rgba(255, 255, 255, 0.1);
+      --border-strong: rgba(255, 255, 255, 0.2);
+      --shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      color: #ffffff;
+      background: var(--bg-grad);
+      color: var(--fg);
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 20px;
     }
+    .theme-toggle {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      z-index: 20;
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      cursor: pointer;
+      background: var(--surface);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
     .container {
       max-width: 600px;
       width: 100%;
-      background: rgba(255, 255, 255, 0.05);
+      background: var(--surface);
       border-radius: 16px;
       padding: 32px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      box-shadow: var(--shadow);
       backdrop-filter: blur(10px);
     }
     .header {
       text-align: center;
       margin-bottom: 32px;
       padding-bottom: 24px;
-      border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+      border-bottom: 2px solid var(--border);
     }
     .table-name {
       font-size: 32px;
@@ -46,7 +96,7 @@
       justify-content: space-around;
       margin-bottom: 24px;
       padding: 16px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--inner);
       border-radius: 12px;
     }
     .info-item {
@@ -76,7 +126,7 @@
       display: flex;
       justify-content: space-between;
       padding: 12px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--inner);
       border-radius: 8px;
       margin-bottom: 8px;
     }
@@ -153,10 +203,10 @@
       height: 70px;
       font-size: 32px;
       text-align: center;
-      border: 2px solid rgba(255, 255, 255, 0.2);
+      border: 2px solid var(--border-strong);
       border-radius: 12px;
-      background: rgba(255, 255, 255, 0.05);
-      color: #ffffff;
+      background: var(--inner-strong);
+      color: var(--fg);
       font-weight: 600;
     }
     .pin-digit:focus {
@@ -192,14 +242,14 @@
     .order-section {
       margin-top: 24px;
       padding-top: 24px;
-      border-top: 2px solid rgba(255, 255, 255, 0.1);
+      border-top: 2px solid var(--border);
     }
     .order-drink-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--inner);
       border-radius: 8px;
       margin-bottom: 8px;
     }
@@ -209,10 +259,10 @@
     .order-qty-controls { display: flex; align-items: center; gap: 10px; }
     .order-qty-btn {
       width: 32px; height: 32px; border-radius: 8px; border: none;
-      background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 18px; font-weight: 700;
+      background: var(--inner-strong); color: var(--fg); font-size: 18px; font-weight: 700;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
     }
-    .order-qty-btn:hover { background: rgba(255, 255, 255, 0.22); }
+    .order-qty-btn:hover { background: var(--inner-hover); }
     .order-qty-value { min-width: 22px; text-align: center; font-weight: 600; }
     .order-submit-row { margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .order-basket-total { font-weight: 700; font-size: 18px; }
@@ -233,6 +283,7 @@
   </style>
 </head>
 <body>
+  <button class="theme-toggle" id="themeBtn" title="Toggle light/dark theme" aria-label="Toggle light/dark theme">☾</button>
   <div class="container" id="container">
     <div class="loading">Loading...</div>
   </div>
@@ -599,6 +650,23 @@
         }, 60000);
       }
       
+    })();
+  </script>
+  <script>
+    // Light/dark toggle, shared preference with the staff app (localStorage 'theme')
+    (function(){
+      const themeBtn = document.getElementById('themeBtn');
+      function applyTheme(theme){
+        if(theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+        else document.documentElement.removeAttribute('data-theme');
+        themeBtn.textContent = theme === 'dark' ? '☼' : '☾';
+      }
+      applyTheme(localStorage.getItem('theme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+      themeBtn.addEventListener('click', () => {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        applyTheme(next);
+        localStorage.setItem('theme', next);
+      });
     })();
   </script>
 </body>
