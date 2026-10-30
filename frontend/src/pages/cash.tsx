@@ -1,0 +1,274 @@
+import * as React from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowLeft, Coins, Lock, LockOpen, RotateCcw } from 'lucide-react'
+import {
+  apiCashShifts,
+  apiCloseCashShift,
+  apiCurrentCashShift,
+  apiOpenCashShift,
+  apiPayments,
+  apiRefundPayment,
+  type CashShift,
+  type CurrentCashShift,
+  type PaymentRecord,
+} from '@/lib/api'
+import { money } from '@/lib/format'
+import { useSettings } from '@/components/settings/settings-context'
+import { useToast } from '@/components/toast'
+import { ConfirmDialog } from '@/components/settings/confirm-dialog'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
+
+export function CashPage() {
+  const { settings } = useSettings()
+  const { toast } = useToast()
+  const currency = settings.currency || '€'
+  const posEnabled = settings.pos_enabled === 'true'
+
+  const [current, setCurrent] = React.useState<CurrentCashShift | null>(null)
+  const [payments, setPayments] = React.useState<PaymentRecord[]>([])
+  const [shifts, setShifts] = React.useState<CashShift[]>([])
+  const [openingFloat, setOpeningFloat] = React.useState('')
+  const [counted, setCounted] = React.useState('')
+  const [notes, setNotes] = React.useState('')
+  const [loading, setLoading] = React.useState(true)
+
+  const load = React.useCallback(async () => {
+    if (!posEnabled) {
+      setLoading(false)
+      return
+    }
+    const [currentRes, paymentsRes, shiftsRes] = await Promise.all([apiCurrentCashShift(), apiPayments(100), apiCashShifts()])
+    setCurrent(currentRes.data || { shift: null })
+    setPayments(paymentsRes.data || [])
+    setShifts(shiftsRes.data || [])
+    setLoading(false)
+  }, [posEnabled])
+
+  React.useEffect(() => {
+    void load()
+  }, [load])
+
+  const openShift = async () => {
+    const floatCents = Math.round(parseFloat(openingFloat || '0') * 100)
+    const result = await apiOpenCashShift(floatCents)
+    if (!result.ok) {
+      return toast({ title: 'Failed to open shift', description: result.error || `Error ${result.status}`, variant: 'error' })
+    }
+    toast({ title: 'Cash shift opened' })
+    setOpeningFloat('')
+    await load()
+  }
+
+  const closeShift = async () => {
+    if (!current?.shift) return
+    const countedCents = Math.round(parseFloat(counted || '0') * 100)
+    const result = await apiCloseCashShift(current.shift.id, { countedCents, notes: notes.trim() || undefined })
+    if (!result.ok) {
+      return toast({ title: 'Failed to close shift', description: result.error || `Error ${result.status}`, variant: 'error' })
+    }
+    toast({
+      title: 'Cash shift closed',
+      description: `Variance: ${money(result.data?.varianceCents || 0, currency)}`,
+    })
+    setCounted('')
+    setNotes('')
+    await load()
+  }
+
+  const refund = async (payment: PaymentRecord) => {
+    const result = await apiRefundPayment(payment.id)
+    if (!result.ok) {
+      return toast({ title: 'Failed to refund', description: result.error || `Error ${result.status}`, variant: 'error' })
+    }
+    toast({ title: 'Payment refunded' })
+    await load()
+  }
+
+  if (!posEnabled) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Link to="/admin" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-4 w-4" /> Back to Admin
+          </Link>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight">Cash &amp; Payments</h1>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-start gap-3 p-6">
+            <p className="text-sm font-semibold">Payments are disabled</p>
+            <p className="max-w-prose text-sm text-muted-foreground">
+              The optional POS feature is off. Enable it in Settings → General → “Payments (POS)” to collect
+              cash payments, split payments between payers, print payment methods on receipts and reconcile
+              the cash drawer.
+            </p>
+            <Button asChild variant="outline">
+              <Link to="/settings">Open Settings</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  const expectedCents = current?.totals?.expectedCents ?? null
+  const signedMoney = (cents: number) =>
+    (cents > 0 ? '+' : cents < 0 ? '-' : '') + money(Math.abs(cents), currency)
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Link to="/admin" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" /> Back to Admin
+        </Link>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">Cash &amp; Payments</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Cash-shift reconciliation and recent payments.</p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              {current?.shift ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />} Cash shift
+            </CardTitle>
+            <CardDescription>
+              {current?.shift
+                ? `Open since ${new Date(current.shift.openedAt).toLocaleString()}${current.shift.openedBy ? ` · ${current.shift.openedBy}` : ''}`
+                : 'No shift open.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : current?.shift ? (
+              <>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-muted/40 px-2 py-2">
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Opening float</p>
+                    <p className="font-semibold">{money(current.shift.openingFloatCents, currency)}</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/40 px-2 py-2">
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Cash net</p>
+                    <p className="font-semibold">{money(current.totals?.netCents || 0, currency)}</p>
+                  </div>
+                  <div className="rounded-lg bg-accent/60 px-2 py-2">
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Expected</p>
+                    <p className="font-semibold">{money(expectedCents || 0, currency)}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cash-counted">Counted cash ({currency})</Label>
+                  <Input id="cash-counted" type="number" min="0" step="0.01" value={counted} onChange={(e) => setCounted(e.target.value)} placeholder="0.00" />
+                  <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
+                  {counted && expectedCents != null && (
+                    <p
+                      className={cn(
+                        'text-sm font-semibold',
+                        Math.round(parseFloat(counted) * 100) - expectedCents === 0 ? 'text-emerald-600' : 'text-destructive',
+                      )}
+                    >
+                      Variance: {signedMoney(Math.round(parseFloat(counted) * 100) - expectedCents)}
+                    </p>
+                  )}
+                  <ConfirmDialog
+                    trigger={<Button disabled={!counted}>Close shift</Button>}
+                    title="Close cash shift?"
+                    description={`Expected ${money(expectedCents || 0, currency)}. The counted amount will be stored with the variance for reconciliation.`}
+                    confirmLabel="Close shift"
+                    onConfirm={() => void closeShift()}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="cash-float">Opening float ({currency})</Label>
+                <Input id="cash-float" type="number" min="0" step="0.01" value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)} placeholder="0.00" />
+                <Button onClick={() => void openShift()}>
+                  <Coins /> Open shift
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Closed shifts</CardTitle>
+            <CardDescription>Variance = counted − expected.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {shifts.filter((shift) => shift.closedAt).length === 0 && <p className="text-sm text-muted-foreground">No closed shifts yet.</p>}
+            {shifts
+              .filter((shift) => shift.closedAt)
+              .slice(0, 6)
+              .map((shift) => (
+                <div key={shift.id} className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                  <div>
+                    <p className="font-semibold">{new Date(shift.closedAt || '').toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Expected {money(shift.expectedCents || 0, currency)} · Counted {money(shift.countedCents || 0, currency)}
+                    </p>
+                  </div>
+                  <span className={cn('font-semibold', (shift.varianceCents || 0) === 0 ? 'text-emerald-600' : 'text-destructive')}>
+                    {signedMoney(shift.varianceCents || 0)}
+                  </span>
+                </div>
+              ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Recent payments</CardTitle>
+          <CardDescription>Latest {payments.length} recorded payments.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {payments.length === 0 && <p className="text-sm text-muted-foreground">No payments recorded yet.</p>}
+          {payments.map((payment) => {
+            const remaining = payment.amountCents - payment.refundedCents
+            return (
+              <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                <div>
+                  <p className="font-semibold">
+                    {payment.tableNumber != null ? `Table #${payment.tableNumber}` : 'Session'} · {money(payment.amountCents, payment.currency || currency)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(payment.createdAt).toLocaleString()} · {payment.method}
+                    {payment.refundedCents > 0 ? ` · refunded ${money(payment.refundedCents, currency)}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'rounded-md px-2 py-0.5 text-xs font-semibold capitalize',
+                      payment.status === 'refunded' ? 'bg-destructive/10 text-destructive' : 'bg-accent text-accent-foreground',
+                    )}
+                  >
+                    {payment.status.replace('_', ' ')}
+                  </span>
+                  {remaining > 0 && (
+                    <ConfirmDialog
+                      trigger={
+                        <Button size="sm" variant="outline">
+                          <RotateCcw /> Refund {money(remaining, currency)}
+                        </Button>
+                      }
+                      title="Refund payment?"
+                      description={`This records a cash refund of ${money(remaining, currency)} against the payment. VAT credit notes are handled in the accounting phase.`}
+                      confirmLabel="Refund"
+                      onConfirm={() => void refund(payment)}
+                    />
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

@@ -61,6 +61,12 @@ async function getSettingValue(key){
   return row ? row.value : null;
 }
 
+// The POS/payments feature is optional and disabled by default. Enable it in
+// Settings → General ("Payments (POS)") which stores `pos_enabled = 'true'`.
+async function isPosEnabled(){
+  return (await getSettingValue('pos_enabled')) === 'true';
+}
+
 // Simple helper to build the OIDC configuration (cached). openid-client v6
 // returns a Configuration object instead of an Issuer/Client pair.
 let _oidcConfigCache = null;
@@ -806,6 +812,17 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       }
     }
     
+    // Payment methods breakdown (only when the optional POS feature is enabled).
+    let byPaymentMethod = null;
+    if(await isPosEnabled()){
+      const paymentRows = (await prisma.payment.findMany({ where: { createdAt: { gte: startDate, lte: endDate } } })) || [];
+      byPaymentMethod = {};
+      for(const payment of paymentRows){
+        const method = payment.method || 'cash';
+        byPaymentMethod[method] = (byPaymentMethod[method] || 0) + (payment.amountCents || 0) - (payment.refundedCents || 0);
+      }
+    }
+
     res.json({
       totalRevenue,
       byTableType,
@@ -814,6 +831,7 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       tableChargesTotal: totalTableCharges,
       ...(timeSeries && { timeSeries }),
       ...(dayOfWeekAnalysis && { dayOfWeekAnalysis }),
+      ...(byPaymentMethod && { byPaymentMethod }),
       ...(details && { details })
     });
   } catch(err){
@@ -1346,6 +1364,30 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     const grossTotalCents = Object.values(buckets).reduce((s,b)=>s+b.totalCents, 0);
     const discountCents = Math.min(discountCentsRequested, grossTotalCents);
 
+    // Optional payment collection (POS phase 1: cash, split across payers).
+    const posEnabled = await isPosEnabled();
+    const totalDueCents = grossTotalCents - discountCents;
+    let paymentPlan = null;
+    if(posEnabled){
+      const requested = Array.isArray(req.body.payments) && req.body.payments.length > 0
+        ? req.body.payments
+        : [{ method: 'cash', amountCents: totalDueCents }];
+      const currency = (await getSettingValue('currency')) || 'EUR';
+      const rows = requested.map(p => ({
+        method: p && p.method === 'card' ? 'card' : 'cash',
+        amountCents: Math.max(0, Math.round(Number(p && p.amountCents) || 0)),
+        tenderedCents: p && p.tenderedCents != null ? Math.max(0, Math.round(Number(p.tenderedCents) || 0)) : null
+      }));
+      if(rows.some(r => r.amountCents <= 0)){
+        return res.status(400).json({ error: 'invalid_payment_amount' });
+      }
+      const paidCents = rows.reduce((sum, r) => sum + r.amountCents, 0);
+      if(paidCents !== totalDueCents){
+        return res.status(400).json({ error: 'payment_mismatch', expectedCents: totalDueCents, receivedCents: paidCents });
+      }
+      paymentPlan = { rows, currency };
+    }
+
     const receiptItems = saleItems.map(i => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, totalCents: i.totalCents, vatRatePercent: i.vatRatePercent }));
     if(tableCharge > 0) receiptItems.unshift({ description: 'Table Time', quantity: 1, unitPrice: tableCharge, totalCents: tableCharge, vatRatePercent: tableVatRate });
 
@@ -1401,26 +1443,177 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
         subtotalHtCents, vatCents, totalTtcCents, discountCents
       }});
 
+      const payments = [];
+      if(paymentPlan){
+        for(const row of paymentPlan.rows){
+          payments.push(await tx.payment.create({ data: {
+            sessionId: session.id,
+            receiptId: receipt.id,
+            provider: row.method === 'card' ? 'manual_card' : 'cash',
+            method: row.method,
+            amountCents: row.amountCents,
+            currency: paymentPlan.currency,
+            status: 'captured',
+            idempotencyKey: crypto.randomUUID(),
+            detailsJson: row.tenderedCents != null
+              ? JSON.stringify({ tenderedCents: row.tenderedCents, changeCents: Math.max(0, row.tenderedCents - row.amountCents) })
+              : null,
+            createdBy: getActorName(req)
+          }}));
+        }
+      }
+
       await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1`, session.id);
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
 
       // Record this session's duration against the table's usage counters
       await addTableUsage(tx, session.tableId, elapsedSeconds);
 
-      return receipt;
+      return { receipt, payments };
     });
 
     await checkAndSendMaintenanceAlert(session.tableId, elapsedSeconds);
+    const receiptRecord = result.receipt;
     res.json({
-      receiptNumber: result.number,
-      year: result.year,
-      totalTtcCents: result.totalTtcCents,
-      subtotalHtCents: result.subtotalHtCents,
-      vatCents: result.vatCents,
-      discountCents: result.discountCents,
-      items: JSON.parse(result.itemsJson || '[]')
+      receiptNumber: receiptRecord.number,
+      year: receiptRecord.year,
+      totalTtcCents: receiptRecord.totalTtcCents,
+      subtotalHtCents: receiptRecord.subtotalHtCents,
+      vatCents: receiptRecord.vatCents,
+      discountCents: receiptRecord.discountCents,
+      items: JSON.parse(receiptRecord.itemsJson || '[]'),
+      payments: (result.payments || []).map(payment => ({
+        id: payment.id,
+        method: payment.method,
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+        status: payment.status,
+        details: payment.detailsJson ? JSON.parse(payment.detailsJson) : null
+      }))
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'checkout_failed' }); }
+});
+
+// ---------------------------------------------------------------------------
+// Payments & cash shifts (optional POS feature, gated by the pos_enabled setting)
+// ---------------------------------------------------------------------------
+
+// Net cash movement between two instants, used for cash-shift reconciliation.
+async function cashTotalsBetween(start, end){
+  const rows = (await prisma.payment.findMany({ where: { method: 'cash', createdAt: { gte: start, lte: end } } })) || [];
+  const capturedCents = rows.reduce((sum, p) => sum + (p.amountCents || 0), 0);
+  const refundedCents = rows.reduce((sum, p) => sum + (p.refundedCents || 0), 0);
+  return { capturedCents, refundedCents, netCents: capturedCents - refundedCents, count: rows.length };
+}
+
+// Recent payments for the cash/reconciliation screen (with table numbers).
+app.get('/api/payments', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const payments = (await prisma.payment.findMany({ orderBy: { createdAt: 'desc' }, take: limit })) || [];
+    const sessionIds = [...new Set(payments.map(p => p.sessionId))];
+    const sessions = sessionIds.length ? ((await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || []) : [];
+    const sessionById = new Map(sessions.map(session => [session.id, session]));
+    const tableIds = [...new Set(sessions.map(session => session.tableId))];
+    const tables = tableIds.length ? ((await prisma.poolTable.findMany({ where: { id: { in: tableIds } } })) || []) : [];
+    const tableById = new Map(tables.map(table => [table.id, table]));
+    res.json(payments.map(payment => {
+      const session = sessionById.get(payment.sessionId);
+      const table = session ? tableById.get(session.tableId) : null;
+      return {
+        id: payment.id,
+        sessionId: payment.sessionId,
+        receiptId: payment.receiptId,
+        method: payment.method,
+        amountCents: payment.amountCents,
+        refundedCents: payment.refundedCents || 0,
+        currency: payment.currency,
+        status: payment.status,
+        createdAt: payment.createdAt,
+        tableNumber: table ? table.number : null,
+        details: payment.detailsJson ? JSON.parse(payment.detailsJson) : null
+      };
+    }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Record a refund against a payment (cash reconciliation). VAT credit notes (avoir)
+// are handled separately in the accounting phase — see docs/POS-INTEGRATION-PLAN.md.
+app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if(!payment) return res.status(404).json({ error: 'not_found' });
+    if(payment.status === 'refunded') return res.status(409).json({ error: 'already_refunded' });
+    const remainingCents = (payment.amountCents || 0) - (payment.refundedCents || 0);
+    const requested = req.body && req.body.amountCents != null
+      ? Math.round(Number(req.body.amountCents) || 0)
+      : remainingCents;
+    if(!(requested > 0) || requested > remainingCents){
+      return res.status(400).json({ error: 'invalid_amount', remainingCents });
+    }
+    const refundedCents = (payment.refundedCents || 0) + requested;
+    const updated = await prisma.payment.update({
+      where: { id: payment.id },
+      data: { refundedCents, status: refundedCents >= payment.amountCents ? 'refunded' : 'partially_refunded' }
+    });
+    res.json(updated);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Current cash shift (at most one open at a time) with its expected drawer total.
+app.get('/api/cash-shifts/current', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const shift = await prisma.cashShift.findFirst({ where: { closedAt: null }, orderBy: { openedAt: 'desc' } });
+    if(!shift) return res.json({ shift: null });
+    const totals = await cashTotalsBetween(shift.openedAt, new Date());
+    res.json({ shift, totals: { ...totals, expectedCents: (shift.openingFloatCents || 0) + totals.netCents } });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/cash-shifts/open', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const existing = await prisma.cashShift.findFirst({ where: { closedAt: null } });
+    if(existing) return res.status(409).json({ error: 'shift_already_open' });
+    const openingFloatCents = Math.max(0, Math.round(Number(req.body && req.body.openingFloatCents) || 0));
+    const shift = await prisma.cashShift.create({ data: { openingFloatCents, openedBy: getActorName(req) } });
+    res.status(201).json(shift);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/cash-shifts/:id/close', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const shift = await prisma.cashShift.findUnique({ where: { id: req.params.id } });
+    if(!shift) return res.status(404).json({ error: 'not_found' });
+    if(shift.closedAt) return res.status(409).json({ error: 'shift_closed' });
+    const countedCents = Math.max(0, Math.round(Number(req.body && req.body.countedCents) || 0));
+    const totals = await cashTotalsBetween(shift.openedAt, new Date());
+    const expectedCents = (shift.openingFloatCents || 0) + totals.netCents;
+    const updated = await prisma.cashShift.update({
+      where: { id: shift.id },
+      data: {
+        countedCents,
+        expectedCents,
+        varianceCents: countedCents - expectedCents,
+        closedBy: getActorName(req),
+        closedAt: new Date(),
+        notes: req.body && req.body.notes ? String(req.body.notes) : null
+      }
+    });
+    res.json(updated);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.get('/api/cash-shifts', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const shifts = (await prisma.cashShift.findMany({ orderBy: { openedAt: 'desc' }, take: 50 })) || [];
+    res.json(shifts);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update session (e.g., player count)

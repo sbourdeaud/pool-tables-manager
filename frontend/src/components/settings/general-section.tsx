@@ -32,6 +32,12 @@ export function GeneralSection({ className }: { className?: string }) {
         placeholder={window.location.origin}
         help={`Hostname/IP used in table QR codes so players' phones can reach this app (e.g. http://192.168.1.50:3000 or https://pool.example.com). Leave blank to use the address you're currently browsing from (${window.location.origin}).`}
       />
+      <SwitchRow
+        label="Payments (POS)"
+        description="Enable cash payments with split payments, cash-shift reconciliation and payment methods on receipts. Card terminal support arrives in a later phase."
+        checked={settings.pos_enabled === 'true'}
+        onCheckedChange={(checked) => void save('pos_enabled', String(checked))}
+      />
       <Field label="Dashboard layout" help="Sections: collapsible groups with a flag navigator. Tabs: one table type at a time — drag the flags to reorder them.">
         <Select value={layout} onValueChange={(value) => void save('dashboard_layout', value)}>
           <SelectTrigger>

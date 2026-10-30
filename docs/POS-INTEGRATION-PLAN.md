@@ -1,6 +1,6 @@
 # Point of Sale (POS) Integration Plan
 
-Status: **proposal** · Branch: `pos-integration` · No database changes proposed in this document yet.
+Status: **Phase 1 implemented** · Branch: `pos-integration`
 
 ## 1. Decisions taken (answers to the open questions)
 
@@ -13,6 +13,11 @@ Status: **proposal** · Branch: `pos-integration` · No database changes propose
 | 5 | Certified cash register (NF525) | **This app remains the sales/payment register** (source of truth). The card reader is an acceptance device only. Start an expert-comptable review / NF525 attestation workstream **before** enabling card payments in production; do **not** advertise the software as "certified", and do **not** add a second certified POS (dual systems create double entry). |
 
 Consequence of #1: the scope of this branch is **Shape A — payments at checkout**, built provider-agnostically so a different terminal vendor can be added later.
+
+> **The whole feature is optional and off by default.** Enable it in **Settings → General → “Payments
+> (POS)”** (`pos_enabled` setting). While disabled, checkout behaves exactly as before (no payment
+> step, no payment rows, no Cash & Payments page) and the payment/cash-shift APIs return
+> `409 pos_disabled`.
 
 ## 2. Goal
 
@@ -143,7 +148,31 @@ self-payment from the player phone (would need hosted checkout on the phone — 
 | Scope creep into full POS | This plan's phases; external POS sync explicitly out of scope |
 | Provider lock-in | Adapter interface; vendor-specific code isolated in one module |
 
-## 11. Open items to confirm before Phase 2 code
+## 11. Phase 1 — implementation status (this branch)
+
+Implemented behind the optional `pos_enabled` toggle:
+
+- **Cash payments at checkout** with **split payments** (multiple cash payers, tendered amount and
+  change); checkout refuses to complete while a balance remains.
+- **Receipts** now carry payment lines (method, amount, change) on screen and in the printed invoice.
+- **Cash & Payments admin page** (Admin → Cash & Payments, only shown when enabled): open/close a
+  cash shift, expected drawer total (opening float + net cash), counted amount and **variance**,
+  recent payments with **refunds** (payment-level, capped at the captured amount), closed-shift history.
+- **Reports**: “Paid by cash/card” rows in the financial report summary and in the PDF/Excel exports.
+- **API**: `GET /api/payments`, `POST /api/payments/:id/refund`,
+  `GET|POST /api/cash-shifts…`, payment handling in `POST /api/sessions/:id/checkout`
+  (`payments: [{method, amountCents, tenderedCents?}]`), `byPaymentMethod` in the financial report.
+- **Tests**: `backend/tests/pos.test.js` (gating, cash-shift open/close/variance, refund limits,
+  payments list, report gating) — suite total 13 files / 44 tests.
+
+**Known Phase 1 limits (by design):**
+
+- Cash only; card terminals arrive with the Stripe adapter (Phase 2).
+- Refunds are recorded at payment level for drawer reconciliation; **VAT credit notes (avoir)** are
+  part of the accounting phase — refunds should be exceptional and manager-approved until then.
+- One venue/one register; multi-terminal reconciliation is out of scope.
+
+## 12. Open items to confirm before Phase 2 code
 
 - Stripe account ready + region/terminal eligibility.
 - Webhook endpoint reachable (public HTTPS or tunnel during pilot; note: the app itself stays HTTP

@@ -111,6 +111,46 @@ model Setting {
 // Sequentially numbered receipt issued when a table session is paid out (checkout).
 // Required for French anti-fraud compliance (CGI art. 286-I-3 bis / ISCA principles):
 // once created a receipt is never modified or deleted.
+model Payment {
+  id             String   @id @default(uuid())
+  sessionId      String   @map("session_id")
+  receiptId      String?  @map("receipt_id")
+  // 'cash' for Phase 1; terminal providers (e.g. 'stripe') arrive in Phase 2.
+  provider       String   @default("cash")
+  // Display method recorded on receipts/reports: cash | card
+  method         String   @default("cash")
+  amountCents    Int      @map("amount_cents")
+  currency       String   @default("EUR")
+  // pending | captured | partially_refunded | refunded | voided
+  status         String   @default("captured")
+  providerRef    String?  @unique @map("provider_ref")
+  detailsJson    String?  @map("details_json")
+  idempotencyKey String?  @unique @map("idempotency_key")
+  refundedCents  Int      @default(0) @map("refunded_cents")
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([receiptId])
+  @@index([createdAt])
+}
+
+model CashShift {
+  id                String    @id @default(uuid())
+  openingFloatCents Int       @default(0) @map("opening_float_cents")
+  openedBy          String?   @map("opened_by")
+  openedAt          DateTime  @default(now()) @map("opened_at")
+  countedCents      Int?      @map("counted_cents")
+  expectedCents     Int?      @map("expected_cents")
+  varianceCents     Int?      @map("variance_cents")
+  closedBy          String?   @map("closed_by")
+  closedAt          DateTime? @map("closed_at")
+  notes             String?
+
+  @@index([openedAt])
+}
+
 model Receipt {
   id               String   @id @default(uuid())
   number           Int

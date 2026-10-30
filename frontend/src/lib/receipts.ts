@@ -118,6 +118,14 @@ export async function printFinalReceipt(receipt: CheckoutReceipt, currency: stri
        <tr><td>of which VAT (TVA):</td><td style="text-align:right">${money(receipt.vatCents, currency)}</td></tr>
        ${rows}
      </table>
+     ${receipt.payments && receipt.payments.length > 0
+       ? `<table class="totals">
+            ${receipt.payments.map(p => `<tr><td>Paid (${p.method}):</td><td style="text-align:right">${money(p.amountCents, currency)}</td></tr>`).join('')}
+            ${receipt.payments.some(p => (p.details?.changeCents || 0) > 0)
+              ? `<tr><td>Change:</td><td style="text-align:right">${money(receipt.payments.reduce((sum, p) => sum + (p.details?.changeCents || 0), 0), currency)}</td></tr>`
+              : ''}
+          </table>`
+       : ''}
      <div style="text-align:center;margin-top:20px">Thank you!</div>`,
   )
 }
