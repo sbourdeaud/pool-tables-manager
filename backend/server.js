@@ -1988,6 +1988,46 @@ app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+// Credit notes (avoir) issued for refunds, with receipt/table references.
+app.get('/api/credit-notes', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const notes = (await prisma.creditNote.findMany({ orderBy: { createdAt: 'desc' }, take: limit })) || [];
+    const receiptIds = [...new Set(notes.map(note => note.receiptId))];
+    const receipts = receiptIds.length ? ((await prisma.receipt.findMany({ where: { id: { in: receiptIds } } })) || []) : [];
+    const receiptById = new Map(receipts.map(receipt => [receipt.id, receipt]));
+    const sessionIds = [...new Set(notes.map(note => note.sessionId))];
+    const sessions = sessionIds.length ? ((await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || []) : [];
+    const sessionById = new Map(sessions.map(session => [session.id, session]));
+    const tableIds = [...new Set(sessions.map(session => session.tableId))];
+    const tables = tableIds.length ? ((await prisma.poolTable.findMany({ where: { id: { in: tableIds } } })) || []) : [];
+    const tableById = new Map(tables.map(table => [table.id, table]));
+    res.json(notes.map(note => {
+      const receipt = receiptById.get(note.receiptId);
+      const session = sessionById.get(note.sessionId);
+      const table = session ? tableById.get(session.tableId) : null;
+      return {
+        id: note.id,
+        number: note.number,
+        year: note.year,
+        receiptId: note.receiptId,
+        receiptNumber: receipt ? receipt.number : null,
+        receiptYear: receipt ? receipt.year : null,
+        sessionId: note.sessionId,
+        tableNumber: table ? table.number : null,
+        items: JSON.parse(note.itemsJson || '[]'),
+        subtotalHtCents: note.subtotalHtCents,
+        vatCents: note.vatCents,
+        totalTtcCents: note.totalTtcCents,
+        reason: note.reason,
+        createdBy: note.createdBy,
+        createdAt: note.createdAt
+      };
+    }));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
 // Current cash shift (at most one open at a time) with its expected drawer total.
 app.get('/api/cash-shifts/current', requireAuth, async (req, res) => {
   try {

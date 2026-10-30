@@ -531,6 +531,35 @@ export interface Reconciliation {
   closure: { periodKey: string; closedAt: string; closedBy?: string | null } | null
 }
 
+export interface CreditNoteRecord {
+  id: string
+  number: number
+  year: number
+  receiptId: string
+  receiptNumber?: number | null
+  receiptYear?: number | null
+  sessionId: string
+  tableNumber?: number | null
+  items: {
+    description: string
+    quantity: number
+    unitPrice: number
+    totalCents: number
+    vatRatePercent?: number | null
+    vatAmountCents?: number | null
+  }[]
+  subtotalHtCents: number
+  vatCents: number
+  totalTtcCents: number
+  reason?: string | null
+  createdBy?: string | null
+  createdAt: string
+}
+
+export function apiCreditNotes(limit = 50) {
+  return apiGet<CreditNoteRecord[]>('/api/credit-notes?limit=' + limit)
+}
+
 export function apiReconciliation(date: string) {
   return apiGet<Reconciliation>('/api/reports/reconciliation?date=' + encodeURIComponent(date))
 }

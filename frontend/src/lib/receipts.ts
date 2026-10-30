@@ -1,4 +1,4 @@
-import { apiGet, apiSessionDetail, apiTableTypes, apiTables, type SessionDetail, type CheckoutReceipt } from '@/lib/api'
+import { apiGet, apiSessionDetail, apiTableTypes, apiTables, type CheckoutReceipt, type CreditNoteRecord, type SessionDetail } from '@/lib/api'
 import { money } from '@/lib/format'
 
 interface ReceiptLine {
@@ -127,6 +127,45 @@ export async function printFinalReceipt(receipt: CheckoutReceipt, currency: stri
           </table>`
        : ''}
      <div style="text-align:center;margin-top:20px">Thank you!</div>`,
+  )
+}
+
+/** Credit note (avoir) printed for a refund against a receipt. */
+export async function printCreditNote(note: CreditNoteRecord, currency: string) {
+  const w = openPrintWindow()
+  if (!w) return
+  const name = await appName()
+  const absLines: ReceiptLine[] = (note.items || []).map((line) => ({
+    description: line.description,
+    quantity: line.quantity || 1,
+    unitPrice: Math.abs(line.unitPrice || 0),
+    totalCents: Math.abs(line.totalCents || 0),
+    vatRatePercent: line.vatRatePercent,
+  }))
+  const totalTtc = Math.abs(note.totalTtcCents)
+  const { vatTotal, rows } = vatRowsForLines(absLines, currency)
+
+  writeReceipt(
+    w,
+    `Credit note #${note.number}/${note.year}`,
+    `<h2>${name}</h2>
+     <h3>CREDIT NOTE (AVOIR) #${note.number}/${note.year}</h3>
+     <div class="info">
+       <div>Original receipt: ${note.receiptNumber ? `#${note.receiptNumber}/${note.receiptYear || ''}` : '—'}</div>
+       <div>Table: ${note.tableNumber != null ? `#${note.tableNumber}` : 'N/A'}</div>
+       <div>Date: ${new Date(note.createdAt).toLocaleString()}</div>
+       ${note.reason ? `<div>Reason: ${note.reason}</div>` : ''}
+     </div>
+     ${linesTable(absLines, currency)}
+     <table class="totals">
+       <tr><td>TOTAL CREDITED (TTC):</td><td style="text-align:right">${money(totalTtc, currency)}</td></tr>
+       <tr><td>Total HT:</td><td style="text-align:right">${money(totalTtc - vatTotal, currency)}</td></tr>
+     </table>
+     <table>
+       <tr><td>of which VAT (TVA):</td><td style="text-align:right">${money(vatTotal, currency)}</td></tr>
+       ${rows}
+     </table>
+     <div style="margin-top:20px;text-align:center;font-size:10px">This credit note cancels part of the referenced receipt.</div>`,
   )
 }
 

@@ -170,9 +170,14 @@ Implemented:
   VAT report subtraction, reconciliation totals, day-close guards/idempotency, CSV content):
   suite total **15 files / 57 tests**.
 
-**Phase 3 limits:** credit notes are printable via data only (no dedicated PDF yet); day close is
-per calendar day and does not automatically fetch PSP/terminal settlement totals (compare manually or
-extend with the Stripe balance API); variance alerts need SMTP configured.
+**Follow-up polish (done):** credit notes are now listed on the Cash & Payments page and can be
+**printed** (browser print / save as PDF) with the original receipt reference and VAT breakdown;
+partial refunds with a reason are supported from the UI; the Cash page shows whether a card terminal
+is configured; the VAT report labels the refund category correctly.
+
+**Phase 3 limits:** day close is per calendar day and does not automatically fetch PSP/terminal
+settlement totals (compare manually or extend with the Stripe balance API); variance alerts need SMTP
+configured.
 
 ## 11. Phase 2 — implementation status (this branch)
 

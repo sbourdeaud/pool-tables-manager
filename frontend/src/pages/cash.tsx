@@ -1,21 +1,27 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Coins, FileDown, Lock, LockOpen, RotateCcw, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Coins, CreditCard, FileDown, Lock, LockOpen, Printer, RotateCcw, ShieldCheck } from 'lucide-react'
 import {
   apiCashShifts,
   apiCloseCashShift,
+  apiCreditNotes,
   apiCurrentCashShift,
   apiDayClose,
   apiOpenCashShift,
+  apiPaymentConfig,
   apiPayments,
   apiReconciliation,
   apiRefundPayment,
   paymentsExportUrl,
   type CashShift,
+  type CreditNoteRecord,
   type CurrentCashShift,
+  type PaymentConfig,
   type PaymentRecord,
   type Reconciliation,
 } from '@/lib/api'
+import { printCreditNote } from '@/lib/receipts'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { money } from '@/lib/format'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
@@ -42,16 +48,29 @@ export function CashPage() {
   const [reconDate, setReconDate] = React.useState(new Date().toISOString().slice(0, 10))
   const [reconciliation, setReconciliation] = React.useState<Reconciliation | null>(null)
   const [closingDay, setClosingDay] = React.useState(false)
+  const [creditNotes, setCreditNotes] = React.useState<CreditNoteRecord[]>([])
+  const [providerConfig, setProviderConfig] = React.useState<PaymentConfig | null>(null)
+  const [refundTarget, setRefundTarget] = React.useState<PaymentRecord | null>(null)
+  const [refundAmount, setRefundAmount] = React.useState('')
+  const [refundReason, setRefundReason] = React.useState('')
 
   const load = React.useCallback(async () => {
     if (!posEnabled) {
       setLoading(false)
       return
     }
-    const [currentRes, paymentsRes, shiftsRes] = await Promise.all([apiCurrentCashShift(), apiPayments(100), apiCashShifts()])
+    const [currentRes, paymentsRes, shiftsRes, notesRes, configRes] = await Promise.all([
+      apiCurrentCashShift(),
+      apiPayments(100),
+      apiCashShifts(),
+      apiCreditNotes(50),
+      apiPaymentConfig(),
+    ])
     setCurrent(currentRes.data || { shift: null })
     setPayments(paymentsRes.data || [])
     setShifts(shiftsRes.data || [])
+    setCreditNotes(notesRes.data || [])
+    setProviderConfig(configRes.data || null)
     setLoading(false)
   }, [posEnabled])
 
@@ -91,8 +110,20 @@ export function CashPage() {
     await load()
   }
 
-  const refund = async (payment: PaymentRecord) => {
-    const result = await apiRefundPayment(payment.id)
+  const openRefund = (payment: PaymentRecord) => {
+    setRefundTarget(payment)
+    setRefundAmount(((payment.amountCents - payment.refundedCents) / 100).toFixed(2))
+    setRefundReason('')
+  }
+
+  const submitRefund = async () => {
+    if (!refundTarget) return
+    const remaining = refundTarget.amountCents - refundTarget.refundedCents
+    const cents = Math.round(parseFloat(refundAmount || '0') * 100)
+    if (!(cents > 0) || cents > remaining) {
+      return toast({ title: 'Invalid refund amount', description: `Maximum ${money(remaining, currency)}`, variant: 'error' })
+    }
+    const result = await apiRefundPayment(refundTarget.id, cents, refundReason.trim() || undefined)
     if (!result.ok) {
       return toast({ title: 'Failed to refund', description: result.error || `Error ${result.status}`, variant: 'error' })
     }
@@ -101,6 +132,7 @@ export function CashPage() {
       title: 'Payment refunded',
       description: note ? `Credit note #${note.number}/${note.year} issued (VAT ${money(note.vatCents, currency)})` : 'Recorded (no credit note: payment was not invoiced yet)',
     })
+    setRefundTarget(null)
     await load()
     void apiReconciliation(reconDate).then((r) => setReconciliation(r.data || null))
   }
@@ -158,7 +190,12 @@ export function CashPage() {
           <ArrowLeft className="h-4 w-4" /> Back to Admin
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight">Cash &amp; Payments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Cash-shift reconciliation and recent payments.</p>
+        <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+          <CreditCard className="h-4 w-4" />
+          {providerConfig?.card_enabled
+            ? `Card terminal: ${providerConfig.provider === 'stripe' ? 'Stripe Terminal configured' : `${providerConfig.provider} configured`}`
+            : 'Card terminal: not configured — cash only'}
+        </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -324,6 +361,35 @@ export function CashPage() {
 
       <Card>
         <CardHeader className="pb-3">
+          <CardTitle className="text-base">Credit notes (avoir)</CardTitle>
+          <CardDescription>Issued for refunds — each has its own sequence number and VAT breakdown.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {creditNotes.length === 0 && <p className="text-sm text-muted-foreground">No credit notes issued yet.</p>}
+          {creditNotes.map((note) => (
+            <div key={note.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+              <div>
+                <p className="font-semibold">Credit note #{note.number}/{note.year}</p>
+                <p className="text-xs text-muted-foreground">
+                  {note.receiptNumber ? `Receipt #${note.receiptNumber}/${note.receiptYear} · ` : ''}
+                  {note.tableNumber != null ? `Table #${note.tableNumber} · ` : ''}
+                  {new Date(note.createdAt).toLocaleString()}
+                  {note.reason ? ` · ${note.reason}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">{money(note.totalTtcCents, currency)}</span>
+                <Button size="sm" variant="outline" onClick={() => void printCreditNote(note, currency)}>
+                  <Printer /> Print
+                </Button>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
           <CardTitle className="text-base">Recent payments</CardTitle>
           <CardDescription>Latest {payments.length} recorded payments.</CardDescription>
         </CardHeader>
@@ -352,17 +418,9 @@ export function CashPage() {
                     {payment.status.replace('_', ' ')}
                   </span>
                   {remaining > 0 && (
-                    <ConfirmDialog
-                      trigger={
-                        <Button size="sm" variant="outline">
-                          <RotateCcw /> Refund {money(remaining, currency)}
-                        </Button>
-                      }
-                      title="Refund payment?"
-                      description={`This records a cash refund of ${money(remaining, currency)} against the payment. VAT credit notes are handled in the accounting phase.`}
-                      confirmLabel="Refund"
-                      onConfirm={() => void refund(payment)}
-                    />
+                    <Button size="sm" variant="outline" onClick={() => openRefund(payment)}>
+                      <RotateCcw /> Refund {money(remaining, currency)}
+                    </Button>
                   )}
                 </div>
               </div>
@@ -370,6 +428,35 @@ export function CashPage() {
           })}
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(refundTarget)} onOpenChange={(open) => { if (!open) setRefundTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Refund payment</DialogTitle>
+            <DialogDescription>
+              {refundTarget
+                ? `Refundable: ${money(refundTarget.amountCents - refundTarget.refundedCents, currency)}. Invoiced payments get a numbered VAT credit note (avoir).`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="refund-amount">Refund amount ({currency})</Label>
+              <Input id="refund-amount" type="number" min="0" step="0.01" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="refund-reason">Reason (optional)</Label>
+              <Input id="refund-reason" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="e.g. breakage, wrong order" />
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRefundTarget(null)}>Cancel</Button>
+            <Button onClick={() => void submitRefund()}>
+              <RotateCcw /> Refund
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -155,6 +155,7 @@ pool-tables-manager/
 - `GET /api/payments/:id` / `POST /api/payments/:id/cancel` - Poll / cancel an in-progress card payment
 - `POST /api/payments/:id/refund` - Refund (provider refund for cards); invoiced payments also get a `CreditNote`
 - `GET /api/payments` - Recent payments with table numbers (cash screen)
+- `GET /api/credit-notes` - Issued credit notes (avoir) with receipt/table references and VAT lines
 - `GET|POST /api/cash-shifts…` - Shift current/open/close/list (expected total and variance)
 - `POST /api/webhooks/stripe` - Signature-verified, idempotent Stripe webhook
 - `GET /api/reports/reconciliation?date=` - Day reconciliation (payments by method, credit notes, cash shifts)

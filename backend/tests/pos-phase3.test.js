@@ -121,6 +121,25 @@ describe('POS phase 3: credit notes, reconciliation, day close, CSV', () => {
     expect(duplicate.body.error).toBe('already_closed');
   });
 
+  test('credit notes list includes receipt and table references', async () => {
+    prisma.state.receipts.push(RECEIPT());
+    prisma.state.creditNotes.push({
+      id: 'cn9', number: 9, year: 2026, receiptId: 'rec1', sessionId: 'sess1',
+      itemsJson: JSON.stringify([{ description: 'Refund (credit note)', quantity: 1, unitPrice: -600, totalCents: -600, vatRatePercent: 20, vatAmountCents: -100 }]),
+      subtotalHtCents: 500, vatCents: 100, totalTtcCents: 600, reason: 'breakage', createdAt: new Date()
+    });
+
+    const res = await agent.get('/api/credit-notes');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({ number: 9, year: 2026, receiptNumber: 12, totalTtcCents: 600, reason: 'breakage' });
+    expect(res.body[0].items).toHaveLength(1);
+
+    prisma.state.mockSettings.pos_enabled = 'false';
+    const disabled = await agent.get('/api/credit-notes');
+    expect(disabled.status).toBe(409);
+  });
+
   test('payments CSV export includes payments and credit note corrections', async () => {
     const now = new Date();
     prisma.state.receipts.push(RECEIPT());
