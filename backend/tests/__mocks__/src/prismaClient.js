@@ -87,6 +87,7 @@ const payment = {
   findUnique: async ({ where }) => state.payments.find(p => p.id === where.id) || null,
   findFirst: async ({ where } = {}) => {
     if (where && where.providerRef) return state.payments.find(p => p.providerRef === where.providerRef) || null;
+    if (where && where.idempotencyKey) return state.payments.find(p => p.idempotencyKey === where.idempotencyKey) || null;
     return state.payments[0] || null;
   },
   update: async ({ where, data }) => {

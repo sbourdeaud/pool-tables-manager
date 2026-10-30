@@ -87,6 +87,33 @@ function createStripeProvider(secretKey) {
       return { status: 'refunded' };
     },
 
+    // Gross/refunded/fee totals for the terminal charges in a date range, from
+    // Stripe balance transactions (used for day-close reconciliation).
+    async getSettlement({ start, end }) {
+      const created = { gte: Math.floor(start.getTime() / 1000), lte: Math.floor(end.getTime() / 1000) };
+      const transactions = [];
+      let startingAfter;
+      do {
+        const page = await stripe.balanceTransactions.list({
+          created,
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+        transactions.push(...page.data);
+        startingAfter = page.has_more ? page.data[page.data.length - 1].id : undefined;
+      } while (startingAfter);
+
+      let grossCents = 0;
+      let refundedCents = 0;
+      let feeCents = 0;
+      for (const txn of transactions) {
+        if (txn.type === 'charge' || txn.type === 'payment') grossCents += txn.amount;
+        else if (txn.type === 'refund') refundedCents += Math.abs(txn.amount);
+        feeCents += txn.fee || 0;
+      }
+      return { available: true, grossCents, refundedCents, netCents: grossCents - refundedCents, feeCents };
+    },
+
     verifyWebhook(rawBody, signature) {
       const secret = process.env.STRIPE_WEBHOOK_SECRET;
       if (!secret) {

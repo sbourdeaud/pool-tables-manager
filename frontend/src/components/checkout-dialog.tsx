@@ -65,7 +65,8 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
   const addCardTerminalPayment = async () => {
     if (!sessionId || remainingCents <= 0 || cardPayment) return
     try {
-      const result = await apiCreateCardPayment(sessionId, remainingCents)
+      const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `card-${Date.now()}`
+      const result = await apiCreateCardPayment(sessionId, remainingCents, idempotencyKey)
       if (result.ok && result.data) {
         toast({ title: 'Present card on the terminal' })
         setCardPayment({ paymentId: result.data.paymentId, status: result.data.status })

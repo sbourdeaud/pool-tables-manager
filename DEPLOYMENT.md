@@ -264,6 +264,10 @@ Configure in `docker-compose.yml`:
   (the endpoint needs to be reachable by Stripe — public HTTPS or a tunnel during testing).
 - `COOKIE_SECURE=true`: set when serving the app over HTTPS.
 
+See the **“Setting Up Card Payments”** section of [USER_GUIDE.md](USER_GUIDE.md) for the Stripe
+dashboard steps, pilot checklist and troubleshooting (webhooks, stuck payments, settlement
+differences, key rotation, disabling payments).
+
 ## Releases & container images
 
 Release tags publish a slim multi-arch container image to GHCR

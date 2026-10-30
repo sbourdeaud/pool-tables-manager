@@ -35,6 +35,11 @@ module.exports = {
     return { status: 'refunded' };
   },
 
+  // No real settlement data for the fake provider.
+  async getSettlement() {
+    return { available: false };
+  },
+
   // The fake provider has no webhooks.
   verifyWebhook() {
     return null;

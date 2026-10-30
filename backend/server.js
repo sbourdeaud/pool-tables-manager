@@ -1037,9 +1037,23 @@ async function computeDayReconciliation(start, end){
   const creditNotesTotalCents = creditNotes.reduce((sum, note) => sum + (note.totalTtcCents || 0), 0);
   const shifts = (await prisma.cashShift.findMany({ where: { openedAt: { gte: start, lte: end } } })) || [];
   const closedShifts = shifts.filter(shift => shift.closedAt);
+
+  // Terminal settlement totals from the provider (best effort; optional).
+  let terminal = { available: false };
+  const settlementProvider = getCardProvider();
+  if(settlementProvider && typeof settlementProvider.getSettlement === 'function' && (!settlementProvider.isConfigured || settlementProvider.isConfigured())){
+    try {
+      terminal = await settlementProvider.getSettlement({ start, end });
+    } catch (err) {
+      console.warn('terminal settlement unavailable', err.message);
+      terminal = { available: false, error: err.message };
+    }
+  }
+
   return {
     from: start,
     to: end,
+    terminal,
     payments: {
       count: payments.length,
       capturedCents,
@@ -1830,6 +1844,13 @@ app.post('/api/payments/card', requireAuth, async (req, res) => {
 
     const currency = (await getSettingValue('currency')) || 'EUR';
     const idempotencyKey = req.body && req.body.idempotencyKey ? String(req.body.idempotencyKey) : crypto.randomUUID();
+
+    // Idempotent creation: a retried request returns the existing payment.
+    const duplicate = await prisma.payment.findFirst({ where: { idempotencyKey } });
+    if(duplicate){
+      return res.status(200).json({ paymentId: duplicate.id, status: duplicate.status, provider: duplicate.provider, duplicate: true });
+    }
+
     let intent;
     try {
       intent = await provider.createCardPayment({ amountCents, currency, reference: idempotencyKey });
@@ -1858,7 +1879,23 @@ app.get('/api/payments', requireAuth, async (req, res) => {
   try {
     if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 100));
-    const payments = (await prisma.payment.findMany({ orderBy: { createdAt: 'desc' }, take: limit })) || [];
+    let payments = (await prisma.payment.findMany({ orderBy: { createdAt: 'desc' }, take: limit })) || [];
+
+    // Recover stale card payments: if a webhook was missed, sync the live status
+    // when the cash screen loads (bounded to a handful of rows).
+    const cardProvider = getCardProvider();
+    if(cardProvider){
+      const stale = payments.filter(p => p.method === 'card' && ['presenting', 'pending'].includes(p.status) && p.providerRef && p.provider === cardProvider.name).slice(0, 10);
+      for(const payment of stale){
+        try {
+          const live = await cardProvider.getStatus(payment.providerRef);
+          if(live && live.status && live.status !== payment.status){
+            const updated = await prisma.payment.update({ where: { id: payment.id }, data: { status: live.status } });
+            payments = payments.map(p => (p.id === payment.id ? { ...p, status: updated.status } : p));
+          }
+        } catch (err) { console.warn('payment status sync failed', err.message); }
+      }
+    }
     const sessionIds = [...new Set(payments.map(p => p.sessionId))];
     const sessions = sessionIds.length ? ((await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || []) : [];
     const sessionById = new Map(sessions.map(session => [session.id, session]));

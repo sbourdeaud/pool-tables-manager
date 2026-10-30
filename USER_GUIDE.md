@@ -429,6 +429,27 @@ Access via menu (☰) → **Settings**
      partial refund (print the credit note); close the shift; close the day and export the CSV.
    - Switch Stripe to live keys only after the pilot passes.
 
+### Troubleshooting & operations
+
+- **Webhook not arriving** (terminal shows paid but the app still says “presenting”): check the
+  endpoint URL, signing secret and event subscriptions; the app also polls the payment status and
+  re-syncs stale card payments whenever the Cash page loads. If the payment is abandoned, press
+  **Cancel** next to it on Admin → Cash & Payments.
+- **Terminal vs app totals differ** on the day-close card: the “Terminal (Stripe)” row comes from
+  Stripe balance transactions (gross minus refunds, plus the fees shown). Check the payment fee
+  display, refunds on the stripe dashboard, and that the day boundary matches your accounting day.
+  The row is only shown when Stripe settlement data is available.
+- **Disable payments quickly**: switch **Settings → General → “Payments (POS)”** off — checkout
+  returns to the pre-POS behaviour, card options disappear, and the Cash page is hidden. Existing
+  receipts, credit notes and history are untouched.
+- **Rotate keys/reader**: update `STRIPE_SECRET_KEY` / `STRIPE_TERMINAL_READER_ID` /
+  `STRIPE_WEBHOOK_SECRET` in the environment and restart (`docker compose up -d`). Stop using the old
+  reader in the Stripe Dashboard.
+- **Going live**: replace test keys/secrets with live ones, then repeat the pilot checklist with a
+  small real payment before announcing card payments.
+- **Cash-only venues**: no Stripe setup is needed; enable Payments and use cash. Shifts, refunds,
+  credit notes, day close and CSV all work without any terminal.
+
 ### Things to know
 
 - **One reader per deployment**: the reader id is configured in the environment. Multiple counters

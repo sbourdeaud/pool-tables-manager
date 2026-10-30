@@ -170,14 +170,19 @@ Implemented:
   VAT report subtraction, reconciliation totals, day-close guards/idempotency, CSV content):
   suite total **15 files / 57 tests**.
 
-**Follow-up polish (done):** credit notes are now listed on the Cash & Payments page and can be
+**Follow-up polish (done):** credit notes are listed on the Cash & Payments page and can be
 **printed** (browser print / save as PDF) with the original receipt reference and VAT breakdown;
 partial refunds with a reason are supported from the UI; the Cash page shows whether a card terminal
 is configured; the VAT report labels the refund category correctly.
 
-**Phase 3 limits:** day close is per calendar day and does not automatically fetch PSP/terminal
-settlement totals (compare manually or extend with the Stripe balance API); variance alerts need SMTP
-configured.
+**Hardening (done):** card creation is idempotent (client key; retries reuse the payment); stale
+`presenting` card payments are re-synced with the provider when the Cash page loads and can be
+**cancelled** from the list; day-close reconciliation now shows **Stripe settlement totals**
+(gross/refunds/fees from balance transactions) and the difference vs the app's card totals when the
+live API is available. Tests: **15 suites / 61 tests**.
+
+**Phase 3 limits:** day close is per calendar day; terminal settlement comparison requires live
+Stripe API access (test mode shows “unavailable”); variance alerts need SMTP configured.
 
 ## 11. Phase 2 — implementation status (this branch)
 

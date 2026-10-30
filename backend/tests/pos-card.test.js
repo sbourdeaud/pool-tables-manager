@@ -52,6 +52,31 @@ describe('POS card payments (provider adapters)', () => {
     expect(tooMuch.body.error).toBe('amount_exceeds_total');
   });
 
+  test('card creation is idempotent for a repeated idempotency key', async () => {
+    const first = await agent.post('/api/payments/card').send({ sessionId: 'sess1', amountCents: 1200, idempotencyKey: 'key-1' });
+    expect(first.status).toBe(201);
+    const second = await agent.post('/api/payments/card').send({ sessionId: 'sess1', amountCents: 1200, idempotencyKey: 'key-1' });
+    expect(second.status).toBe(200);
+    expect(second.body.paymentId).toBe(first.body.paymentId);
+    expect(second.body.duplicate).toBe(true);
+    expect(prisma.state.payments).toHaveLength(1);
+  });
+
+  test('listing payments syncs stale presenting card payments', async () => {
+    prisma.state.payments.push({ id: 'stale1', sessionId: 'sess1', method: 'card', provider: 'fake', providerRef: 'fake_unknown', status: 'presenting', amountCents: 1200, refundedCents: 0, createdAt: new Date() });
+    const res = await agent.get('/api/payments');
+    expect(res.status).toBe(200);
+    const stale = res.body.find(p => p.id === 'stale1');
+    expect(stale.status).toBe('failed');
+    expect(prisma.state.payments.find(p => p.id === 'stale1').status).toBe('failed');
+  });
+
+  test('reconciliation reports terminal settlement availability', async () => {
+    const res = await agent.get('/api/reports/reconciliation').query({ date: new Date().toISOString().slice(0, 10) });
+    expect(res.status).toBe(200);
+    expect(res.body.terminal).toEqual({ available: false });
+  });
+
   test('polls a payment, cannot cancel captured ones, and refunds through the provider', async () => {
     const created = await agent.post('/api/payments/card').send({ sessionId: 'sess1', amountCents: 1200 });
     const paymentId = created.body.paymentId;

@@ -269,8 +269,12 @@ export function apiPaymentConfig() {
   return apiGet<PaymentConfig>('/api/payments/config')
 }
 
-export function apiCreateCardPayment(sessionId: string, amountCents: number) {
-  return apiSend<{ paymentId: string; status: string; provider: string }>('/api/payments/card', 'POST', { sessionId, amountCents })
+export function apiCreateCardPayment(sessionId: string, amountCents: number, idempotencyKey?: string) {
+  return apiSend<{ paymentId: string; status: string; provider: string; duplicate?: boolean }>('/api/payments/card', 'POST', {
+    sessionId,
+    amountCents,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  })
 }
 
 export function apiGetPayment(id: string) {
@@ -512,6 +516,14 @@ export interface Reconciliation {
     byMethod: Record<string, ReconciliationMethod>
   }
   creditNotes: { count: number; totalTtcCents: number }
+  terminal?: {
+    available: boolean
+    grossCents?: number
+    refundedCents?: number
+    netCents?: number
+    feeCents?: number
+    error?: string
+  }
   cashShifts: {
     count: number
     openShifts: number

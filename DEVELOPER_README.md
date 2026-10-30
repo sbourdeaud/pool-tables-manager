@@ -151,14 +151,14 @@ pool-tables-manager/
 
 **Payments & cash (optional POS)**
 - `GET /api/payments/config` - Feature/provider status (`pos_enabled`, `card_enabled`, provider)
-- `POST /api/payments/card` - Start a card payment on the terminal (amount capped at the server-computed total)
+- `POST /api/payments/card` - Start a card payment on the terminal (amount capped at the server-computed total; pass `idempotencyKey` — retries return the existing payment)
 - `GET /api/payments/:id` / `POST /api/payments/:id/cancel` - Poll / cancel an in-progress card payment
 - `POST /api/payments/:id/refund` - Refund (provider refund for cards); invoiced payments also get a `CreditNote`
-- `GET /api/payments` - Recent payments with table numbers (cash screen)
+- `GET /api/payments` - Recent payments with table numbers (cash screen); stale `presenting` card payments are re-synced with the provider on load
 - `GET /api/credit-notes` - Issued credit notes (avoir) with receipt/table references and VAT lines
 - `GET|POST /api/cash-shifts…` - Shift current/open/close/list (expected total and variance)
 - `POST /api/webhooks/stripe` - Signature-verified, idempotent Stripe webhook
-- `GET /api/reports/reconciliation?date=` - Day reconciliation (payments by method, credit notes, cash shifts)
+- `GET /api/reports/reconciliation?date=` - Day reconciliation (payments by method, credit notes, cash shifts, and Stripe settlement totals when available)
 - `POST /api/reports/day-close` - Close the day (creates a day `ClosurePeriod` with reconciliation snapshot)
 - `GET /api/reports/payments/export?from=&to=` - Per-method payments CSV (payments + credit notes)
 
@@ -416,7 +416,7 @@ Only seeds if database is empty.
 
 Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma
 mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **15 files /
-57 tests**, run with `cd backend && npm test` (Node 22). See
+61 tests**, run with `cd backend && npm test` (Node 22). See
 [backend/tests/README.md](backend/tests/README.md) for the mocking strategy and CI setup.
 
 ## Data Integrity

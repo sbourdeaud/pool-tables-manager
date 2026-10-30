@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Coins, CreditCard, FileDown, Lock, LockOpen, Printer, RotateCcw, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Ban, Coins, CreditCard, FileDown, Lock, LockOpen, Printer, RotateCcw, ShieldCheck } from 'lucide-react'
 import {
+  apiCancelPayment,
   apiCashShifts,
   apiCloseCashShift,
   apiCreditNotes,
@@ -135,6 +136,15 @@ export function CashPage() {
     setRefundTarget(null)
     await load()
     void apiReconciliation(reconDate).then((r) => setReconciliation(r.data || null))
+  }
+
+  const cancelPayment = async (payment: PaymentRecord) => {
+    const result = await apiCancelPayment(payment.id)
+    if (!result.ok) {
+      return toast({ title: 'Failed to cancel payment', description: result.error || `Error ${result.status}`, variant: 'error' })
+    }
+    toast({ title: 'Card payment canceled', description: `Status: ${result.data?.status || 'canceled'}` })
+    await load()
   }
 
   const closeDay = async () => {
@@ -352,6 +362,23 @@ export function CashPage() {
                   Variance {signedMoney(reconciliation.cashShifts.varianceCents)}
                 </span>
               </div>
+              {reconciliation.terminal?.available ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                  <span>
+                    Terminal (Stripe) · net {money(reconciliation.terminal.netCents || 0, currency)}
+                    <span className="text-muted-foreground"> · fees {money(reconciliation.terminal.feeCents || 0, currency)}</span>
+                    {reconciliation.payments.byMethod.card && (
+                      <span className={cn('ml-2 font-semibold', (reconciliation.terminal.netCents || 0) === reconciliation.payments.byMethod.card.netCents ? 'text-emerald-600' : 'text-destructive')}>
+                        {((reconciliation.terminal.netCents || 0) - reconciliation.payments.byMethod.card.netCents) === 0
+                          ? 'matches app'
+                          : `difference ${signedMoney((reconciliation.terminal.netCents || 0) - reconciliation.payments.byMethod.card.netCents)}`}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              ) : providerConfig?.card_enabled ? (
+                <p className="text-xs text-muted-foreground">Terminal settlement totals unavailable (Stripe API not reachable or test data).</p>
+              ) : null}
             </>
           ) : (
             <p className="text-sm text-muted-foreground">Loading…</p>
@@ -417,6 +444,11 @@ export function CashPage() {
                   >
                     {payment.status.replace('_', ' ')}
                   </span>
+                  {payment.method === 'card' && (payment.status === 'presenting' || payment.status === 'pending') && (
+                    <Button size="sm" variant="outline" onClick={() => void cancelPayment(payment)}>
+                      <Ban /> Cancel
+                    </Button>
+                  )}
                   {remaining > 0 && (
                     <Button size="sm" variant="outline" onClick={() => openRefund(payment)}>
                       <RotateCcw /> Refund {money(remaining, currency)}
