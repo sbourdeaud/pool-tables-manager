@@ -1,0 +1,10 @@
+name: CodeQL configuration
+
+# The archived previous client and the Vite build output are not source code we
+# maintain: the classic UI is a static archive (backend/public/classic/) and the
+# bundles in backend/public/assets come from frontend/src via Vite.
+paths-ignore:
+  - backend/public/classic/**
+  - backend/public/assets/**
+  - backend/public/vendor/**
+  - backend/public/main.js

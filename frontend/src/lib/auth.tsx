@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { apiAuthInfo, apiLocalLogin, apiLocalSetup, type AuthInfo } from '@/lib/api'
+import { apiAuthInfo, apiLocalLogin, apiLocalSetup, setUnauthorizedHandler, type AuthInfo } from '@/lib/api'
 
 interface AuthContextValue {
   info: AuthInfo | null
@@ -30,6 +30,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  React.useEffect(() => {
+    setUnauthorizedHandler(() => {
+      void refresh()
+    })
+    return () => setUnauthorizedHandler(null)
   }, [refresh])
 
   const login = React.useCallback(async (password: string) => {

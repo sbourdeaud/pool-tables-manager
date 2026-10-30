@@ -19,7 +19,13 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 24 * 60 * 60 * 1000 }
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    sameSite: 'lax',
+    // Enable when served over HTTPS (e.g. behind a TLS reverse proxy).
+    secure: process.env.COOKIE_SECURE === 'true'
+  }
 }));
 
 // Helper: Read OIDC settings from DB
@@ -46,6 +52,21 @@ async function getOidcConfiguration(){
   const config = await oidc.discovery(new URL(s.oidc_issuer), s.oidc_client_id, s.oidc_client_secret || undefined);
   _oidcConfigCache = { issuer: s.oidc_issuer, clientId: s.oidc_client_id, config };
   return config;
+}
+
+// Basic email validation without backtracking-prone regexes: split on '@',
+// bound the lengths and check the domain labels explicitly.
+function isValidEmail(value){
+  const email = String(value || '').trim();
+  if(!email || email.length > 254 || /\s/.test(email)) return false;
+  const parts = email.split('@');
+  if(parts.length !== 2) return false;
+  const [local, domain] = parts;
+  if(!local || local.length > 64) return false;
+  if(!domain || domain.length > 253 || !domain.includes('.')) return false;
+  const labels = domain.split('.');
+  if(labels.some(label => !label || label.length > 63)) return false;
+  return true;
 }
 
 const PORT = process.env.PORT || 3000;
@@ -329,7 +350,7 @@ app.get('/api/admin/oidc/test', async (req, res) => {
 app.post('/api/admin/smtp/test', async (req, res) => {
   try {
     const to = String((req.body && req.body.to) || '').trim();
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'invalid_email' });
+    if(!isValidEmail(to)) return res.status(400).json({ error: 'invalid_email' });
     await sendMail({ to, subject: 'Pool Tables Manager SMTP test', html: '<p>Your SMTP settings are working.</p>' });
     res.json({ success: true });
   } catch (err) {
@@ -407,7 +428,7 @@ app.post('/api/reports/email', requireAuth, async (req, res) => {
   try {
     const { to, format, report, pdfBase64 } = req.body || {};
     const email = String(to || '').trim();
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'invalid_email' });
+    if(!isValidEmail(email)) return res.status(400).json({ error: 'invalid_email' });
 
     const fmt = format === 'pdf' ? 'pdf' : 'html';
     const r = report || {};

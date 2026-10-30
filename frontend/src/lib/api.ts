@@ -2,6 +2,24 @@ export type SettingsMap = Record<string, string | undefined>
 
 export type SaveResult = 'ok' | 'unauthorized' | 'error'
 
+// Notified whenever the server rejects a request with 401 (e.g. the session was
+// lost because the backend restarted). The auth provider uses this to re-check
+// the session so the login screen appears instead of a generic error toast.
+type UnauthorizedHandler = () => void
+let unauthorizedHandler: UnauthorizedHandler | null = null
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler
+}
+
+function notifyUnauthorized() {
+  try {
+    unauthorizedHandler?.()
+  } catch {
+    /* ignore handler errors */
+  }
+}
+
 export interface ApiResult<T = unknown> {
   ok: boolean
   data?: T
@@ -13,6 +31,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>
   try {
     const res = await fetch(url, init)
     const data = (await res.json().catch(() => undefined)) as T | undefined
+    if (res.status === 401) notifyUnauthorized()
     return { ok: res.ok, data, error: (data as { error?: string } | undefined)?.error, status: res.status }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'network error', status: 0 }
@@ -46,7 +65,11 @@ export async function apiPatchSetting(key: string, value: string): Promise<SaveR
       body: JSON.stringify({ [key]: value }),
     })
     if (res.ok) return 'ok'
-    return res.status === 401 ? 'unauthorized' : 'error'
+    if (res.status === 401) {
+      notifyUnauthorized()
+      return 'unauthorized'
+    }
+    return 'error'
   } catch {
     return 'error'
   }
