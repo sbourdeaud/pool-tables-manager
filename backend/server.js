@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 require('dotenv').config({ quiet: true });
 const session = require('express-session');
@@ -12,6 +13,26 @@ const { sendMail } = require('./src/mailer');
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Rate limiting (CodeQL js/missing-rate-limiting): a generous global limit for
+// normal staff/static traffic plus a tighter one for authentication endpoints.
+const RATE_LIMIT_SKIP = () => process.env.NODE_ENV === 'test';
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 1200,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: RATE_LIMIT_SKIP
+});
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: RATE_LIMIT_SKIP
+});
+app.use(generalLimiter);
+app.use(['/auth/login', '/auth/callback', '/auth/local/login', '/api/auth/local-setup', '/api/auth/local-rotate'], authLimiter);
 
 // Session configuration
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev_secret_change_me';
