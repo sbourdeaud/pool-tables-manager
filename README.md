@@ -146,6 +146,7 @@ Database migrations (if any) are applied automatically at container start — se
 - **[USER_GUIDE.md](USER_GUIDE.md)**: staff and player documentation
 - **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
 - **[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md)**: version history and upgrade checklists
+- **[docs/POS-INTEGRATION-PLAN.md](docs/POS-INTEGRATION-PLAN.md)**: point-of-sale / card terminal integration plan
 - **[frontend/README.md](frontend/README.md)**: React app, shadcn CLI workflow and build notes
 - **[backend/tests/README.md](backend/tests/README.md)**: testing documentation and CI integration
 
