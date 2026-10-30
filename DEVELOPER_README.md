@@ -5,11 +5,11 @@
 Pool Tables Manager is a full-stack web application for managing pool hall operations, including table sessions, tab tracking, player settlements, subscriptions, and financial reporting.
 
 **Tech Stack:**
-- **Backend:** Node.js, Express, Prisma ORM
-- **Database:** PostgreSQL
-- **Frontend:** Vanilla JavaScript (no frameworks)
+- **Backend:** Node.js 22, Express 5, Prisma ORM 7 (driver adapter `@prisma/adapter-pg`), openid-client 6
+- **Database:** PostgreSQL 18
+- **Frontend:** React 19 + TypeScript 7 + Vite 8 + Tailwind CSS 4, shadcn-style components (Radix UI)
 - **Deployment:** Docker & Docker Compose
-- **UI:** Dark theme with modern, tile-based interface
+- **UI:** Light/dark themes, tile-based dashboards, shadcn-style design tokens
 
 ## Architecture
 
@@ -17,19 +17,33 @@ Pool Tables Manager is a full-stack web application for managing pool hall opera
 
 ```
 pool-tables-manager/
+├── frontend/                     # React app (staff SPA, player app, status board)
+│   ├── src/
+│   │   ├── pages/                # dashboard, admin pages, reports, settings, login
+│   │   ├── table/                # player-facing table app (entry table.html)
+│   │   ├── status/               # public status board (entry status.html)
+│   │   ├── components/           # shadcn-style ui/ primitives + settings/dashboard components
+│   │   └── lib/                  # api client, auth context, theme, menu, receipts, audio, qr
+│   ├── components.json           # shadcn CLI configuration
+│   ├── scripts/fix-shadcn-imports.mjs
+│   └── package.json              # React/Vite/Tailwind dependencies
 ├── backend/
 │   ├── prisma/
 │   │   ├── schema.prisma          # Database schema
 │   │   └── migrations/            # Database migrations
-│   ├── public/
-│   │   ├── main.js               # Frontend application (2300+ lines)
-│   │   ├── index.html            # Main admin interface
-│   │   └── table.html            # Public player-facing view
+│   ├── public/                   # Static output served by Express
+│   │   ├── index.html            # Built staff SPA
+│   │   ├── table.html            # Built player app
+│   │   ├── status.html           # Built public board
+│   │   ├── assets/               # Built JS/CSS bundles
+│   │   ├── classic/              # Archived previous vanilla-JS UI
+│   │   └── i18n/, sounds/, vendor/
+│   ├── prisma.config.ts          # Prisma 7 CLI config (datasource URL)
 │   ├── src/
-│   │   └── prismaClient.js       # Prisma client configuration
-│   ├── server.js                 # Express API server (1100+ lines)
-│   ├── Dockerfile                # Container definition
-│   └── docker-compose.yml        # Service orchestration
+│   │   └── prismaClient.js       # Prisma client (driver adapter)
+│   ├── server.js                 # Express API server
+│   └── Dockerfile                # Container definition
+└── docker-compose.yml            # Service orchestration
 ```
 
 ### Database Schema
@@ -39,9 +53,9 @@ pool-tables-manager/
 - `PoolTable` - Individual tables with status (available, occupied, maintenance)
 - `Session` - Active/ended table sessions with timestamps, player count, PIN
 - `TabLineItem` - Tab items (drinks, charges, settlements) linked to sessions, with VAT snapshot and soft-void/correction audit fields
-- `Drink` - Menu items with prices and VAT rate
+- `Drink` - Menu items with prices, VAT rate and menu `category` (`cold`, `warm`, `alcoholic`, `other`)
 - `Subscription` - Player subscriptions for discounts
-- `Setting` - Application settings (currency, app name, discount %, public base URL, fiscal info, etc.)
+- `Setting` - Application settings (currency, app name, discount %, public base URL, fiscal info, dashboard layout `dashboard_layout`, table-type order `table_type_order`, etc.)
 - `PendingOrder` - Player-submitted drink orders awaiting staff fulfillment
 - `Receipt` - Sequentially-numbered receipts issued at checkout (per calendar year)
 - `ClosurePeriod` - Locked VAT accounting period snapshots (day/month/quarter/year)
@@ -86,7 +100,7 @@ pool-tables-manager/
 - `GET /api/tables` - List all tables (includes `totalUsedSeconds` and `usedSinceMaintenanceSeconds`)
 - `POST /api/tables` - Create single table
 - `POST /api/tables/bulk` - Create multiple tables (quantity-based)
-- `PUT /api/tables/:id` - Update table (number, type, status)
+- `PUT /api/tables/:id` - Update table (number, type, status). Renumbering to an existing number returns `409 number_in_use`
 - `DELETE /api/tables/:id` - Delete table
 
 **Sessions**
@@ -105,10 +119,10 @@ pool-tables-manager/
 - `DELETE /api/tab-items/:id` - Soft-void a tab item (never hard-deleted)
 
 **Drinks (Menu)**
-- `GET /api/drinks` - List drinks (with language support), includes `vatRatePercent`
-- `POST /api/admin/drinks` - Create drink (accepts `vatRatePercent`)
+- `GET /api/drinks` - List drinks (with language support), includes `vatRatePercent` and `category`
+- `POST /api/admin/drinks` - Create drink (accepts `vatRatePercent` and `category`)
 - `GET /api/admin/drinks/:id` - Get drink details
-- `PUT /api/admin/drinks/:id` - Update drink (accepts `vatRatePercent`)
+- `PUT /api/admin/drinks/:id` - Update drink (accepts `vatRatePercent` and `category`)
 - `DELETE /api/admin/drinks/:id` - Delete drink
 
 **Subscriptions**
@@ -164,59 +178,67 @@ WHERE pt.id = ${sess.table_id}  // sess.table_id is already UUID
 
 ## Frontend Architecture
 
-### Single-Page Application Structure
+### React Application
 
-The frontend (`main.js`) is a vanilla JavaScript SPA with no framework dependencies.
+The frontend lives in `frontend/` and is a multi-entry Vite build served statically by Express:
 
-**Core Components:**
-- `renderDashboard()` - Main table management view
-- `renderAdminDashboard()` - Admin menu
-- `renderTableManagement()` - Table/type configuration
-- `renderDrinkManagement()` - Menu item management
-- `renderSubscriptions()` - Subscription management
-- `renderReports()` - Financial reporting
-- `renderSettings()` - Application settings
+| URL       | Entry        | Description                                              |
+| --------- | ------------ | -------------------------------------------------------- |
+| `/`       | `index.html` | Staff SPA with React Router (Dashboard, Admin, Settings) |
+| `/tableN` | `table.html` | Player table view + drink ordering (PIN protected)       |
+| `/status` | `status.html`| Public live availability board                           |
 
-**Modal System:**
-- Start Session Modal - Player count, subscriber selection
-- Add Drink Modal - Quick add drinks to active tabs
-- Checkout Modal - End session and calculate total
-- Settlement Modal - Player leaves, pays their share
-- Transfer Modal - Move session to different table
+**Staff SPA (`frontend/src/`):**
+- `pages/dashboard.tsx` — table grid, layouts, dialogs (start session, add drinks, transfer, checkout, settlement, QR)
+- `pages/{admin-home,drinks,tables,subscriptions,reports,settings,login}.tsx`
+- `components/ui/` — shadcn-style primitives (Button, Input, Card, Dialog, AlertDialog, Select, Switch, Tabs, Collapsible…)
+- `lib/api.ts` — typed fetch client; `lib/auth.tsx` — session/`/api/auth/info` gate; `lib/theme.ts` — shared `localStorage.theme`
+- `lib/receipts.ts` — browser-print receipts (estimate, final invoice, settlement); `lib/audio.ts` — click/pool-ball/chime cues
+
+**State and data:** no global store — per-page `useState`/`useEffect` polling (sessions/orders), a
+`SettingsProvider` (cached `/api/settings`) and a `ToastProvider` for feedback. The reports page is
+lazy-loaded so chart.js/jsPDF/SheetJS only download when opened.
+
+### shadcn CLI
+
+`components.json` + `package.json#imports` (`#components/*`, `#lib/*`) configure the official CLI.
+Add or refresh components with `npm run ui:add -- <name>` / `npm run ui:update -- --all`; a post-step
+(`scripts/fix-shadcn-imports.mjs`) rewrites the CLI's `from "cn"` import to `#lib/utils`. See
+[frontend/README.md](frontend/README.md).
+
+### Dashboard layouts
+
+The `dashboard_layout` setting selects:
+- **Sections** (default): collapsible type groups with a top flag navigator (jump-and-expand); collapse
+  state is stored per device in `localStorage.dashboard_collapsed_types`.
+- **Tabs**: one table type per tab, with drag-to-reorder grips.
+
+Group/tab order is persisted in the `table_type_order` setting (list of type names) and is shared with
+the public status board and the table inventory page.
 
 ### Key UI Features
 
 **Dashboard:**
-- Grouped by table type with colored headers
-- Real-time duration updates (every second)
-- Quick actions: Start, Pause, Transfer, Checkout
-- PIN display for public access
-- Flag icons for table types
+- Grouped by table type with flag badges and real-time duration updates (every second)
+- Quick actions: Start Session, Add drink, Transfer, Checkout, player +/- (minus opens settlement), QR code
+- Pending Orders panel polls every 10s and plays the new-order chime
+- Maintenance-due warnings based on table usage vs the type's `maxUsedHours`
 
 **Session Management:**
-- Supports multiple players per table
-- Subscriber discount system (50% default)
-- Dynamic charge calculation based on elapsed time
-- Hourly rate rounding (ceil)
+- Multiple players per table, subscriber discount system (50% default)
+- Dynamic charge calculation based on elapsed time, hourly rounding (ceil)
 
 **Settlement System:**
-- Player can settle their portion and leave
-- Automatically reduces tab items and table charge
-- Supports partial settlements (e.g., 1 of 2 beers)
-- Creates negative line items for accounting
-- Reduces player count after settlement
+- Player settles their portion and leaves; item selection (partial quantities), table-share or full charge
+- Negative `table_settlement` line items, player count decremented, optional printed receipt
 
 **Public Table View (`table.html`):**
-- PIN-protected access per session
-- Auto-refresh every 60 seconds
-- Real-time tab display
-- Mobile-friendly layout
+- PIN-protected access per session, auto-refresh every 60 seconds, live timer and tab
+- Menu grouped by category with tabs, search (long menus) and a sticky order bar
 
 **Public Status Board (`status.html`, `/status`):**
-- No authentication or PIN required
-- Polls `/api/public/tables` every 5 seconds for live availability
-- Tiles grouped by table type, color-coded (green available, red occupied, grey maintenance)
-- Occupied tiles show player count and a live-ticking duration; no PINs, session IDs, or tab amounts are exposed
+- No authentication or PIN required; polls `/api/public/tables` every 5 seconds
+- Tiles grouped by table type (same order as the dashboard), color-coded; occupied tiles show player count and a live duration
 
 ## Key Workflows
 
@@ -285,24 +307,47 @@ if (subscriberCount > 0 && nonSubscriberCount > 0) {
 
 ### Prerequisites
 - Docker and Docker Compose
-- Node.js 20+ (22 recommended, matches the container image)
+- Node.js **22.12+** (Prisma 7 and openid-client 6 requirements; matches the container image)
 - PostgreSQL (via Docker)
 
 ### Running with Docker
 
 ```bash
-cd backend
-docker-compose up --build
+docker compose up -d --build
 ```
 
-Access at: `http://localhost:3000`
+Access at: `http://localhost:3000`. The entrypoint waits for the database, applies migrations,
+generates the Prisma client and starts the server.
+
+### Running the backend natively
+
+```bash
+docker compose up -d db
+cd backend
+npm install
+DATABASE_URL=postgres://postgres:example@localhost:5432/pool_tables npx prisma generate
+DATABASE_URL=postgres://postgres:example@localhost:5432/pool_tables npx prisma migrate deploy
+DATABASE_URL=postgres://postgres:example@localhost:5432/pool_tables npm run dev
+```
+
+Prisma 7 reads the datasource URL from `prisma.config.ts` (the schema no longer contains `url`);
+`prisma generate` therefore needs `DATABASE_URL` set (any value works — it does not connect).
+
+### Frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173/ with /api and /auth proxied to :3000
+npm run build    # type-checks and writes the built app into ../backend/public/
+```
 
 ### Database Migrations
 
 Migrations are in `backend/prisma/migrations/`. To create a new migration:
 
 ```bash
-npx prisma migrate dev --name migration_name
+DATABASE_URL=... npx prisma migrate dev --name migration_name
 ```
 
 ### Environment Variables
@@ -315,14 +360,14 @@ Docker Compose sets:
 
 ### Admin Features
 - Table type management (add/edit/delete with hourly rates and VAT rate)
-- Table inventory (bulk creation, number editing)
-- Drink menu management (multilingual support, VAT rate per drink)
+- Table inventory (bulk creation, inline renumbering, maintenance mode, drag/arrow ordering)
+- Drink menu management (multilingual, VAT rate and category per drink)
 - Subscription management
 - Financial reports (day/week/month/quarter/year), with a "Send" button to email the report as HTML or a client-generated PDF
 - SMTP configuration (Settings) plus a test-email button
 - Table maintenance alerts emailed once per cycle when a table's usage crosses its type's max
 - VAT (TVA) reports with CSV export and period closures (French compliance)
-- Settings (currency, app name, subscriber discount, public base URL for QR codes, fiscal/legal information)
+- Settings (currency, app name, subscriber discount, public base URL for QR codes, dashboard layout, fiscal/legal information)
 - Clear session history (closed VAT periods are protected from deletion)
 
 ### Operator Features
@@ -349,6 +394,13 @@ On server startup, the system automatically creates:
 - Default drinks: Beer (6€), Soda (3€)
 
 Only seeds if database is empty.
+
+## Testing
+
+Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma
+mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **12 files /
+39 tests**, run with `cd backend && npm test` (Node 22). See
+[backend/tests/README.md](backend/tests/README.md) for the mocking strategy and CI setup.
 
 ## Data Integrity
 
@@ -388,8 +440,8 @@ Critical operations use Prisma transactions:
 
 ## Known Limitations
 
-- Single-language UI (English) with partial French support
-- No real-time WebSocket updates (polling-based)
+- Staff UI strings are English-only (menu/localized endpoints support English and French)
+- No real-time WebSocket updates (polling-based; sessions 15s, pending orders 10s, status board 5s)
 - Manual receipt printing (browser print dialog)
 - No payment integration
 - Checkout-modal quantity adjustments are cosmetic/display-only and are not sent to the server (pre-existing, unrelated to VAT work)
@@ -398,10 +450,8 @@ Critical operations use Prisma transactions:
 
 ## Future Enhancements
 
-See `TODO_LIST.md`:
-- Table management start/stop controls
-- Subscription create/delete UI improvements
-- Visual updates to table management page
+- Real-time push (WebSocket/SSE) for pending orders and session updates (currently polling)
+- Full i18n of the React staff UI (locale bundles already exist for menu/locale endpoints)
 
 ## Troubleshooting
 

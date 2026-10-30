@@ -26,17 +26,18 @@ Pool Tables Manager is a comprehensive solution for managing pool hall operation
 
 ### Accessing the Application
 
-Open your web browser and navigate to: `http://localhost:3000` (or your server address)
+Open your web browser and navigate to `http://localhost:3000` (or your server address).
 
-The main dashboard will display all your pool tables organized by type.
+The first time, you are asked to define the local admin password (or to sign in if a password/OIDC
+is already configured). After signing in, the dashboard displays all your tables organised by type.
 
 ### Main Menu
 
-Click the **hamburger menu (☰)** in the top-right corner to access:
-- **Admin Panel** - Configuration and management
-- **Reports** - Financial reports
-- **Subscriptions** - Manage player subscriptions
-- **Settings** - Application preferences
+The header has three entries plus the theme toggle:
+
+- **Dashboard** - Live tables, sessions and pending orders
+- **Admin** - Menu, table inventory, subscriptions, reports and settings
+- **Public Status** - Opens the customer-facing availability board in a new tab (no login needed)
 
 ---
 
@@ -46,10 +47,21 @@ The dashboard is your central hub for managing all tables.
 
 ### Table Display
 
-Tables are grouped by type (American, Pool, Snooker, French) with color-coded headers:
+Tables are grouped by type (American, Pool, Snooker, French, …) with flag badges and colour-coded tiles:
 - **Green tiles** = Available tables
-- **Blue tiles** = Active sessions
-- **Red tiles** = Maintenance mode
+- **Red tiles** = Active sessions
+- Maintenance tables are hidden from the dashboard (manage them in Admin → Table Types & Inventory)
+
+Two layouts are available (choose in **Settings → Dashboard layout**):
+
+- **Sections** (default) — all types as collapsible groups. A row of **flags at the top** jumps
+  (and expands) to a type; use the chevron on a group to collapse it. Collapsed state is remembered
+  on this device.
+- **Tabs** — one table type per tab; drag the **grip handle** next to a tab to reorder tabs.
+
+In both layouts you can reorder the table-type groups: in Sections mode drag the **⋮⋮ grip** at the
+left of a group header. The order is saved for all staff devices and is also used by the public
+status board.
 
 ### Table Information
 
@@ -64,13 +76,16 @@ Each tile shows:
 ### Quick Actions
 
 **Available Tables:**
-- **▶ Start** - Begin a new session
+- **Start Session** - Begin a new session
+- **Maintenance** - Take the table out of service (reset the usage counter when returning it)
 
 **Active Tables:**
-- **🍺 Drink** - Add drinks to the tab
-- **↗ Transfer** - Move session to another table
-- **✓ Checkout** - End session and calculate total
-- **🧾 Settle** - Player settlement (when multiple players)
+- **Drink** - Add drinks to the tab (grouped by menu category)
+- **Transfer** - Move the session to another table
+- **Checkout** - Apply a discount, print the tab estimate, complete payment and print the invoice
+- **−** next to the player count - Player settlement (one player pays their share and leaves)
+- **+** - Add a player
+- **QR thumbnail** - Enlarge the player QR code
 
 ---
 
@@ -290,12 +305,14 @@ Access via menu (☰) → **Admin Panel**
 - Edit or delete existing types
 
 **Manage Tables:**
-- **Add Tables:** 
-  - Specify quantity to create multiple tables at once
-  - Tables auto-number sequentially
-- **Edit Table Numbers:** Click "Edit #" to change table numbers
+- **Add Tables:** specify a quantity to create multiple tables at once (auto-numbered sequentially)
+- **Renumber:** click the **pencil** next to a table number, type the new number and press Enter
+  (a number already in use is rejected with an explanatory message)
 - **Delete Tables:** Remove unused tables
-- **Set Maintenance Mode:** Temporarily disable tables
+- **Set Maintenance Mode:** Temporarily disable tables; returning a table to service resets its
+  usage-since-maintenance counter
+- **Order the types:** use the **↑/↓** buttons on each type to change the order used on the dashboard,
+  the dashboard tabs/flag navigator and the public status board
 
 **Bulk Operations:**
 - Add multiple tables of same type (1-50 at once)
@@ -305,10 +322,12 @@ Access via menu (☰) → **Admin Panel**
 
 1. Click **Drinks Menu**
 2. **Add New Item:**
-   - Name (English and French)
+   - Name
    - Price
    - VAT rate (20% standard, 10% reduced, or 0% exempt — see [VAT (TVA) Reporting](#vat-tva-reporting--france))
-3. **Edit/Delete:** Use buttons next to each item
+   - **Category** — Cold, Hot, Alcoholic, Other (or none). Categories group the menu on the player
+     ordering screen and in the dashboard's "Add drink" dialog.
+3. **Edit/Delete:** Use the pencil/trash buttons next to each item
 
 **Multi-Language Support:**
 - Items can have English and French names
@@ -322,6 +341,7 @@ Access via menu (☰) → **Settings**
 
 - **Application Name:** Header display name (e.g., "Joe's Pool Hall")
 - **Public Base URL:** Hostname/IP or FQDN used when generating table QR codes (see [QR Codes](#qr-codes)); leave blank to use the address you're currently browsing from
+- **Dashboard layout:** Sections (collapsible groups + flag navigator) or Tabs (one type per tab)
 - **Language:** English or Français
 - **Currency:** $ (USD), € (EUR), or £ (GBP)
 - **Subscriber Discount:** Percentage discount (0-100%)
@@ -338,7 +358,7 @@ Access via menu (☰) → **Settings**
 
 ## Reports
 
-Access via menu (☰) → **Reports**
+Access via **Admin → Reports**. The page has two tabs: **Financial** and **VAT / TVA**.
 
 ### Financial Reports
 
@@ -396,12 +416,12 @@ Generate detailed revenue reports for any time period.
 
 > ⚠️ **Not legal or tax advice.** Consult your *expert-comptable* to confirm these figures and procedures match your business's specific VAT regime before filing. See [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md) for the full conformity notes.
 
-Below the Financial Reports section, the Reports page has a dedicated **"TVA (VAT) Report"** panel for preparing your periodic VAT declaration (CA3/CA12).
+The **VAT / TVA** tab of the Reports page prepares your periodic VAT declaration (CA3/CA12).
 
 ### Generating a VAT report
 
 1. Choose a **Period Type** (Month, Quarter, Year, or Day) and the specific period.
-2. Click **Generate VAT Report** to see a breakdown by VAT rate:
+2. Click **Load VAT report** to see a breakdown by VAT rate:
    - Total HT (excluding VAT)
    - TVA (VAT amount)
    - Total TTC (including VAT)
@@ -409,7 +429,7 @@ Below the Financial Reports section, the Reports page has a dedicated **"TVA (VA
 
 ### Closing a period
 
-Once you've filed your declaration for a period with the tax authorities, click **🔒 Close Period (lock for filing)**. This:
+Once you've filed your declaration for a period with the tax authorities, click **Close period**. This:
 - Snapshots the period's totals for your records.
 - Prevents **Clear All Session History** from ever deleting sales within that period, so your filed figures always remain traceable in the database.
 
@@ -417,7 +437,7 @@ Closed periods appear in a history list below the report, showing the period, to
 
 ### Exporting for your accountant
 
-Click **Export CSV** to download every individual sale line in the selected period (date, table/session, description, quantity, unit price, VAT rate, VAT amount, HT amount) — handy for handing off to your accountant or for long-term archival.
+Click **Export CSV ledger** to download every individual sale line in the selected period (date, table/session, description, quantity, unit price, VAT rate, VAT amount, HT amount) — handy for handing off to your accountant or for long-term archival.
 
 ### Keeping VAT reports accurate
 

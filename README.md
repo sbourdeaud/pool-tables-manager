@@ -1,107 +1,142 @@
 # Pool Tables Manager
 
-A full-featured pool hall management system with session tracking, billing, subscriptions, and reporting.
+A full-featured pool hall management system with session tracking, billing, subscriptions, drink
+ordering and reporting — with a modern React UI and a French VAT (TVA) compliant sale ledger.
 
 > [!NOTE]
 > **AI-generated code**: This application is coded using AI (built pair-programming style with [Kilo Code](https://github.com/Kilo-Org/kilocode), an agentic coding assistant). Review the code and test it in your own environment before using it in production.
 
 ## Features
 
-- **Session Management**: Track active sessions, players, and table usage
-- **Billing System**: Automated time-based billing with subscriber discounts
-- **Subscriptions**: Monthly subscription management with automatic discounts
-- **Pending Orders**: Players can order drinks from their phone (PIN-protected); staff fulfill them from a dashboard queue with an audio notification
-- **QR Codes**: Each active table shows a QR code linking directly to its player view, with a configurable public hostname
-- **Reporting**: Financial reports by day/week/month/quarter/year
-- **French VAT (TVA) Compliance**: Per-item VAT rates, an anti-tamper sale audit trail, sequential receipts, period closures, and a VAT report with CSV export — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
-- **Authentication**: OIDC integration or local admin authentication
-- **Multi-language**: English and French support
+- **Session Management**: Track active sessions, players and table usage with live timers
+- **Billing System**: Time-based billing (rounded up per hour) with subscriber discounts
+- **Subscriptions**: Monthly subscriptions with automatic discounts and renewal tracking
+- **Drink Ordering**: Categorised menu (cold / warm / alcoholic / other) that players can order from their phone (PIN-protected); staff fulfil orders from the dashboard queue with an audio notification
+- **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
+- **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
+- **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
+- **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
+- **Authentication**: OIDC integration or local admin authentication (full-page login)
+- **Multi-language**: English and French menu/locale support
 
 ## Screenshots
 
-**Dashboard** — live sessions with running timers, tabs, per-table QR codes, and one-click actions:
+**Dashboard** — live sessions with timers, tabs, per-table QR codes, a flag navigator and collapsible groups:
 
-![Dashboard with two active sessions](docs/screenshots/dashboard.png)
+![Dashboard with active sessions and collapsible type groups](docs/screenshots/dashboard.png)
 
-**Admin panel** — drinks menu, table types & inventory, subscriptions, reports, and settings:
+**Dashboard (tabs layout)** — one table type per tab; drag the grips to reorder:
+
+![Dashboard in tabs layout](docs/screenshots/dashboard-tabs.png)
+
+**Dashboard (dark theme)** — theme is shared across the staff app and player pages:
+
+![Dashboard in dark theme](docs/screenshots/dashboard-dark.png)
+
+**Admin panel** — drinks menu, table types & inventory, subscriptions, reports and settings:
 
 ![Admin panel](docs/screenshots/admin-panel.png)
 
-**Public table status board** (`/status`) — no login required, updates automatically as tables are used or freed:
+**Drink menu management** — categories group the menu on the player ordering screen:
+
+![Drink menu management with categories](docs/screenshots/drinks-menu.png)
+
+**Table inventory** — inline renumbering, maintenance mode and drag-ordered type groups:
+
+![Table inventory](docs/screenshots/table-inventory.png)
+
+**Settings** — branding, localization, dashboard layout, fiscal, email and security:
+
+![Settings page](docs/screenshots/settings.png)
+
+**Financial reports** — revenue summary with pie and time-series charts:
+
+![Financial reports](docs/screenshots/reports-financial.png)
+
+**VAT / TVA report** — per-rate breakdown, CSV ledger export and accounting period closures:
+
+![VAT report](docs/screenshots/vat-report.png)
+
+**Public table status board** (`/status`) — no login required, updates automatically:
 
 ![Public status board](docs/screenshots/public-status.png)
 
-**Player table view** — the page players reach by scanning the table's QR code (PIN-protected): live timer, tab, and drink ordering from their phone:
+**Player table view** — reached by scanning a table's QR code (PIN-protected): live timer, tab and categorised drink ordering:
 
 ![Player table view](docs/screenshots/table-view.png)
 
+**Login** — full-page local admin login (OIDC deployments redirect to the identity provider):
+
+![Login page](docs/screenshots/login.png)
+
 ## Quick Start
 
-**New Deployment** (empty database):
 ```bash
 git clone <repository-url>
 cd pool-tables-manager
-docker-compose up -d
+docker compose up -d --build
 ```
 
-The application will automatically initialize the database and apply all migrations.
+The application initialises the database (all migrations), generates the Prisma client and starts the
+server automatically.
 
-**Access**: Open http://localhost:3000
+**Access**: <http://localhost:3000> — on first launch you are asked to define the local admin password
+(or enable OIDC later in Settings → Security).
 
-**First Setup**: Configure local admin password or OIDC authentication via Settings page.
+## Technology Stack
 
-## Documentation
+| Layer     | Stack                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------- |
+| Frontend  | React 19 · TypeScript 7 · Vite 8 · Tailwind CSS 4 · shadcn-style components on Radix UI (CLI-enabled) |
+| Backend   | Node.js 22 · Express 5 · Prisma ORM 7 (driver adapter) · openid-client 6 · nodemailer               |
+| Database  | PostgreSQL 18                                                                                       |
+| Testing   | Jest 30 + Supertest (API integration)                                                               |
+| Packaging | Docker & Docker Compose                                                                            |
 
-- **[DEPLOYMENT.md](DEPLOYMENT.md)**: Complete deployment guide for new and existing instances
-- **[DEVELOPER_README.md](DEVELOPER_README.md)**: API documentation and development guide
-- **[USER_GUIDE.md](USER_GUIDE.md)**: User documentation and feature overview
-- **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
-- **[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md)**: How the Node 22 / PostgreSQL 18 / Prisma 6 upgrade was performed, plus a reusable checklist
-- **[backend/tests/README.md](backend/tests/README.md)**: Testing documentation and CI integration
-
-## Architecture
-
-**Services**:
-- `app`: Node.js/Express backend + static frontend
-- `db`: PostgreSQL database
-
-**Technology Stack**:
-- Backend: Node.js 22, Express, Prisma ORM
-- Database: PostgreSQL 18
-- Frontend: Vanilla JavaScript
-- Testing: Jest + Supertest
-- CI/CD: GitHub Actions
+The React app is built into `backend/public/` and served by Express (staff SPA at `/`, player app at
+`/tableN`, public board at `/status`). The previous vanilla-JS client is archived at `/classic/`
+(unlinked) for reference and rollback.
 
 ## Development
 
 ```bash
-# Run tests
-cd backend
-npm test
+# Backend API tests (Node 22 required)
+cd backend && npm test
 
-# Run tests in Docker
-docker run --rm --network pool-tables-manager_default \
-  -v $(pwd)/backend:/app -w /app node:18-bullseye \
-  bash -c "npm test"
+# Frontend dev server (proxies /api and /auth to :3000)
+cd frontend && npm install && npm run dev
 
-# Access database
+# Frontend production build (writes index.html/table.html/status.html + assets into backend/public/)
+cd frontend && npm run build
+
+# Database
 docker exec -it pool-tables-manager-db-1 psql -U postgres -d pool_tables
 
-# View logs
-docker-compose logs -f app
+# Logs
+docker compose logs -f app
 ```
 
 ## Updating
 
 ```bash
 git pull
-docker-compose down
-docker-compose build
-docker-compose up -d
+docker compose up -d --build
 ```
+
+Database migrations (if any) are applied automatically at container start — see
+[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md) for the database impact of each release.
+
+## Documentation
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)**: deployment guide, backups, troubleshooting
+- **[DEVELOPER_README.md](DEVELOPER_README.md)**: architecture, API reference and development guide
+- **[USER_GUIDE.md](USER_GUIDE.md)**: staff and player documentation
+- **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
+- **[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md)**: version history and upgrade checklists
+- **[frontend/README.md](frontend/README.md)**: React app, shadcn CLI workflow and build notes
+- **[backend/tests/README.md](backend/tests/README.md)**: testing documentation and CI integration
 
 ## Support
 
-For deployment issues, see [DEPLOYMENT.md](DEPLOYMENT.md).
-
-For API documentation, see [DEVELOPER_README.md](DEVELOPER_README.md).
+For deployment issues, see [DEPLOYMENT.md](DEPLOYMENT.md). For API documentation, see
+[DEVELOPER_README.md](DEVELOPER_README.md).

@@ -8,8 +8,10 @@ RUN apt-get update \
 COPY package.json package-lock.json* ./
 RUN npm install --production
 COPY . .
-# generate prisma client if applicable
-RUN npx prisma generate || true
+# Generate the Prisma client at build time. Prisma 7 reads the datasource URL
+# from prisma.config.ts (env is resolved eagerly), so pass a dummy URL — the
+# client is generated, not connected. The entrypoint regenerates at runtime.
+RUN DATABASE_URL="postgres://build:build@localhost:5432/build" npx prisma generate
 
 # Copy and set up entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/

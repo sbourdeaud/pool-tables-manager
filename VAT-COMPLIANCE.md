@@ -90,9 +90,9 @@ certificate**, and a tax auditor may still require further justification.
 | VAT rate + amount snapshotted on every sale at the time of sale | Automatic (server-side) |
 | Soft-void / correction audit trail instead of hard delete/update | Automatic (server-side) |
 | Sequential, gap-free receipt numbering per calendar year | Automatic at "Complete Payment" (checkout) |
-| TVA (VAT) report by period (day/month/quarter/year), broken down by rate and category | Admin → Reports → "TVA (VAT) Report" |
-| CSV export of the underlying VAT ledger | Admin → Reports → "Export CSV" |
-| Period closure / lock (prevents later deletion of filed data) | Admin → Reports → "🔒 Close Period" |
+| TVA (VAT) report by period (day/month/quarter/year), broken down by rate and category | Admin → Reports → **VAT / TVA** tab |
+| CSV export of the underlying VAT ledger | Admin → Reports → **VAT / TVA** tab → "Export CSV ledger" |
+| Period closure / lock (prevents later deletion of filed data) | Admin → Reports → **VAT / TVA** tab → "Close period" |
 | Fiscal identity fields (legal name, SIRET/SIREN, TVA number, address, VAT regime, declaration periodicity) | Admin → Settings → "Fiscal / Legal Information" |
 
 ## 4. Known limitations — please read before relying on reports

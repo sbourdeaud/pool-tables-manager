@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -46,6 +45,8 @@ model Drink {
   price_cents    Int
   taxable        Boolean @default(true)
   vatRatePercent Int     @default(20) @map("vat_rate_percent")
+  // Menu grouping: cold | warm | alcoholic | other (null = uncategorised)
+  category       String?
   createdAt      DateTime @default(now()) @map("created_at")
 }
 

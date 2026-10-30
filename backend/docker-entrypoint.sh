@@ -7,7 +7,7 @@ echo "Starting database initialization..."
 echo "Waiting for database to be ready..."
 timeout=30
 counter=0
-until node -e "const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.\$connect().then(() => { prisma.\$disconnect(); process.exit(0); }).catch(() => process.exit(1));" 2>/dev/null || [ $counter -eq $timeout ]; do
+until node -e "const prisma = require('./src/prismaClient'); prisma.\$connect().then(() => { prisma.\$disconnect(); process.exit(0); }).catch(() => process.exit(1));" 2>/dev/null || [ $counter -eq $timeout ]; do
   counter=$((counter + 1))
   echo "Database not ready yet... ($counter/$timeout)"
   sleep 2
@@ -22,8 +22,7 @@ echo "Database is ready!"
 
 # Check if migrations table exists
 MIGRATIONS_EXIST=$(node -e "
-  const { PrismaClient } = require('@prisma/client');
-  const prisma = new PrismaClient();
+  const prisma = require('./src/prismaClient');
   prisma.\$queryRaw\`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '_prisma_migrations')\`
     .then(r => { console.log(r[0].exists ? 'yes' : 'no'); prisma.\$disconnect(); process.exit(0); })
     .catch(() => { console.log('no'); process.exit(0); });
@@ -44,8 +43,7 @@ if [ "$MIGRATIONS_EXIST" = "no" ]; then
       
       # Check if pin column exists
       PIN_EXISTS=$(node -e "
-        const { PrismaClient } = require('@prisma/client');
-        const prisma = new PrismaClient();
+        const prisma = require('./src/prismaClient');
         prisma.\$queryRaw\`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'Session' AND column_name = 'pin'\`
           .then(r => { console.log(r.length > 0 ? 'yes' : 'no'); prisma.\$disconnect(); process.exit(0); })
           .catch(() => { console.log('no'); process.exit(0); });

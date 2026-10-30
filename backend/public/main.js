@@ -161,11 +161,17 @@
   const authPassword = document.getElementById('authPassword');
   const authCancel = document.getElementById('authCancel');
   const authSubmit = document.getElementById('authSubmit');
+  const authError = document.getElementById('authError');
 
   function showAuthModal(){ authModal.style.display = 'block'; modalBackdrop.style.display = 'flex'; }
   function hideAuthModal(){ authModal.style.display = 'none'; modalBackdrop.style.display = 'none'; }
+  function authClearError(){ authError.textContent = ''; authError.style.display = 'none'; }
+  function authShowError(msg){ authError.textContent = msg; authError.style.display = 'block'; }
 
-  authCancel.addEventListener('click', ()=>{ hideAuthModal(); });
+  authCancel.addEventListener('click', ()=>{ authClearError(); hideAuthModal(); });
+  [authNewPassword, authConfirmPassword, authPassword].forEach(input => {
+    input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); authSubmit.click(); } });
+  });
 
   async function checkAuthOnLoad(){
     try{
@@ -186,13 +192,18 @@
           authLoginFields.style.display = 'none';
           showAuthModal();
           authSubmit.onclick = async ()=>{
+            authClearError();
             const pw = authNewPassword.value || '';
             const pw2 = authConfirmPassword.value || '';
-            if(pw.length < 6){ alert('Password must be at least 6 characters'); return; }
-            if(pw !== pw2){ alert('Passwords do not match'); return; }
+            if(pw.length < 6){ authShowError('Password must be at least 6 characters'); return; }
+            if(pw !== pw2){ authShowError('Passwords do not match'); return; }
             const setupRes = await fetch('/api/auth/local-setup', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ password: pw }) });
-            if(setupRes.ok){ hideAuthModal(); alert('Admin password saved. Please log in.'); checkAuthOnLoad(); }
-            else { const t = await setupRes.json().catch(()=>null); alert('Failed to save admin password: ' + (t?.error || setupRes.status)); }
+            if(setupRes.ok){
+              authNewPassword.value = ''; authConfirmPassword.value = '';
+              showToast('Admin password saved. Please log in.');
+              checkAuthOnLoad();
+            }
+            else { const t = await setupRes.json().catch(()=>null); authShowError('Failed to save admin password: ' + (t?.error || setupRes.status)); }
           };
         } else if(!info.authenticated){
           // show login form
@@ -202,11 +213,17 @@
           authLoginFields.style.display = 'flex';
           showAuthModal();
           authSubmit.onclick = async ()=>{
+            authClearError();
             const pw = authPassword.value || '';
-            if(pw.length === 0){ alert('Enter password'); return; }
+            if(pw.length === 0){ authShowError('Enter password'); return; }
             const loginRes = await fetch('/auth/local/login', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ username: 'admin', password: pw }) });
-            if(loginRes.ok){ hideAuthModal(); alert('Logged in successfully'); location.reload(); }
-            else { const t = await loginRes.json().catch(()=>null); alert('Login failed: ' + (t?.error || loginRes.status)); }
+            if(loginRes.ok){ location.reload(); }
+            else {
+              const t = await loginRes.json().catch(()=>null);
+              authShowError('Login failed: ' + (t?.error || loginRes.status));
+              authPassword.value = '';
+              authPassword.focus();
+            }
           };
         }
       }
@@ -241,6 +258,8 @@
   navDashboard.addEventListener('click', e => { e.preventDefault(); renderDashboard(); });
   navAdmin.addEventListener('click', e => { e.preventDefault(); renderAdminDashboard(); });
   if(navStatus) navStatus.addEventListener('click', e => { e.preventDefault(); window.open('/status', '_blank', 'noopener'); });
+  const navApp = document.getElementById('navApp');
+  if(navApp) navApp.addEventListener('click', e => { e.preventDefault(); window.location.href = '/'; });
   logoLink.addEventListener('click', e => { e.preventDefault(); playPoolBallSound(); renderDashboard(); });
 
   // Views
@@ -278,7 +297,7 @@
     grid.appendChild(makeTile('billiards', 'Table Types & Inventory','Manage table types and add/remove tables', ()=> renderTableManagement()));
     grid.appendChild(makeTile('account', 'Subscriptions','Create and remove subscriptions', ()=> renderSubscriptions()));
     grid.appendChild(makeTile('chart', 'Reports','Generate financial reports', ()=> renderReports()));
-    grid.appendChild(makeTile('settings', 'Settings','Change language and currency', ()=> renderSettings()));
+    grid.appendChild(makeTile('settings', 'Settings','Configure app, fiscal, email and security settings', ()=> renderSettings()));
     app.appendChild(grid);
     return;
   }
@@ -2103,358 +2122,518 @@
     };
   }
 
+  // ---------- Settings: shared UI helpers ----------
+  const SETTINGS_ICONS = {
+    gear: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10M11.25,4L10.88,6.61C9.68,6.86 8.62,7.5 7.85,8.39L5.44,7.35L4.69,8.65L6.8,10.2C6.4,11.37 6.4,12.64 6.8,13.8L4.68,15.36L5.43,16.66L7.86,15.62C8.63,16.5 9.68,17.14 10.87,17.38L11.24,20H12.76L13.13,17.39C14.32,17.14 15.37,16.5 16.14,15.62L18.57,16.66L19.32,15.36L17.2,13.81C17.6,12.64 17.6,11.37 17.2,10.2L19.31,8.65L18.56,7.35L16.15,8.39C15.38,7.5 14.32,6.86 13.12,6.62L12.75,4H11.25Z" /></svg>',
+    globe: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.7 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.7-3.8-9S9.5 5.6 12 3z"/></svg>',
+    mail: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>',
+    file: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg>',
+    lock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    alert: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>'
+  };
+
+  let toastStack = null;
+  function showToast(message, type = 'ok'){
+    if(!toastStack){
+      toastStack = document.createElement('div');
+      toastStack.id = 'toastStack';
+      document.body.appendChild(toastStack);
+    }
+    const t = document.createElement('div');
+    t.className = 'toast ' + (type === 'error' ? 'error' : 'ok');
+    t.textContent = message;
+    toastStack.appendChild(t);
+    setTimeout(()=>{ t.classList.add('hide'); setTimeout(()=> t.remove(), 260); }, 2600);
+  }
+
+  let fieldSeq = 0;
+  function flashSaved(input){
+    const field = input.closest('.field');
+    if(!field) return;
+    const lab = field.querySelector('.field-label');
+    if(!lab) return;
+    const ind = document.createElement('span');
+    ind.className = 'save-ind';
+    ind.setAttribute('aria-live', 'polite');
+    ind.textContent = 'Saved ✓';
+    lab.appendChild(ind);
+    requestAnimationFrame(()=> ind.classList.add('show'));
+    setTimeout(()=>{ ind.classList.remove('show'); setTimeout(()=> ind.remove(), 220); }, 1600);
+  }
+
+  function makeField({ label, help, input, wide }){
+    input.id = 'setField' + (++fieldSeq);
+    const wrap = document.createElement('label');
+    wrap.className = 'field' + (wide ? ' field-wide' : '');
+    const lab = document.createElement('span');
+    lab.className = 'field-label';
+    lab.textContent = label;
+    wrap.appendChild(lab);
+    wrap.appendChild(input);
+    if(help){
+      const hEl = document.createElement('span');
+      hEl.className = 'field-help';
+      hEl.textContent = help;
+      wrap.appendChild(hEl);
+    }
+    return wrap;
+  }
+
+  function makeSwitch({ label, help, checked, onChange }){
+    const row = document.createElement('label');
+    row.className = 'switch-row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('role', 'switch');
+    input.checked = !!checked;
+    input.addEventListener('change', e => onChange(e, input));
+    const text = document.createElement('span');
+    text.className = 'switch-text';
+    const titleRow = document.createElement('span');
+    titleRow.className = 'switch-title-row';
+    const st = document.createElement('strong');
+    st.textContent = label;
+    titleRow.appendChild(st);
+    text.appendChild(titleRow);
+    if(help){
+      const hEl = document.createElement('small');
+      hEl.textContent = help;
+      text.appendChild(hEl);
+    }
+    row.appendChild(input);
+    row.appendChild(text);
+    return { row, input, titleRow };
+  }
+
+  function sectionCard({ icon, title, desc, spanAll, danger }){
+    const card = document.createElement('article');
+    card.className = 'settings-card' + (spanAll ? ' span-all' : '') + (danger ? ' danger-card' : '');
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const ic = document.createElement('div');
+    ic.className = 'card-icon';
+    ic.innerHTML = icon;
+    const hw = document.createElement('div');
+    const t = document.createElement('h3');
+    t.className = 'card-title';
+    t.textContent = title;
+    hw.appendChild(t);
+    if(desc){
+      const d = document.createElement('p');
+      d.className = 'card-desc';
+      d.textContent = desc;
+      hw.appendChild(d);
+    }
+    head.appendChild(ic);
+    head.appendChild(hw);
+    card.appendChild(head);
+    return card;
+  }
+
+  // Shared settings saver: PATCHes one key, gives inline/toast feedback and
+  // handles an expired admin session (401) consistently for every field.
+  async function saveSetting(key, value, input){
+    try{
+      const resp = await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ [key]: value }) });
+      if(!resp.ok){
+        if(resp.status === 401){
+          showToast('Please log in as an admin to save settings', 'error');
+          checkAuthOnLoad();
+        } else {
+          showToast('Failed to save setting (error ' + resp.status + ')', 'error');
+        }
+        return false;
+      }
+      if(input) flashSaved(input); else showToast('Saved');
+      return true;
+    }catch(err){
+      console.warn('failed saving setting', key, err);
+      showToast('Network error while saving', 'error');
+      return false;
+    }
+  }
+
+  const saveOnInput = (key) => async (e) => { await saveSetting(key, e.target.value, e.target); };
+
   async function renderSettings(){
     app.innerHTML = '';
-    const h = document.createElement('h2'); h.textContent = 'Settings'; app.appendChild(h);
     const settingsRes = await fetch('/api/settings');
     const settings = settingsRes.ok ? await settingsRes.json() : {};
     const currency = settings.currency || localStorage.getItem('currency') || '$';
     localStorage.setItem('currency', currency);
 
-    const form = document.createElement('div'); form.style.display='flex'; form.style.flexDirection='column'; form.style.gap='16px'; form.style.maxWidth='400px';
-    
-    const appNameRow = document.createElement('div');
-    const appNameLabel = document.createElement('label'); appNameLabel.textContent = 'Application Name: '; appNameLabel.style.fontWeight='600';
-    const appNameInput = document.createElement('input'); appNameInput.type='text'; appNameInput.style.marginLeft='8px'; appNameInput.style.width='200px'; appNameInput.value = settings.app_name || ''; appNameInput.placeholder = 'Pool Hall';
+    const wrap = document.createElement('div');
+    wrap.className = 'settings-wrap';
+    app.appendChild(wrap);
+
+    const head = document.createElement('div');
+    head.className = 'page-head';
+    const backBtn = document.createElement('button');
+    backBtn.className = 'back-link';
+    backBtn.textContent = '← Back to Admin';
+    backBtn.addEventListener('click', ()=> renderAdminDashboard());
+    const h = document.createElement('h2');
+    h.textContent = 'Settings';
+    head.appendChild(backBtn);
+    head.appendChild(h);
+    wrap.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'settings-grid';
+    wrap.appendChild(grid);
+
+    // --- General ---
+    const generalCard = sectionCard({ icon: SETTINGS_ICONS.gear, title: 'General', desc: 'Application identity and the address players use to reach it' });
+
+    const appNameInput = document.createElement('input');
+    appNameInput.type = 'text';
+    appNameInput.value = settings.app_name || '';
+    appNameInput.placeholder = 'Pool Hall';
     appNameInput.addEventListener('change', async (e)=>{
       const val = (e.target.value || '').trim();
-      try{
-        const resp = await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ app_name: val }) });
-        if(!resp.ok){
-          // Settings writes require an authenticated admin session; surface the failure
-          // instead of silently updating the header and losing the value on reload.
-          alert(resp.status === 401
-            ? 'Please log in as an admin to save settings. The application name was not saved.'
-            : 'Failed to save the application name (error ' + resp.status + ').');
-          e.target.value = settings.app_name || '';
-          if(resp.status === 401) checkAuthOnLoad();
-          return;
-        }
-        customAppName = val || null;
-        if(customAppName) localStorage.setItem('app_name', customAppName); else localStorage.removeItem('app_name');
-        applyAppTitle();
-      }catch(err){
-        console.warn('failed saving setting', err);
-        alert('Failed to save the application name.');
-        e.target.value = settings.app_name || '';
-      }
+      const ok = await saveSetting('app_name', val, appNameInput);
+      if(!ok){ e.target.value = settings.app_name || ''; return; }
+      customAppName = val || null;
+      if(customAppName) localStorage.setItem('app_name', customAppName); else localStorage.removeItem('app_name');
+      applyAppTitle();
     });
-    appNameRow.appendChild(appNameLabel); appNameRow.appendChild(appNameInput);
-    const appNameHelp = document.createElement('div'); appNameHelp.style.fontSize='12px'; appNameHelp.style.opacity='0.7'; appNameHelp.style.marginTop='4px'; appNameHelp.textContent = 'Display name shown in the header';
-    appNameRow.appendChild(appNameHelp);
-    form.appendChild(appNameRow);
-    
-    const baseUrlRow = document.createElement('div');
-    const baseUrlLabel = document.createElement('label'); baseUrlLabel.textContent = 'Public Base URL: '; baseUrlLabel.style.fontWeight='600';
-    const baseUrlInput = document.createElement('input'); baseUrlInput.type='text'; baseUrlInput.style.marginLeft='8px'; baseUrlInput.style.width='240px'; baseUrlInput.value = settings.public_base_url || ''; baseUrlInput.placeholder = window.location.origin;
+    generalCard.appendChild(makeField({ label: 'Application Name', input: appNameInput, help: 'Display name shown in the header' }));
+
+    const baseUrlInput = document.createElement('input');
+    baseUrlInput.type = 'text';
+    baseUrlInput.value = settings.public_base_url || '';
+    baseUrlInput.placeholder = window.location.origin;
     baseUrlInput.addEventListener('change', async (e)=>{
       const val = e.target.value.trim().replace(/\/+$/, '');
-      try{
-        await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ public_base_url: val }) });
-        if(val) localStorage.setItem('public_base_url', val); else localStorage.removeItem('public_base_url');
-      }catch(err){ console.warn('failed saving setting', err); }
+      const ok = await saveSetting('public_base_url', val, baseUrlInput);
+      if(!ok){ e.target.value = settings.public_base_url || ''; return; }
+      e.target.value = val;
+      if(val) localStorage.setItem('public_base_url', val); else localStorage.removeItem('public_base_url');
     });
-    baseUrlRow.appendChild(baseUrlLabel); baseUrlRow.appendChild(baseUrlInput);
-    const baseUrlHelp = document.createElement('div'); baseUrlHelp.style.fontSize='12px'; baseUrlHelp.style.opacity='0.7'; baseUrlHelp.style.marginTop='4px';
-    baseUrlHelp.textContent = `Hostname/IP used in table QR codes so players' phones can reach this app (e.g. http://192.168.1.50:3000 or https://pool.example.com). Leave blank to use the address you're currently browsing from (${window.location.origin}).`;
-    baseUrlRow.appendChild(baseUrlHelp);
-    form.appendChild(baseUrlRow);
+    generalCard.appendChild(makeField({
+      label: 'Public Base URL',
+      input: baseUrlInput,
+      help: `Hostname/IP used in table QR codes so players' phones can reach this app (e.g. http://[IP_ADDRESS]:3000 or https://pool.example.com). Leave blank to use the address you're currently browsing from (${window.location.origin}).`
+    }));
 
-    const langRow = document.createElement('div');
-    const langLabel = document.createElement('label'); langLabel.textContent = 'Language: '; langLabel.style.fontWeight='600';
-    const selLang = document.createElement('select'); selLang.style.marginLeft='8px'; selLang.innerHTML = '<option value="en">English</option><option value="fr">Français</option>';
+    const genDivider = document.createElement('hr');
+    genDivider.className = 'card-divider';
+    generalCard.appendChild(genDivider);
+
+    const audioSwitch = makeSwitch({
+      label: 'Audio Cues',
+      checked: audioEnabled,
+      help: 'Play subtle click sounds when interacting with the UI',
+      onChange: (e)=>{ audioEnabled = e.target.checked; localStorage.setItem('audio_cues', audioEnabled); if(audioEnabled) playClickSound(); }
+    });
+    const audioBadge = document.createElement('span');
+    audioBadge.className = 'badge-device';
+    audioBadge.textContent = 'Device only';
+    audioSwitch.titleRow.appendChild(audioBadge);
+    generalCard.appendChild(audioSwitch.row);
+    grid.appendChild(generalCard);
+
+    // --- Localization & Pricing ---
+    const locCard = sectionCard({ icon: SETTINGS_ICONS.globe, title: 'Localization & Pricing', desc: 'Language, currency and subscriber pricing' });
+
+    const selLang = document.createElement('select');
+    selLang.innerHTML = '<option value="en">English</option><option value="fr">Français</option>';
     selLang.value = savedLang;
     selLang.addEventListener('change', (e)=>{ savedLang = e.target.value; localStorage.setItem('lang', savedLang); loadLocale(savedLang); renderSettings(); });
-    langRow.appendChild(langLabel); langRow.appendChild(selLang);
-    form.appendChild(langRow);
+    locCard.appendChild(makeField({ label: 'Language', input: selLang, help: 'Stored on this device' }));
 
-    const curRow = document.createElement('div');
-    const curLabel = document.createElement('label'); curLabel.textContent = 'Currency: '; curLabel.style.fontWeight='600';
-    const selCur = document.createElement('select'); selCur.style.marginLeft='8px'; selCur.innerHTML = '<option value="$">$ (USD)</option><option value="€">€ (EUR)</option><option value="£">£ (GBP)</option>';
+    const selCur = document.createElement('select');
+    selCur.innerHTML = '<option value="$">$ (USD)</option><option value="€">€ (EUR)</option><option value="£">£ (GBP)</option>';
     selCur.value = currency;
-    selCur.addEventListener('change', async (e)=>{ const cur = e.target.value; localStorage.setItem('currency', cur); try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ currency: cur }) }); }catch(err){ console.warn('failed saving setting', err); } renderSettings(); });
-    curRow.appendChild(curLabel); curRow.appendChild(selCur);
-    form.appendChild(curRow);
-
-    const discountRow = document.createElement('div');
-    const discountLabel = document.createElement('label'); discountLabel.textContent = 'Subscriber Discount (%): '; discountLabel.style.fontWeight='600';
-    const discountInput = document.createElement('input'); discountInput.type='number'; discountInput.style.marginLeft='8px'; discountInput.style.width='80px'; discountInput.min='0'; discountInput.max='100'; discountInput.value = settings.subscriber_discount || '50';
-    discountInput.addEventListener('change', async (e)=>{ const val = e.target.value; try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ subscriber_discount: val }) }); }catch(err){ console.warn('failed saving setting', err); } });
-    discountRow.appendChild(discountLabel); discountRow.appendChild(discountInput);
-    const discountHelp = document.createElement('div'); discountHelp.style.fontSize='12px'; discountHelp.style.opacity='0.7'; discountHelp.style.marginTop='4px'; discountHelp.textContent = 'Discount applied to non-subscribers playing with subscribers';
-    discountRow.appendChild(discountHelp);
-    form.appendChild(discountRow);
-    
-    const audioRow = document.createElement('div');
-    const audioLabel = document.createElement('label'); audioLabel.textContent = 'Audio Cues: '; audioLabel.style.fontWeight='600';
-    const audioToggle = document.createElement('input'); audioToggle.type='checkbox'; audioToggle.style.marginLeft='8px'; audioToggle.checked = audioEnabled;
-    audioToggle.addEventListener('change', (e)=>{ 
-      audioEnabled = e.target.checked; 
-      localStorage.setItem('audio_cues', audioEnabled); 
-      if(audioEnabled) playClickSound();
+    selCur.addEventListener('change', async (e)=>{
+      const ok = await saveSetting('currency', e.target.value, selCur);
+      if(ok) localStorage.setItem('currency', e.target.value);
+      renderSettings();
     });
-    audioRow.appendChild(audioLabel); audioRow.appendChild(audioToggle);
-    const audioHelp = document.createElement('div'); audioHelp.style.fontSize='12px'; audioHelp.style.opacity='0.7'; audioHelp.style.marginTop='4px'; audioHelp.textContent = 'Play subtle click sounds when interacting with the UI';
-    audioRow.appendChild(audioHelp);
-    form.appendChild(audioRow);
+    locCard.appendChild(makeField({ label: 'Currency', input: selCur }));
 
-    // Fiscal / Legal Information (for French VAT reporting & receipts)
-    const fiscalSection = document.createElement('div');
-    fiscalSection.style.border = '1px dashed var(--border)';
-    fiscalSection.style.padding = '12px';
-    fiscalSection.style.borderRadius = '6px';
-    const fiscalTitle = document.createElement('h3'); fiscalTitle.textContent = 'Fiscal / Legal Information'; fiscalTitle.style.marginTop = '0'; fiscalSection.appendChild(fiscalTitle);
-    const fiscalHelp = document.createElement('div'); fiscalHelp.style.fontSize='12px'; fiscalHelp.style.opacity='0.7'; fiscalHelp.style.marginBottom='8px';
-    fiscalHelp.textContent = 'Used on receipts and in the VAT (TVA) report. Consult your expert-comptable to confirm the correct values for your business.';
-    fiscalSection.appendChild(fiscalHelp);
+    const discountInput = document.createElement('input');
+    discountInput.type = 'number';
+    discountInput.min = '0';
+    discountInput.max = '100';
+    discountInput.value = settings.subscriber_discount || '50';
+    discountInput.addEventListener('change', async (e)=>{ await saveSetting('subscriber_discount', e.target.value, discountInput); });
+    locCard.appendChild(makeField({ label: 'Subscriber Discount (%)', input: discountInput, help: 'Discount applied to non-subscribers playing with subscribers' }));
+    grid.appendChild(locCard);
 
-    const fiscalFields = [
-      ['legal_name', 'Legal Business Name'],
-      ['siret', 'SIRET'],
-      ['siren', 'SIREN'],
-      ['tva_number', 'TVA Intracommunautaire No.'],
-      ['legal_address', 'Registered Address'],
-      ['vat_regime', 'VAT Regime (e.g. réel normal, réel simplifié, franchise en base)'],
-      ['vat_periodicity', 'Declaration Periodicity (monthly/quarterly/annual)']
-    ];
-    for(const [key, label] of fiscalFields){
-      const row = document.createElement('div');
-      const lab = document.createElement('label'); lab.textContent = label + ': '; lab.style.fontWeight='600';
-      const input = document.createElement('input'); input.type='text'; input.style.marginLeft='8px'; input.style.width='260px'; input.value = settings[key] || '';
-      input.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ [key]: e.target.value }) }); }catch(err){ console.warn('failed saving setting', key, err); } });
-      row.appendChild(lab); row.appendChild(input);
-      fiscalSection.appendChild(row);
-    }
-    form.appendChild(fiscalSection);
+    // --- Email (SMTP) ---
+    const smtpCard = sectionCard({ icon: SETTINGS_ICONS.mail, title: 'Email (SMTP)', desc: 'Used to email reports and maintenance alerts. The SMTP password is stored on the server and is never shown here again.' });
 
-    // OIDC Settings
-    const oidcSection = document.createElement('div');
-    oidcSection.style.border = '1px dashed var(--border)';
-    oidcSection.style.padding = '12px';
-    oidcSection.style.borderRadius = '6px';
-    const oidcTitle = document.createElement('h3'); oidcTitle.textContent = 'OpenID Connect (OIDC) Settings'; oidcTitle.style.marginTop = '0'; oidcSection.appendChild(oidcTitle);
-
-    const oidcEnableRow = document.createElement('div');
-    const oidcEnableLabel = document.createElement('label'); oidcEnableLabel.textContent = 'Enable OIDC (admin pages): '; oidcEnableLabel.style.fontWeight='600';
-    const oidcEnable = document.createElement('input'); oidcEnable.type='checkbox'; oidcEnable.style.marginLeft='8px'; oidcEnable.checked = settings.oidc_enabled === 'true';
-    oidcEnable.addEventListener('change', async (e)=>{ const val = e.target.checked ? 'true' : 'false'; try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_enabled: val }) }); alert('OIDC enabled set to: ' + val); renderSettings(); }catch(err){ console.warn('failed saving oidc_enabled', err); alert('Failed to save setting'); } });
-    oidcEnableRow.appendChild(oidcEnableLabel); oidcEnableRow.appendChild(oidcEnable);
-    const oidcEnableHelp = document.createElement('div'); oidcEnableHelp.style.fontSize='12px'; oidcEnableHelp.style.opacity='0.7'; oidcEnableHelp.style.marginTop='4px'; oidcEnableHelp.textContent = 'When enabled, admin pages require OIDC login. Keep disabled to avoid lockout.';
-    oidcSection.appendChild(oidcEnableRow); oidcSection.appendChild(oidcEnableHelp);
-
-    const issuerRow = document.createElement('div'); const issuerLabel = document.createElement('label'); issuerLabel.textContent = 'Issuer URL: '; issuerLabel.style.fontWeight='600';
-    const issuerInput = document.createElement('input'); issuerInput.type='text'; issuerInput.style.marginLeft='8px'; issuerInput.style.width='100%'; issuerInput.value = settings.oidc_issuer || '';
-    issuerInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_issuer: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_issuer', err); alert('Failed to save setting'); } });
-    issuerRow.appendChild(issuerLabel); issuerRow.appendChild(issuerInput); oidcSection.appendChild(issuerRow);
-
-    const clientIdRow = document.createElement('div'); const clientIdLabel = document.createElement('label'); clientIdLabel.textContent = 'Client ID: '; clientIdLabel.style.fontWeight='600';
-    const clientIdInput = document.createElement('input'); clientIdInput.type='text'; clientIdInput.style.marginLeft='8px'; clientIdInput.style.width='100%'; clientIdInput.value = settings.oidc_client_id || '';
-    clientIdInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_client_id: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_client_id', err); alert('Failed to save setting'); } });
-    clientIdRow.appendChild(clientIdLabel); clientIdRow.appendChild(clientIdInput); oidcSection.appendChild(clientIdRow);
-
-    const clientSecretRow = document.createElement('div'); const clientSecretLabel = document.createElement('label'); clientSecretLabel.textContent = 'Client Secret: '; clientSecretLabel.style.fontWeight='600';
-    const clientSecretInput = document.createElement('input'); clientSecretInput.type='password'; clientSecretInput.style.marginLeft='8px'; clientSecretInput.style.width='100%'; clientSecretInput.value = settings.oidc_client_secret || '';
-    clientSecretInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_client_secret: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_client_secret', err); alert('Failed to save setting'); } });
-    clientSecretRow.appendChild(clientSecretLabel); clientSecretRow.appendChild(clientSecretInput); oidcSection.appendChild(clientSecretRow);
-
-    const scopeRow = document.createElement('div'); const scopeLabel = document.createElement('label'); scopeLabel.textContent = 'Scope: '; scopeLabel.style.fontWeight='600';
-    const scopeInput = document.createElement('input'); scopeInput.type='text'; scopeInput.style.marginLeft='8px'; scopeInput.style.width='100%'; scopeInput.value = settings.oidc_scope || 'openid profile email';
-    scopeInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_scope: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_scope', err); alert('Failed to save setting'); } });
-    scopeRow.appendChild(scopeLabel); scopeRow.appendChild(scopeInput); oidcSection.appendChild(scopeRow);
-
-    const redirectRow = document.createElement('div'); const redirectLabel = document.createElement('label'); redirectLabel.textContent = 'Redirect URI: '; redirectLabel.style.fontWeight='600';
-    const redirectInput = document.createElement('input'); redirectInput.type='text'; redirectInput.style.marginLeft='8px'; redirectInput.style.width='100%'; redirectInput.value = settings.oidc_redirect_uri || '';
-    redirectInput.addEventListener('change', async (e)=>{ try{ await fetch('/api/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ oidc_redirect_uri: e.target.value }) }); alert('Saved'); }catch(err){ console.warn('failed saving oidc_redirect_uri', err); alert('Failed to save setting'); } });
-    redirectRow.appendChild(redirectLabel); redirectRow.appendChild(redirectInput); oidcSection.appendChild(redirectRow);
-
-    const testRow = document.createElement('div'); testRow.style.marginTop='8px';
-    const testBtn = document.createElement('button'); testBtn.textContent = 'Test OIDC (opens login)'; testBtn.addEventListener('click', async ()=>{
-      // Try opening /auth/login which will validate OIDC config server-side
-      window.open('/auth/login', '_blank');
-    });
-    testRow.appendChild(testBtn);
-    const testHelp = document.createElement('div'); testHelp.style.fontSize='12px'; testHelp.style.opacity='0.8'; testHelp.style.marginTop='6px'; testHelp.textContent = 'Opens the OIDC login flow in a new tab. Ensure values are saved before testing.';
-    oidcSection.appendChild(testRow); oidcSection.appendChild(testHelp);
-
-    form.appendChild(oidcSection);
-
-    // Email (SMTP) settings
-    const smtpSection = document.createElement('div');
-    smtpSection.style.border = '1px dashed var(--border)';
-    smtpSection.style.padding = '12px';
-    smtpSection.style.borderRadius = '6px';
-    const smtpTitle = document.createElement('h3'); smtpTitle.textContent = 'Email (SMTP) Settings'; smtpTitle.style.marginTop = '0'; smtpSection.appendChild(smtpTitle);
-    const smtpHelp = document.createElement('div'); smtpHelp.style.fontSize = '12px'; smtpHelp.style.opacity = '0.7'; smtpHelp.style.marginBottom = '8px';
-    smtpHelp.textContent = 'Used to email reports and maintenance alerts. The SMTP password is stored on the server and is never shown here again.';
-    smtpSection.appendChild(smtpHelp);
-
-    const saveSetting = async (key, value) => { try{ await fetch('/api/settings', { method:'PATCH', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ [key]: value }) }); }catch(err){ console.warn('failed saving setting', key, err); } };
+    const smtpGrid = document.createElement('div');
+    smtpGrid.className = 'fields-grid';
     const smtpFields = [
       ['smtp_host', 'SMTP Host', 'text'],
       ['smtp_port', 'SMTP Port', 'number'],
       ['smtp_user', 'SMTP Username', 'text'],
       ['smtp_from', 'From Address', 'text'],
-      ['maintenance_alert_email', 'Maintenance Alert Email', 'text']
+      ['maintenance_alert_email', 'Maintenance Alert Email', 'text', true]
     ];
-    for(const [key, label, type] of smtpFields){
-      const row = document.createElement('div');
-      const lab = document.createElement('label'); lab.textContent = label + ': '; lab.style.fontWeight = '600';
-      const input = document.createElement('input'); input.type = type; input.style.marginLeft = '8px'; input.style.width = '260px'; input.value = settings[key] || '';
-      input.addEventListener('change', (e)=> saveSetting(key, e.target.value));
-      row.appendChild(lab); row.appendChild(input); smtpSection.appendChild(row);
+    for(const [key, label, type, wide] of smtpFields){
+      const input = document.createElement('input');
+      input.type = type;
+      input.value = settings[key] || '';
+      input.addEventListener('change', saveOnInput(key));
+      smtpGrid.appendChild(makeField({ label, input, wide }));
     }
+    smtpCard.appendChild(smtpGrid);
 
-    const secureRow = document.createElement('div');
-    const secureLab = document.createElement('label'); secureLab.textContent = 'Use TLS/SSL (secure): '; secureLab.style.fontWeight = '600';
-    const secureInput = document.createElement('input'); secureInput.type = 'checkbox'; secureInput.style.marginLeft = '8px'; secureInput.checked = settings.smtp_secure === 'true';
-    secureInput.addEventListener('change', (e)=> saveSetting('smtp_secure', e.target.checked ? 'true' : 'false'));
-    secureRow.appendChild(secureLab); secureRow.appendChild(secureInput); smtpSection.appendChild(secureRow);
+    const smtpDivider = document.createElement('hr');
+    smtpDivider.className = 'card-divider';
+    smtpCard.appendChild(smtpDivider);
 
-    const passRow = document.createElement('div');
-    const passLab = document.createElement('label'); passLab.textContent = 'SMTP Password: '; passLab.style.fontWeight = '600';
-    const passInput = document.createElement('input'); passInput.type = 'password'; passInput.style.marginLeft = '8px'; passInput.style.width = '260px';
+    const secureSwitch = makeSwitch({
+      label: 'Use TLS/SSL (secure)',
+      checked: settings.smtp_secure === 'true',
+      onChange: (e)=> saveSetting('smtp_secure', e.target.checked ? 'true' : 'false')
+    });
+    smtpCard.appendChild(secureSwitch.row);
+
+    const passInput = document.createElement('input');
+    passInput.type = 'password';
     passInput.placeholder = settings.smtp_pass_set ? '•••••• (stored — type to replace)' : 'not set';
-    passInput.addEventListener('change', (e)=>{ if(e.target.value) saveSetting('smtp_pass', e.target.value); });
-    passRow.appendChild(passLab); passRow.appendChild(passInput); smtpSection.appendChild(passRow);
+    passInput.addEventListener('change', async (e)=>{
+      if(!e.target.value) return;
+      const ok = await saveSetting('smtp_pass', e.target.value, passInput);
+      if(ok) e.target.value = '';
+    });
+    smtpCard.appendChild(makeField({ label: 'SMTP Password', input: passInput, help: 'Leave blank to keep the stored password' }));
 
-    const smtpTestRow = document.createElement('div'); smtpTestRow.style.marginTop = '8px';
-    const smtpTestBtn = document.createElement('button'); smtpTestBtn.textContent = 'Send Test Email';
+    const smtpActions = document.createElement('div');
+    smtpActions.className = 'card-actions';
+    const smtpTestBtn = document.createElement('button');
+    smtpTestBtn.textContent = 'Send Test Email';
     smtpTestBtn.addEventListener('click', async ()=>{
       const to = prompt('Send test email to:');
       if(!to) return;
       try{
         const resp = await fetch('/api/admin/smtp/test', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ to }) });
         const body = await resp.json().catch(()=>null);
-        if(!resp.ok) alert('Test failed: ' + (body?.error || resp.status)); else alert('Test email sent.');
-      }catch(err){ alert('Test failed: ' + err.message); }
+        if(!resp.ok) showToast('Test failed: ' + (body?.error || resp.status), 'error');
+        else showToast('Test email sent');
+      }catch(err){ showToast('Test failed: ' + err.message, 'error'); }
     });
-    smtpTestRow.appendChild(smtpTestBtn); smtpSection.appendChild(smtpTestRow);
+    smtpActions.appendChild(smtpTestBtn);
+    smtpCard.appendChild(smtpActions);
+    grid.appendChild(smtpCard);
 
-    form.appendChild(smtpSection);
+    // --- Fiscal / Legal ---
+    const fiscalCard = sectionCard({ icon: SETTINGS_ICONS.file, title: 'Fiscal / Legal Information', desc: 'Used on receipts and in the VAT (TVA) report. Consult your expert-comptable to confirm the correct values for your business.' });
 
-    // Danger Zone Section
-    const dangerZone = document.createElement('div');
-    dangerZone.style.marginTop = '32px';
-    dangerZone.style.padding = '16px';
-    dangerZone.style.border = '2px solid #ef4444';
-    dangerZone.style.borderRadius = '8px';
-    dangerZone.style.background = 'rgba(239, 68, 68, 0.1)';
-    
-    const dangerTitle = document.createElement('h3');
-    dangerTitle.textContent = '⚠️ Danger Zone';
-    dangerTitle.style.color = '#ef4444';
-    dangerTitle.style.marginTop = '0';
-    dangerZone.appendChild(dangerTitle);
-    
-    const clearHistoryBtn = document.createElement('button');
-    clearHistoryBtn.textContent = '🗑️ Clear All Session History';
-    clearHistoryBtn.style.background = '#dc2626';
-    clearHistoryBtn.style.color = 'white';
-    clearHistoryBtn.style.border = 'none';
-    clearHistoryBtn.style.padding = '12px 24px';
-    clearHistoryBtn.style.borderRadius = '6px';
-    clearHistoryBtn.style.cursor = 'pointer';
-    clearHistoryBtn.style.fontWeight = '600';
-    clearHistoryBtn.addEventListener('click', async ()=>{
-      const firstConfirm = confirm('⚠️ WARNING: This will permanently delete ALL session history and tab data. This action cannot be undone.\n\nAre you sure you want to continue?');
-      if(!firstConfirm) return;
-      
-      const secondConfirm = confirm('⚠️ FINAL WARNING: This will delete all historical data forever.\n\nType YES in your mind and click OK to proceed, or Cancel to abort.');
-      if(!secondConfirm) return;
-      
-      try{
-        const response = await fetch('/api/admin/clear-history', { method: 'DELETE' });
-        if(response.ok){
-          alert('✓ All session history has been cleared successfully.');
-          renderSettings();
-        } else {
-          const error = await response.json();
-          alert('Failed to clear history: ' + (error.error || 'Unknown error'));
-        }
-      }catch(err){
-        alert('Failed to clear history: ' + err.message);
+    const fiscalGrid = document.createElement('div');
+    fiscalGrid.className = 'fields-grid';
+    const fiscalFields = [
+      ['legal_name', 'Legal Business Name'],
+      ['siret', 'SIRET'],
+      ['siren', 'SIREN'],
+      ['tva_number', 'TVA Intracommunautaire No.'],
+      ['legal_address', 'Registered Address', true],
+      ['vat_regime', 'VAT Regime (e.g. réel normal, réel simplifié, franchise en base)'],
+      ['vat_periodicity', 'Declaration Periodicity (monthly/quarterly/annual)']
+    ];
+    for(const [key, label, wide] of fiscalFields){
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = settings[key] || '';
+      input.addEventListener('change', saveOnInput(key));
+      fiscalGrid.appendChild(makeField({ label, input, wide }));
+    }
+    fiscalCard.appendChild(fiscalGrid);
+    grid.appendChild(fiscalCard);
+
+    // --- Security ---
+    const securityCard = sectionCard({ icon: SETTINGS_ICONS.lock, title: 'Security', desc: 'Authentication for admin pages and account recovery', spanAll: true });
+    const split = document.createElement('div');
+    split.className = 'split';
+    securityCard.appendChild(split);
+
+    // OIDC sub-block
+    const oidcBlock = document.createElement('div');
+    const oidcHead = document.createElement('h4');
+    oidcHead.className = 'card-subhead';
+    oidcHead.textContent = 'OpenID Connect (OIDC)';
+    oidcBlock.appendChild(oidcHead);
+
+    const oidcConfig = document.createElement('div');
+    oidcConfig.className = 'fields-grid';
+    oidcConfig.style.marginTop = '12px';
+    const oidcFields = [
+      ['oidc_issuer', 'Issuer URL', 'text', true],
+      ['oidc_client_id', 'Client ID', 'text'],
+      ['oidc_client_secret', 'Client Secret', 'password'],
+      ['oidc_scope', 'Scope', 'text'],
+      ['oidc_redirect_uri', 'Redirect URI', 'text']
+    ];
+    for(const [key, label, type, wide] of oidcFields){
+      const input = document.createElement('input');
+      input.type = type;
+      input.value = key === 'oidc_scope' ? (settings.oidc_scope || 'openid profile email') : (settings[key] || '');
+      input.addEventListener('change', saveOnInput(key));
+      oidcConfig.appendChild(makeField({ label, input, wide }));
+    }
+
+    const oidcActions = document.createElement('div');
+    oidcActions.className = 'card-actions';
+    const oidcTestBtn = document.createElement('button');
+    oidcTestBtn.textContent = 'Test OIDC (opens login)';
+    oidcTestBtn.addEventListener('click', ()=>{
+      // Try opening /auth/login which will validate OIDC config server-side
+      window.open('/auth/login', '_blank');
+    });
+    oidcActions.appendChild(oidcTestBtn);
+    const oidcTestHelp = document.createElement('div');
+    oidcTestHelp.className = 'action-help';
+    oidcTestHelp.textContent = 'Opens the OIDC login flow in a new tab. Ensure values are saved before testing.';
+
+    const oidcEnableSwitch = makeSwitch({
+      label: 'Enable OIDC (admin pages)',
+      checked: settings.oidc_enabled === 'true',
+      help: 'When enabled, admin pages require OIDC login. Keep disabled to avoid lockout.',
+      onChange: async (e, input)=>{
+        const next = input.checked;
+        const ok = await saveSetting('oidc_enabled', next ? 'true' : 'false');
+        if(!ok) input.checked = !next;
+        updateOidcVisibility();
       }
     });
-    
-    const clearHistoryHelp = document.createElement('div');
-    clearHistoryHelp.style.fontSize = '12px';
-    clearHistoryHelp.style.opacity = '0.7';
-    clearHistoryHelp.style.marginTop = '8px';
-    clearHistoryHelp.textContent = 'Deletes all completed sessions, tab items, and history. Active sessions will not be affected.';
-    
-    dangerZone.appendChild(clearHistoryBtn);
-    dangerZone.appendChild(clearHistoryHelp);
-    // Local admin management (rotate / clear)
-    const securityTitle = document.createElement('h4');
-    securityTitle.textContent = 'Local Admin (Recovery)';
-    securityTitle.style.marginTop = '12px';
-    dangerZone.appendChild(securityTitle);
+    oidcBlock.appendChild(oidcEnableSwitch.row);
+    oidcBlock.appendChild(oidcConfig);
+    oidcBlock.appendChild(oidcActions);
+    oidcBlock.appendChild(oidcTestHelp);
+
+    function updateOidcVisibility(){
+      const on = oidcEnableSwitch.input.checked;
+      oidcConfig.style.display = on ? '' : 'none';
+      oidcActions.style.display = on ? '' : 'none';
+      oidcTestHelp.style.display = on ? '' : 'none';
+    }
+    updateOidcVisibility();
+    split.appendChild(oidcBlock);
+
+    // Local admin sub-block
+    const adminBlock = document.createElement('div');
+    const adminHead = document.createElement('h4');
+    adminHead.className = 'card-subhead';
+    adminHead.textContent = 'Local Admin (Recovery)';
+    adminBlock.appendChild(adminHead);
 
     if(settings.local_admin_password_hash){
-      const rotateDiv = document.createElement('div');
-      rotateDiv.style.display = 'flex'; rotateDiv.style.flexDirection = 'column'; rotateDiv.style.gap = '8px'; rotateDiv.style.marginTop = '8px';
-      rotateDiv.innerHTML = `
-        <div style="font-weight:600">Rotate admin password</div>
-      `;
-      const cur = document.createElement('input'); cur.type='password'; cur.placeholder='Current password'; cur.style.width='100%';
-      const nw = document.createElement('input'); nw.type='password'; nw.placeholder='New password'; nw.style.width='100%';
-      const nw2 = document.createElement('input'); nw2.type='password'; nw2.placeholder='Confirm new password'; nw2.style.width='100%';
-      const rotateBtn = document.createElement('button'); rotateBtn.textContent = 'Rotate Password'; rotateBtn.style.background='#f59e0b'; rotateBtn.style.color='#000';
+      const curInput = document.createElement('input'); curInput.type = 'password'; curInput.placeholder = 'Current password';
+      const newInput = document.createElement('input'); newInput.type = 'password'; newInput.placeholder = 'New password';
+      const confInput = document.createElement('input'); confInput.type = 'password'; confInput.placeholder = 'Confirm new password';
+      const pwGrid = document.createElement('div');
+      pwGrid.className = 'fields-grid';
+      pwGrid.appendChild(makeField({ label: 'Current password', input: curInput }));
+      pwGrid.appendChild(makeField({ label: 'New password', input: newInput }));
+      pwGrid.appendChild(makeField({ label: 'Confirm new password', input: confInput }));
+      adminBlock.appendChild(pwGrid);
+
+      const adminActions = document.createElement('div');
+      adminActions.className = 'card-actions';
+      const rotateBtn = document.createElement('button');
+      rotateBtn.className = 'btn-primary';
+      rotateBtn.textContent = 'Rotate Password';
       rotateBtn.addEventListener('click', async ()=>{
         if(!confirm('Rotate admin password?')) return;
-        if(nw.value.length < 6){ alert('New password must be at least 6 characters'); return; }
-        if(nw.value !== nw2.value){ alert('Passwords do not match'); return; }
+        if(newInput.value.length < 6){ alert('New password must be at least 6 characters'); return; }
+        if(newInput.value !== confInput.value){ alert('Passwords do not match'); return; }
         try{
-          const resp = await fetch('/api/auth/local-rotate', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: cur.value, newPassword: nw.value }) });
+          const resp = await fetch('/api/auth/local-rotate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ currentPassword: curInput.value, newPassword: newInput.value }) });
           const body = await resp.json().catch(()=>null);
-          if(!resp.ok) return alert('Failed to rotate: ' + (body?.error || resp.status));
-          alert('Password rotated successfully');
-          cur.value=''; nw.value=''; nw2.value='';
-        }catch(err){ alert('Rotate failed: ' + err.message); }
+          if(!resp.ok){ showToast('Failed to rotate: ' + (body?.error || resp.status), 'error'); return; }
+          showToast('Password rotated successfully');
+          curInput.value = ''; newInput.value = ''; confInput.value = '';
+        }catch(err){ showToast('Rotate failed: ' + err.message, 'error'); }
       });
-      rotateDiv.appendChild(cur); rotateDiv.appendChild(nw); rotateDiv.appendChild(nw2); rotateDiv.appendChild(rotateBtn);
-      dangerZone.appendChild(rotateDiv);
+      adminActions.appendChild(rotateBtn);
 
-      const clearAdminDiv = document.createElement('div'); clearAdminDiv.style.marginTop='12px';
-      const clearAdminBtn = document.createElement('button'); clearAdminBtn.textContent = '🔓 Clear Local Admin (allow re-bootstrap)'; clearAdminBtn.style.background='#ef4444'; clearAdminBtn.style.color='#fff';
+      const clearAdminBtn = document.createElement('button');
+      clearAdminBtn.className = 'btn-outline-danger';
+      clearAdminBtn.textContent = 'Clear Local Admin (allow re-bootstrap)';
       clearAdminBtn.addEventListener('click', async ()=>{
         const ok = confirm('This will remove the local admin password and allow re-setup. Are you sure?');
         if(!ok) return;
         try{
           const resp = await fetch('/api/auth/local-clear', { method: 'DELETE' });
           const body = await resp.json().catch(()=>null);
-          if(!resp.ok) return alert('Failed to clear: ' + (body?.error || resp.status));
-          alert('Local admin cleared. App can be reconfigured for local admin.');
+          if(!resp.ok){ showToast('Failed to clear: ' + (body?.error || resp.status), 'error'); return; }
+          showToast('Local admin cleared. App can be reconfigured for local admin.');
           renderSettings();
-        }catch(err){ alert('Clear failed: ' + err.message); }
+        }catch(err){ showToast('Clear failed: ' + err.message, 'error'); }
       });
-      clearAdminDiv.appendChild(clearAdminBtn);
-      dangerZone.appendChild(clearAdminDiv);
+      adminActions.appendChild(clearAdminBtn);
+      adminBlock.appendChild(adminActions);
     } else {
-      const setupDiv = document.createElement('div'); setupDiv.style.marginTop='8px';
-      const setupNote = document.createElement('div'); setupNote.textContent = 'No local admin is configured. You can create one here (only available if OIDC is disabled).'; setupDiv.appendChild(setupNote);
-      const pw1 = document.createElement('input'); pw1.type='password'; pw1.placeholder='New admin password'; pw1.style.width='100%'; pw1.style.marginTop='6px';
-      const pw2 = document.createElement('input'); pw2.type='password'; pw2.placeholder='Confirm password'; pw2.style.width='100%'; pw2.style.marginTop='6px';
-      const setupBtn = document.createElement('button'); setupBtn.textContent = 'Create Local Admin'; setupBtn.style.background='#10b981'; setupBtn.style.color='#fff'; setupBtn.addEventListener('click', async ()=>{
+      const setupNote = document.createElement('p');
+      setupNote.className = 'card-desc';
+      setupNote.style.margin = '0 0 12px';
+      setupNote.textContent = 'No local admin is configured. You can create one here (only available if OIDC is disabled).';
+      adminBlock.appendChild(setupNote);
+      const pw1 = document.createElement('input'); pw1.type = 'password'; pw1.placeholder = 'New admin password';
+      const pw2 = document.createElement('input'); pw2.type = 'password'; pw2.placeholder = 'Confirm password';
+      const pwGrid = document.createElement('div');
+      pwGrid.className = 'fields-grid';
+      pwGrid.appendChild(makeField({ label: 'New admin password', input: pw1 }));
+      pwGrid.appendChild(makeField({ label: 'Confirm password', input: pw2 }));
+      adminBlock.appendChild(pwGrid);
+      const adminActions = document.createElement('div');
+      adminActions.className = 'card-actions';
+      const setupBtn = document.createElement('button');
+      setupBtn.className = 'btn-primary';
+      setupBtn.textContent = 'Create Local Admin';
+      setupBtn.addEventListener('click', async ()=>{
         if(pw1.value.length < 6) return alert('Password too short');
         if(pw1.value !== pw2.value) return alert('Passwords do not match');
         try{
-          const resp = await fetch('/api/auth/local-setup', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pw1.value }) });
+          const resp = await fetch('/api/auth/local-setup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pw1.value }) });
           const body = await resp.json().catch(()=>null);
-          if(!resp.ok) return alert('Failed to create admin: ' + (body?.error || resp.status));
-          alert('Local admin created. Please log in.'); renderSettings();
-        }catch(err){ alert('Create failed: ' + err.message); }
+          if(!resp.ok){ showToast('Failed to create admin: ' + (body?.error || resp.status), 'error'); return; }
+          showToast('Local admin created. Please log in.');
+          renderSettings();
+        }catch(err){ showToast('Create failed: ' + err.message, 'error'); }
       });
-      setupDiv.appendChild(pw1); setupDiv.appendChild(pw2); setupDiv.appendChild(setupBtn);
-      dangerZone.appendChild(setupDiv);
+      adminActions.appendChild(setupBtn);
+      adminBlock.appendChild(adminActions);
     }
-    form.appendChild(dangerZone);
+    split.appendChild(adminBlock);
+    grid.appendChild(securityCard);
 
-    const backBtn = document.createElement('button'); backBtn.textContent = '← Back to Admin'; backBtn.style.marginTop='12px';
-    backBtn.addEventListener('click', ()=> renderAdminDashboard());
-    form.appendChild(backBtn);
+    // --- Danger Zone ---
+    const dangerCard = sectionCard({ icon: SETTINGS_ICONS.alert, title: 'Danger Zone', desc: 'Irreversible, data-destroying actions. Think twice before proceeding.', spanAll: true, danger: true });
 
-    app.appendChild(form);
+    const clearHistoryBtn = document.createElement('button');
+    clearHistoryBtn.className = 'btn-danger';
+    clearHistoryBtn.textContent = 'Clear All Session History';
+    clearHistoryBtn.addEventListener('click', async ()=>{
+      const firstConfirm = confirm('⚠️ WARNING: This will permanently delete ALL session history and tab data. This action cannot be undone.\n\nAre you sure you want to continue?');
+      if(!firstConfirm) return;
+
+      const secondConfirm = confirm('⚠️ FINAL WARNING: This will delete all historical data forever.\n\nType YES in your mind and click OK to proceed, or Cancel to abort.');
+      if(!secondConfirm) return;
+
+      try{
+        const response = await fetch('/api/admin/clear-history', { method: 'DELETE' });
+        if(response.ok){
+          showToast('All session history has been cleared successfully');
+          renderSettings();
+        } else {
+          const error = await response.json().catch(()=>({}));
+          showToast('Failed to clear history: ' + (error.error || 'Unknown error'), 'error');
+        }
+      }catch(err){
+        showToast('Failed to clear history: ' + err.message, 'error');
+      }
+    });
+    dangerCard.appendChild(clearHistoryBtn);
+    const clearHistoryHelp = document.createElement('div');
+    clearHistoryHelp.className = 'action-help';
+    clearHistoryHelp.textContent = 'Deletes all completed sessions, tab items, and history. Active sessions will not be affected.';
+    dangerCard.appendChild(clearHistoryHelp);
+    grid.appendChild(dangerCard);
   }
 
   // Build the financial-report jsPDF document (shared by "Export to PDF" and "Send").

@@ -2,9 +2,9 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const crypto = require('crypto');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const session = require('express-session');
-const { Issuer, generators } = require('openid-client');
+const oidc = require('openid-client');
 const bcrypt = require('bcryptjs');
 const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
@@ -34,16 +34,18 @@ async function getSettingValue(key){
   return row ? row.value : null;
 }
 
-// Simple helper to build client (cached)
-let _oidcClientCache = null;
-async function getOidcClient(){
+// Simple helper to build the OIDC configuration (cached). openid-client v6
+// returns a Configuration object instead of an Issuer/Client pair.
+let _oidcConfigCache = null;
+async function getOidcConfiguration(){
   const s = await getOidcSettings();
   if(!s || s.oidc_enabled !== 'true') return null;
-  if(_oidcClientCache && _oidcClientCache.issuer === s.oidc_issuer) return _oidcClientCache.client;
-  const issuer = await Issuer.discover(s.oidc_issuer);
-  const client = new issuer.Client({ client_id: s.oidc_client_id, client_secret: s.oidc_client_secret });
-  _oidcClientCache = { issuer: s.oidc_issuer, client };
-  return client;
+  if(_oidcConfigCache && _oidcConfigCache.issuer === s.oidc_issuer && _oidcConfigCache.clientId === s.oidc_client_id){
+    return _oidcConfigCache.config;
+  }
+  const config = await oidc.discovery(new URL(s.oidc_issuer), s.oidc_client_id, s.oidc_client_secret || undefined);
+  _oidcConfigCache = { issuer: s.oidc_issuer, clientId: s.oidc_client_id, config };
+  return config;
 }
 
 const PORT = process.env.PORT || 3000;
@@ -61,32 +63,32 @@ app.get('/status', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'status.html'));
 });
 
-// Serve admin and dashboard routes only to authenticated users
-app.get('/admin', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.get('/dashboard', requireAuth, (req, res) => {
+// Admin/dashboard pages are served unconditionally: the React app renders the
+// login/setup screen when unauthenticated and every API call stays protected.
+app.get(['/admin', '/dashboard'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Authentication routes (OIDC skeleton)
 app.get('/auth/login', async (req, res) => {
   try {
-    const client = await getOidcClient();
-    if(!client) return res.status(400).send('OIDC not configured');
+    const config = await getOidcConfiguration();
+    if(!config) return res.status(400).send('OIDC not configured');
     const s = await getOidcSettings();
     const redirectUri = s.oidc_redirect_uri || `http://localhost:${PORT}/auth/callback`;
-    const codeVerifier = generators.codeVerifier();
-    const codeChallenge = generators.codeChallenge(codeVerifier);
+    const codeVerifier = oidc.randomPKCECodeVerifier();
+    const codeChallenge = await oidc.calculatePKCECodeChallenge(codeVerifier);
+    const state = oidc.randomState();
     req.session.codeVerifier = codeVerifier;
-    const url = client.authorizationUrl({
-      scope: s.oidc_scope || 'openid profile email',
+    req.session.oidcState = state;
+    const url = oidc.buildAuthorizationUrl(config, {
       redirect_uri: redirectUri,
+      scope: s.oidc_scope || 'openid profile email',
       code_challenge: codeChallenge,
-      code_challenge_method: 'S256'
+      code_challenge_method: 'S256',
+      state,
     });
-    res.redirect(url);
+    res.redirect(url.href);
   } catch (err) {
     console.error('OIDC login error', err);
     res.status(500).send('OIDC login error');
@@ -95,14 +97,22 @@ app.get('/auth/login', async (req, res) => {
 
 app.get('/auth/callback', async (req, res) => {
   try {
-    const client = await getOidcClient();
-    if(!client) return res.status(400).send('OIDC not configured');
-    const params = client.callbackParams(req);
+    const config = await getOidcConfiguration();
+    if(!config) return res.status(400).send('OIDC not configured');
     const s = await getOidcSettings();
     const redirectUri = s.oidc_redirect_uri || `http://localhost:${PORT}/auth/callback`;
-    const tokenSet = await client.callback(redirectUri, params, { code_verifier: req.session.codeVerifier });
-    const userinfo = await client.userinfo(tokenSet.access_token);
-    req.session.user = { tokenSet, userinfo };
+    const currentUrl = new URL(redirectUri);
+    for(const [key, value] of Object.entries(req.query)){
+      if(typeof value === 'string') currentUrl.searchParams.set(key, value);
+    }
+    const tokens = await oidc.authorizationCodeGrant(config, currentUrl, {
+      pkceCodeVerifier: req.session.codeVerifier,
+      expectedState: req.session.oidcState,
+    });
+    const userinfo = await oidc.fetchUserInfo(config, tokens.access_token, tokens.claims() && tokens.claims().sub);
+    req.session.user = { tokenSet: tokens, userinfo };
+    delete req.session.codeVerifier;
+    delete req.session.oidcState;
     res.redirect('/');
   } catch (err) {
     console.error('OIDC callback error', err);
@@ -988,7 +998,7 @@ app.get('/api/drinks', async (req, res) => {
   const locale = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const list = await prisma.drink.findMany({ orderBy: { createdAt: 'asc' } });
-    const mapped = list.map(d => ({ id: d.id, name: locale === 'fr' && d.name_fr ? d.name_fr : d.name_en, price_cents: d.price_cents, taxable: d.taxable, vatRatePercent: d.vatRatePercent }));
+    const mapped = list.map(d => ({ id: d.id, name: locale === 'fr' && d.name_fr ? d.name_fr : d.name_en, price_cents: d.price_cents, taxable: d.taxable, vatRatePercent: d.vatRatePercent, category: d.category || null }));
     res.json(mapped);
   } catch (err) {
     console.error(err);
@@ -996,10 +1006,17 @@ app.get('/api/drinks', async (req, res) => {
   }
 });
 
+const DRINK_CATEGORIES = ['cold', 'warm', 'alcoholic', 'other'];
+function normalizeDrinkCategory(value){
+  if(value == null || value === '') return null;
+  const category = String(value).toLowerCase();
+  return DRINK_CATEGORIES.includes(category) ? category : null;
+}
+
 app.post('/api/admin/drinks', requireAuth, async (req, res) => {
-  const { name_en, name_fr, price_cents, taxable, vatRatePercent } = req.body;
+  const { name_en, name_fr, price_cents, taxable, vatRatePercent, category } = req.body;
   try {
-    const created = await prisma.drink.create({ data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20 } });
+    const created = await prisma.drink.create({ data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20, category: normalizeDrinkCategory(category) } });
     res.status(201).json(created);
   } catch (err) {
     console.error(err);
@@ -1017,9 +1034,9 @@ app.get('/api/admin/drinks/:id', requireAuth, async (req, res) => {
 });
 
 app.put('/api/admin/drinks/:id', requireAuth, async (req, res) => {
-  const { name_en, name_fr, price_cents, taxable, vatRatePercent } = req.body;
+  const { name_en, name_fr, price_cents, taxable, vatRatePercent, category } = req.body;
   try {
-    const updated = await prisma.drink.update({ where: { id: req.params.id }, data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20 } });
+    const updated = await prisma.drink.update({ where: { id: req.params.id }, data: { name_en, name_fr, price_cents, taxable: !!taxable, vatRatePercent: Number(vatRatePercent) || 20, category: normalizeDrinkCategory(category) } });
     res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
@@ -1150,7 +1167,13 @@ app.put('/api/tables/:id', requireAuth, async (req, res) => {
     const r = Array.isArray(out) ? out[0] : out;
     console.log('[PUT /api/tables/:id] Result:', r);
     res.json({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, totalUsedSeconds: r.total_used_seconds || 0, usedSinceMaintenanceSeconds: r.used_since_maintenance_seconds || 0, createdAt: r.created_at });
-  } catch (e) { console.error('[PUT /api/tables/:id] Error:', e); res.status(500).json({ error: 'db_error' }); }
+  } catch (e) {
+    if(e && (e.code === 'P2002' || (e.meta && e.meta.code === '23505'))) {
+      return res.status(409).json({ error: 'number_in_use' });
+    }
+    console.error('[PUT /api/tables/:id] Error:', e);
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 // Delete table
@@ -2006,6 +2029,18 @@ app.post('/api/pending-orders/:id/cancel', requireAuth, async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }
+});
+
+// SPA fallback: serve the React app for client-side routes. API/auth paths and
+// file requests (assets, table/status pages) fall through to their real handlers.
+// (Express 5 removed the bare '*' route pattern, so this is a middleware.)
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const p = req.path;
+  if (p.startsWith('/api') || p.startsWith('/auth') || p.startsWith('/table') || p === '/status' || /\.[a-z0-9]+$/i.test(p)) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Seed database with default table types and drinks on startup

@@ -4,7 +4,7 @@
 Comprehensive Jest + Supertest integration test suite for the Pool Tables Manager backend API. Tests verify all major workflows without requiring a live database connection.
 
 ## Test Coverage
-**24 tests across 10 test suites (100% passing)**
+**39 tests across 12 test suites (100% passing)**
 
 ### Covered Workflows
 - ✅ **Authentication** (2 tests): Local auth setup, login, token rotation, clear
@@ -17,6 +17,12 @@ Comprehensive Jest + Supertest integration test suite for the Pool Tables Manage
 - ✅ **Settings** (2 tests): Get settings, update settings
 - ✅ **Patrons** (2 tests): Create patron, list patrons
 - ✅ **UI Endpoints** (2 tests): Health check, drinks API
+
+## Requirements
+
+- Node.js **22.12+** (Prisma 7 / openid-client 6)
+- No database is required: the Prisma client is fully mocked
+- `openid-client` is stubbed (see below)
 
 ## Architecture
 
@@ -38,6 +44,10 @@ Tests use a **manual Jest mock** of the Prisma client (`tests/__mocks__/src/pris
 
 3. **Server Configuration** (`server.js`)
    - Modified with `require.main === module` check to prevent auto-listen during test imports
+
+4. **OIDC stub** (`tests/__mocks__/openid-client.js`)
+   - openid-client 6 is ESM-only; the unit tests do not exercise real OIDC flows, so Jest maps the
+     module to a throwing stub (configured via `jest.moduleNameMapper` in `package.json`)
    - Exports `app` for Supertest integration
 
 ## Running Tests

@@ -20,8 +20,13 @@ The application will automatically:
 - Wait for the database to be ready
 - Detect if it's a fresh database
 - Run all migrations
-- Generate the Prisma client
+- Generate the Prisma client (Prisma 7 with the PostgreSQL driver adapter)
 - Start the server
+
+> **Database requirements**: none beyond a reachable PostgreSQL 18. Upgrading from any previous
+> version needs **no manual SQL**: the container applies additive Prisma migrations at startup (the
+> most recent adds the nullable `Drink.category` column and backfills obvious items). Take a
+> `pg_dump` backup as usual — see [UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
 
 ## Deployment to New Machine
 
@@ -72,7 +77,11 @@ The entrypoint script will automatically:
 - Check for pending migrations
 - Apply them safely
 - Resolve common migration conflicts
-- Regenerate Prisma client if needed
+- Regenerate the Prisma client (Prisma 7 + `@prisma/adapter-pg`)
+- Start the server
+
+Running the backend **outside Docker** requires Node.js **22.12+** (Prisma 7 / openid-client 6). The
+container image already uses `node:22-bookworm-slim`.
 
 ## Troubleshooting
 
@@ -92,8 +101,8 @@ docker-compose restart
 ### Migration Issues
 If migrations fail:
 ```bash
-# Check migration status
-docker exec pool-tables-manager-app-1 npx prisma migrate status
+# Check migration status (Prisma 7 reads the URL from prisma.config.ts)
+docker exec -e DATABASE_URL="postgres://postgres:example@db:5432/pool_tables" pool-tables-manager-app-1 npx prisma migrate status
 
 # Force reset (WARNING: deletes all data)
 docker exec pool-tables-manager-app-1 npx prisma migrate reset --force
@@ -197,19 +206,25 @@ cat backup.sql | docker exec -i pool-tables-manager-db-1 psql -U postgres -d poo
 
 ```
 pool-tables-manager/
+├── frontend/                   # React 19 + Vite 8 + Tailwind 4 source
+│   └── src/                    # staff SPA, player app, status board
 ├── backend/
-│   ├── Dockerfile              # App container definition
-│   ├── docker-entrypoint.sh    # Startup script (handles migrations)
-│   ├── server.js               # Main application
+│   ├── Dockerfile              # App container definition (node:22-bookworm-slim)
+│   ├── docker-entrypoint.sh    # Startup script (migrations + Prisma client + server)
+│   ├── server.js               # Express 5 API + static frontend host
+│   ├── prisma.config.ts        # Prisma 7 datasource config
 │   ├── package.json            # Dependencies
 │   ├── prisma/
 │   │   ├── schema.prisma       # Database schema
 │   │   └── migrations/         # Migration files
-│   ├── public/                 # Frontend assets
+│   ├── public/                 # Built frontend (index/table/status.html + assets/) + classic/ archive
 │   └── tests/                  # Integration tests
 ├── docker-compose.yml          # Container orchestration
-└── DEPLOYMENT.md              # This file
+└── DEPLOYMENT.md               # This file
 ```
+
+The frontend is committed pre-built in `backend/public/`, so deployments do not build the frontend.
+To change the UI, edit `frontend/` and run `npm run build` (see [frontend/README.md](frontend/README.md)).
 
 ## Environment Variables
 

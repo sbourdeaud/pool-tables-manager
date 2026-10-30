@@ -1,18 +1,62 @@
 # Upgrade Guide
 
-How the stack was upgraded from Node.js 18 / PostgreSQL 15 / Prisma 5 to
-Node.js 22 / PostgreSQL 18.6 / Prisma 6, and how to perform similar upgrades
-in the future.
+How the application was upgraded from the original vanilla-JS UI / Prisma 5 stack to the current
+React UI + Prisma 7 stack, and how to perform similar upgrades in the future.
 
-## Versions after this upgrade
+## Versions after the 2026 UI + backend upgrade
 
-| Component          | Before            | After                          |
-| ------------------ | ----------------- | ------------------------------ |
-| Node.js (image)    | 18 (`node:18-bullseye-slim`) | 22 (`node:22-bookworm-slim`) |
-| PostgreSQL         | 15.x              | 18.6 (`postgres:18`)           |
-| Prisma ORM / CLI   | 5.22.0 / 5.3.x    | 6.19.3                         |
-| express            | 4.22.1            | 4.22.3                         |
-| nodemailer         | 6.10.x            | 10.0.13                        |
+| Component        | Before                    | After                                   |
+| ---------------- | ------------------------- | --------------------------------------- |
+| Frontend         | Vanilla JS (`main.js`)    | React 19 · TypeScript 7 · Vite 8 · Tailwind 4 · shadcn style |
+| Node.js (image)  | 22                        | 22 (`node:22-bookworm-slim`) — **>= 22.12 required natively** |
+| PostgreSQL       | 18.6                      | 18.6 (`postgres:18`)                    |
+| Prisma ORM / CLI | 6.19.3                    | 7.10.1 (driver adapter `@prisma/adapter-pg`, `prisma.config.ts`) |
+| express          | 4.22.3                    | 5.3.0                                   |
+| openid-client    | 5.7.1                     | 6.8.8                                   |
+| other            | bcryptjs 2 · dotenv 16 · cors 2.8.5 · session 1.18 · nodemailer 10.0 | bcryptjs 3 · dotenv 18 · cors 2.8.6 · session 1.19 · nodemailer 10.3 |
+
+`npm audit` reports **0 vulnerabilities** for both the backend (production deps) and the frontend.
+
+## Database impact of the 2026 upgrade
+
+**No manual database work is required.** The only schema change is migration
+`00000000000009_add_drink_category`:
+
+- `ALTER TABLE "Drink" ADD COLUMN "category" TEXT` — nullable, additive, no table rewrite.
+- Best-effort backfill of the new column for common names (beer/wine… → `alcoholic`, soda/water… →
+  `cold`, coffee/tea… → `warm`). Everything else stays `NULL` until set in Admin → Drinks Menu.
+
+New settings (`dashboard_layout`, `table_type_order`) are ordinary `Setting` rows created on first
+save — no migration. Rolling back to the previous image after this migration is safe: the old code
+simply ignores the new nullable column.
+
+**Procedure:** pull the new code and `docker compose up -d --build` — the entrypoint runs
+`prisma migrate deploy` automatically. Take a `pg_dump` backup first as standard practice (see
+[Deployment](DEPLOYMENT.md#manual-database-operations)).
+
+## Why each change (2026 upgrade)
+
+- **React UI** replaces the hand-built `main.js` SPA; the old client is archived at
+  `backend/public/classic/` (unlinked) for reference.
+- **Prisma 7 + driver adapter**: Rust query engines are gone; the client connects through
+  `@prisma/adapter-pg` and the CLI reads the datasource URL from `prisma.config.ts` (the schema
+  `url` field was removed upstream). This also removes the old Windows/WSL engine mismatch.
+- **Express 5**: the bare `'*'` route pattern was removed upstream — the SPA fallback is now a
+  middleware. Route syntax otherwise unchanged.
+- **openid-client 6**: ESM-only, new functional API (`discovery`, `buildAuthorizationUrl`,
+  `authorizationCodeGrant`, `fetchUserInfo`); the OIDC login/callback handlers were rewritten.
+  Jest loads a stub because the unit tests do not exercise real OIDC flows.
+
+## Verification performed
+
+- `cd backend && npm test` → **12 suites, 39 tests passing**.
+- `prisma migrate status` → 10 migrations, schema up to date; live smoke test of `/api/settings`,
+  `/api/drinks`, SPA routes and local login.
+- Frontend: type-check + production build (multi-entry), and a browser regression pass over login,
+  dashboard (sections/tabs, collapse, flag nav, drag order), drinks/menu categories, table
+  renumbering, checkout/settlement, reports (charts, PDF/Excel/email) and VAT tab.
+
+---
 
 Security posture after the upgrade: `npm audit` reports **0 vulnerabilities**
 in the full dependency tree, and the production image (`npm install
@@ -156,6 +200,19 @@ the rollback artifact. Delete it only after a successful soak period (suggested:
 ```bash
 docker volume rm pool-tables-manager_db_data   # only after the soak period
 ```
+
+## Historical: Node 18 → 22 / PostgreSQL 18 / Prisma 6 upgrade
+
+How the stack was previously upgraded from Node.js 18 / PostgreSQL 15 / Prisma 5 to
+Node.js 22 / PostgreSQL 18.6 / Prisma 6.
+
+| Component          | Before            | After                          |
+| ------------------ | ----------------- | ------------------------------ |
+| Node.js (image)    | 18 (`node:18-bullseye-slim`) | 22 (`node:22-bookworm-slim`) |
+| PostgreSQL         | 15.x              | 18.6 (`postgres:18`)           |
+| Prisma ORM / CLI   | 5.22.0 / 5.3.x    | 6.19.3                         |
+| express            | 4.22.1            | 4.22.3                         |
+| nodemailer         | 6.10.x            | 10.0.13                        |
 
 ## Future minor upgrades
 

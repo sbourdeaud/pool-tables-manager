@@ -7,8 +7,9 @@ This directory contains integration tests for the Pool Tables Manager backend AP
 ```
 tests/
 ├── __mocks__/
-│   └── src/
-│       └── prismaClient.js       # Shared manual mock with stateful implementations
+│   ├── src/
+│   │   └── prismaClient.js       # Shared manual mock with stateful implementations
+│   └── openid-client.js          # ESM stub for openid-client 6 (mapped in jest config)
 ├── helpers/
 │   └── authBypass.js             # Auth bypass + stateful mock restoration
 ├── auth.test.js                  # Authentication flow tests
