@@ -615,7 +615,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       }
     }
     
-    const totalRevenue = totalTableCharges + drinksTotal + subscriptionsTotal;
+    const periodCreditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: startDate, lte: endDate } } })) || [];
+    const refundsTotalCents = periodCreditNotes.reduce((sum, note) => sum + (note.totalTtcCents || 0), 0);
+    const totalRevenue = totalTableCharges + drinksTotal + subscriptionsTotal - refundsTotalCents;
     
     // For weekly, monthly and quarterly reports, generate time series data
     let timeSeries = null;
@@ -834,6 +836,7 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       byTableType,
       drinksTotal,
       subscriptionsTotal,
+      refundsTotal: refundsTotalCents,
       tableChargesTotal: totalTableCharges,
       ...(timeSeries && { timeSeries }),
       ...(dayOfWeekAnalysis && { dayOfWeekAnalysis }),
@@ -878,12 +881,26 @@ function resolveVatPeriod(query){
 // Reporting is based on persisted sale records (not a live recomputation) so that
 // discounts and corrections are reflected, consistent with the anti-fraud ledger.
 async function aggregateVat(startDate, endDate){
-  const items = await prisma.tabLineItem.findMany({
+  const saleItems = await prisma.tabLineItem.findMany({
     where: { createdAt: { gte: startDate, lte: endDate }, voidedAt: null, type: { not: 'meta' } }
   });
+  const creditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: startDate, lte: endDate } } })) || [];
+  const creditLines = [];
+  for(const note of creditNotes){
+    for(const line of JSON.parse(note.itemsJson || '[]')){
+      creditLines.push({
+        ...line,
+        sessionId: note.sessionId,
+        createdAt: note.createdAt,
+        type: 'credit_note',
+        description: `Credit note #${note.number}/${note.year} — ${line.description || 'Refund'}`
+      });
+    }
+  }
+  const items = [...(saleItems || []), ...creditLines];
 
   const byRate = {};
-  const byCategory = { table: 0, drinks: 0, discount: 0, other: 0 };
+  const byCategory = { table: 0, drinks: 0, discount: 0, refund: 0, other: 0 };
   let grandTotalTtcCents = 0;
   let grandVatCents = 0;
 
@@ -902,6 +919,7 @@ async function aggregateVat(startDate, endDate){
 
     const cat = item.type === 'table_time' || item.type === 'table_settlement' ? 'table'
       : item.type === 'discount' ? 'discount'
+      : item.type === 'credit_note' ? 'refund'
       : (item.type === 'drink' || item.type === 'menu_item') ? 'drinks'
       : 'other';
     byCategory[cat] += item.totalCents;
@@ -988,6 +1006,169 @@ app.get('/api/closures', requireAuth, async (req, res) => {
     const closures = await prisma.closurePeriod.findMany({ orderBy: { closedAt: 'desc' } });
     res.json(closures);
   } catch(err){ console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// ---- Day-close reconciliation (POS phase 3) ----
+
+function dayRange(dateStr){
+  const day = dateStr ? new Date(dateStr) : new Date();
+  const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+  const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+  const key = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  return { start, end, key };
+}
+
+async function computeDayReconciliation(start, end){
+  const payments = (await prisma.payment.findMany({ where: { createdAt: { gte: start, lte: end } } })) || [];
+  const byMethod = {};
+  let capturedCents = 0;
+  let refundedCents = 0;
+  for(const payment of payments){
+    const method = payment.method || 'cash';
+    if(!byMethod[method]) byMethod[method] = { capturedCents: 0, refundedCents: 0, netCents: 0, count: 0 };
+    byMethod[method].capturedCents += payment.amountCents || 0;
+    byMethod[method].refundedCents += payment.refundedCents || 0;
+    byMethod[method].netCents += (payment.amountCents || 0) - (payment.refundedCents || 0);
+    byMethod[method].count += 1;
+    capturedCents += payment.amountCents || 0;
+    refundedCents += payment.refundedCents || 0;
+  }
+  const creditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: start, lte: end } } })) || [];
+  const creditNotesTotalCents = creditNotes.reduce((sum, note) => sum + (note.totalTtcCents || 0), 0);
+  const shifts = (await prisma.cashShift.findMany({ where: { openedAt: { gte: start, lte: end } } })) || [];
+  const closedShifts = shifts.filter(shift => shift.closedAt);
+  return {
+    from: start,
+    to: end,
+    payments: {
+      count: payments.length,
+      capturedCents,
+      refundedCents,
+      netCents: capturedCents - refundedCents,
+      byMethod
+    },
+    creditNotes: { count: creditNotes.length, totalTtcCents: creditNotesTotalCents },
+    cashShifts: {
+      count: shifts.length,
+      openShifts: shifts.length - closedShifts.length,
+      countedCents: closedShifts.reduce((sum, shift) => sum + (shift.countedCents || 0), 0),
+      expectedCents: closedShifts.reduce((sum, shift) => sum + (shift.expectedCents || 0), 0),
+      varianceCents: closedShifts.reduce((sum, shift) => sum + (shift.varianceCents || 0), 0),
+      shifts: shifts.map(shift => ({
+        id: shift.id,
+        openedAt: shift.openedAt,
+        closedAt: shift.closedAt || null,
+        openingFloatCents: shift.openingFloatCents,
+        countedCents: shift.countedCents ?? null,
+        expectedCents: shift.expectedCents ?? null,
+        varianceCents: shift.varianceCents ?? null
+      }))
+    }
+  };
+}
+
+app.get('/api/reports/reconciliation', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const { start, end, key } = dayRange(req.query.date);
+    const reconciliation = await computeDayReconciliation(start, end);
+    const closure = await prisma.closurePeriod.findUnique({ where: { periodType_periodKey: { periodType: 'day', periodKey: key } } }).catch(() => null);
+    res.json({
+      date: key,
+      ...reconciliation,
+      closure: closure ? { periodKey: closure.periodKey, closedAt: closure.closedAt, closedBy: closure.closedBy } : null
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/reports/day-close', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const { start, end, key } = dayRange(req.body && req.body.date);
+    const openShift = await prisma.cashShift.findFirst({ where: { closedAt: null } });
+    if(openShift) return res.status(409).json({ error: 'open_shift' });
+
+    const agg = await aggregateVat(start, end);
+    const reconciliation = await computeDayReconciliation(start, end);
+    const closure = await prisma.closurePeriod.create({ data: {
+      periodType: 'day',
+      periodKey: key,
+      fromDate: start,
+      toDate: end,
+      totalsJson: JSON.stringify(agg.byRate),
+      totalHtCents: agg.grandHtCents,
+      totalVatCents: agg.grandVatCents,
+      totalTtcCents: agg.grandTotalTtcCents,
+      reconciliationJson: JSON.stringify(reconciliation),
+      closedBy: getActorName(req)
+    }});
+    res.status(201).json(closure);
+  } catch (err) {
+    if(err.code === 'P2002') return res.status(409).json({ error: 'already_closed' });
+    console.error(err); res.status(500).json({ error: 'db_error' });
+  }
+});
+
+// Per-method payments CSV (with credit notes) for accounting.
+app.get('/api/reports/payments/export', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const from = dayRange(req.query.from).start;
+    const to = dayRange(req.query.to || req.query.from).end;
+    const payments = (await prisma.payment.findMany({ where: { createdAt: { gte: from, lte: to } }, orderBy: { createdAt: 'asc' } })) || [];
+    const creditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: from, lte: to } } })) || [];
+
+    const receipts = payments.some(p => p.receiptId) ? ((await prisma.receipt.findMany({ where: { id: { in: [...new Set(payments.map(p => p.receiptId).filter(Boolean))] } } })) || []) : [];
+    const receiptById = new Map(receipts.map(receipt => [receipt.id, receipt]));
+    const sessionIds = [...new Set(payments.map(p => p.sessionId))];
+    const sessions = sessionIds.length ? ((await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || []) : [];
+    const sessionById = new Map(sessions.map(session => [session.id, session]));
+    const tableIds = [...new Set(sessions.map(session => session.tableId))];
+    const tables = tableIds.length ? ((await prisma.poolTable.findMany({ where: { id: { in: tableIds } } })) || []) : [];
+    const tableById = new Map(tables.map(table => [table.id, table]));
+    const tableForSession = (sessionId) => {
+      const session = sessionById.get(sessionId);
+      const table = session ? tableById.get(session.tableId) : null;
+      return table ? `#${table.number}` : '';
+    };
+
+    const rows = [['Date', 'Type', 'Receipt', 'Table', 'Method', 'Provider', 'Amount TTC (cents)', 'Refunded (cents)', 'Net (cents)', 'Status']];
+    for(const payment of payments){
+      const receipt = payment.receiptId ? receiptById.get(payment.receiptId) : null;
+      rows.push([
+        new Date(payment.createdAt).toISOString(),
+        'payment',
+        receipt ? `${receipt.number}/${receipt.year}` : '',
+        tableForSession(payment.sessionId),
+        payment.method,
+        payment.provider || '',
+        payment.amountCents,
+        payment.refundedCents || 0,
+        (payment.amountCents || 0) - (payment.refundedCents || 0),
+        payment.status
+      ]);
+    }
+    for(const note of creditNotes){
+      const receipt = receiptById.get(note.receiptId);
+      rows.push([
+        new Date(note.createdAt).toISOString(),
+        'credit_note',
+        receipt ? `${receipt.number}/${receipt.year}` : `${note.number}/${note.year}`,
+        tableForSession(note.sessionId),
+        '',
+        '',
+        -note.totalTtcCents,
+        0,
+        -note.totalTtcCents,
+        'issued'
+      ]);
+    }
+
+    const csv = rows.map(line => line.join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="payments-${req.query.from || 'today'}_${req.query.to || req.query.from || 'today'}.csv"`);
+    res.send(csv);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Reporting: aggregate totals over period
@@ -1350,6 +1531,68 @@ async function computeSessionGrossCents(session){
   })) || [];
   const itemsTotal = items.reduce((sum, item) => sum + (item.totalCents || 0), 0);
   return Math.max(0, tableCharge + itemsTotal);
+}
+
+// Build a credit note (avoir) for a refund against a receipt. Amounts are
+// allocated to the receipt's VAT-rate buckets proportionally; lines are stored
+// negative so the VAT ledger / CSV export pick the correction up directly.
+async function createCreditNoteForRefund(tx, { payment, amountCents, reason, actor }){
+  if(!payment || !payment.receiptId) return null; // paid before checkout finalised: nothing to credit
+  const receipt = await tx.receipt.findUnique({ where: { id: payment.receiptId } });
+  if(!receipt) return null;
+
+  const receiptItems = JSON.parse(receipt.itemsJson || '[]');
+  const buckets = {};
+  for(const item of receiptItems){
+    const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
+    if(!buckets[rate]) buckets[rate] = 0;
+    buckets[rate] += (item.totalCents || 0);
+  }
+  const gross = Object.values(buckets).reduce((sum, cents) => sum + cents, 0);
+  const rates = Object.keys(buckets);
+  if(gross <= 0 || rates.length === 0 || amountCents <= 0) return null;
+
+  let allocated = 0;
+  let vatCents = 0;
+  const items = [];
+  for(let idx = 0; idx < rates.length; idx++){
+    const rate = Number(rates[idx]);
+    const isLast = idx === rates.length - 1;
+    const share = isLast
+      ? amountCents - allocated
+      : Math.round(amountCents * (buckets[rate] / gross));
+    allocated += share;
+    if(share <= 0) continue;
+    const vat = vatAmountFromTotal(share, rate);
+    vatCents += vat;
+    items.push({
+      description: 'Refund (credit note)',
+      quantity: 1,
+      unitPrice: -share,
+      totalCents: -share,
+      vatRatePercent: rate,
+      vatAmountCents: -vat
+    });
+  }
+
+  const year = new Date().getFullYear();
+  await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('credit_note_seq_' || $1::text))`, String(year));
+  const maxRow = await tx.$queryRawUnsafe(`SELECT COALESCE(MAX(number), 0) + 1 as next FROM "CreditNote" WHERE year = $1`, year);
+  const nextNumber = Array.isArray(maxRow) ? Number(maxRow[0].next) : Number(maxRow.next);
+
+  return tx.creditNote.create({ data: {
+    number: nextNumber,
+    year,
+    receiptId: receipt.id,
+    sessionId: payment.sessionId,
+    paymentId: payment.id,
+    itemsJson: JSON.stringify(items),
+    subtotalHtCents: amountCents - vatCents,
+    vatCents,
+    totalTtcCents: amountCents,
+    reason: reason ? String(reason) : null,
+    createdBy: actor || null
+  }});
 }
 
 // Checkout: finalize and pay out a session. Persists the final table-time charge and
@@ -1717,11 +1960,31 @@ app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
       }
     }
     const refundedCents = (payment.refundedCents || 0) + requested;
-    const updated = await prisma.payment.update({
-      where: { id: payment.id },
-      data: { refundedCents, status: refundedCents >= payment.amountCents ? 'refunded' : 'partially_refunded' }
+    let updated;
+    let creditNote = null;
+    try {
+      await prisma.$transaction(async (tx) => {
+        creditNote = await createCreditNoteForRefund(tx, {
+          payment,
+          amountCents: requested,
+          reason: req.body && req.body.reason,
+          actor: getActorName(req)
+        });
+        updated = await tx.payment.update({
+          where: { id: payment.id },
+          data: { refundedCents, status: refundedCents >= payment.amountCents ? 'refunded' : 'partially_refunded' }
+        });
+      });
+    } catch (err) {
+      console.error('refund record failed', err);
+      return res.status(500).json({ error: 'refund_record_failed' });
+    }
+    res.json({
+      ...mapPayment(updated),
+      creditNote: creditNote
+        ? { id: creditNote.id, number: creditNote.number, year: creditNote.year, totalTtcCents: creditNote.totalTtcCents, vatCents: creditNote.vatCents }
+        : null
     });
-    res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -1767,6 +2030,22 @@ app.post('/api/cash-shifts/:id/close', requireAuth, async (req, res) => {
         notes: req.body && req.body.notes ? String(req.body.notes) : null
       }
     });
+    // Best-effort variance alert: email the configured maintenance address.
+    if(updated.varianceCents !== 0){
+      try {
+        const alertSetting = await prisma.setting.findUnique({ where: { key: 'maintenance_alert_email' } });
+        const to = alertSetting && alertSetting.value ? String(alertSetting.value).trim() : '';
+        if(to){
+          const currency = (await getSettingValue('currency')) || '€';
+          await sendMail({
+            to,
+            subject: `Cash shift variance: ${currency}${(updated.varianceCents / 100).toFixed(2)}`,
+            html: `<p>Cash shift closed with a variance of <strong>${currency}${(updated.varianceCents / 100).toFixed(2)}</strong>.</p>
+                   <p>Expected: ${currency}${((updated.expectedCents || 0) / 100).toFixed(2)} — Counted: ${currency}${((updated.countedCents || 0) / 100).toFixed(2)}</p>`
+          });
+        }
+      } catch (err) { console.warn('cash variance alert failed', err.message); }
+    }
     res.json(updated);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });

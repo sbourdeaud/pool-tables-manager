@@ -148,6 +148,32 @@ self-payment from the player phone (would need hosted checkout on the phone — 
 | Scope creep into full POS | This plan's phases; external POS sync explicitly out of scope |
 | Provider lock-in | Adapter interface; vendor-specific code isolated in one module |
 
+## 10bis. Phase 3 — implementation status (this branch)
+
+Implemented:
+
+- **VAT credit notes (avoir)** — refunding an invoiced payment creates a sequentially numbered
+  `CreditNote` (per year) with the refund allocated across the receipt's VAT-rate buckets; lines are
+  stored negative. The VAT report subtracts them per rate (and adds a `refund` category), the VAT CSV
+  ledger export includes the negative lines, the financial report shows a “Refunds (credit notes)”
+  row (totals net of refunds), and the refund API response returns the credit-note number.
+  Refunds before checkout (payment not yet invoiced) are recorded without a credit note.
+- **Day close & reconciliation** — `GET /api/reports/reconciliation?date=` returns payments by method,
+  credit notes and cash-shift expected/counted/variance; `POST /api/reports/day-close` creates a
+  **day `ClosurePeriod`** with the reconciliation snapshot (`reconciliation_json`), refuses while a
+  cash shift is open, and is idempotent (409 if already closed).
+- **Per-method CSV export** — `GET /api/reports/payments/export?from=&to=` (payments + credit-note
+  corrections) with an “Export CSV” button on the Cash & Payments page.
+- **Variance alerts** — closing a cash shift with a non-zero variance emails the configured
+  maintenance address (best effort; failures never block the close).
+- **Tests** — new `backend/tests/pos-phase3.test.js` (credit-note VAT split, no-note refunds,
+  VAT report subtraction, reconciliation totals, day-close guards/idempotency, CSV content):
+  suite total **15 files / 57 tests**.
+
+**Phase 3 limits:** credit notes are printable via data only (no dedicated PDF yet); day close is
+per calendar day and does not automatically fetch PSP/terminal settlement totals (compare manually or
+extend with the Stripe balance API); variance alerts need SMTP configured.
+
 ## 11. Phase 2 — implementation status (this branch)
 
 **Card payments via Stripe Terminal (server-driven)** are now implemented alongside the Phase 1 cash

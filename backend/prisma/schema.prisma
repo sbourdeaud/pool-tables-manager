@@ -180,6 +180,26 @@ model Receipt {
 
 // A locked accounting period (day/month/year). Once closed, the totals snapshot is
 // immutable and sales within the period can no longer be voided or corrected.
+model CreditNote {
+  id              String   @id @default(uuid())
+  number          Int
+  year            Int
+  receiptId       String   @map("receipt_id")
+  sessionId       String   @map("session_id")
+  paymentId       String?  @map("payment_id")
+  itemsJson       String   @map("items_json")
+  subtotalHtCents Int      @map("subtotal_ht_cents")
+  vatCents        Int      @map("vat_cents")
+  totalTtcCents   Int      @map("total_ttc_cents")
+  reason          String?
+  createdBy       String?  @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([year, number])
+  @@index([receiptId])
+  @@index([createdAt])
+}
+
 model ClosurePeriod {
   id           String   @id @default(uuid())
   periodType   String   @map("period_type")

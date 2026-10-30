@@ -1,4 +1,4 @@
-const state = { mockSettings: {}, users: [], subscriptions: [], payments: [], cashShifts: [] };
+const state = { mockSettings: {}, users: [], subscriptions: [], payments: [], cashShifts: [], receipts: [], paymentEvents: [], creditNotes: [], closures: [] };
 
 const mk = () => jest.fn();
 
@@ -85,6 +85,10 @@ const payment = {
     return list;
   },
   findUnique: async ({ where }) => state.payments.find(p => p.id === where.id) || null,
+  findFirst: async ({ where } = {}) => {
+    if (where && where.providerRef) return state.payments.find(p => p.providerRef === where.providerRef) || null;
+    return state.payments[0] || null;
+  },
   update: async ({ where, data }) => {
     const record = state.payments.find(p => p.id === where.id);
     if (!record) throw new Error('payment not found');
@@ -92,6 +96,84 @@ const payment = {
     return record;
   }
 };
+
+const receipt = {
+  create: async ({ data }) => {
+    const record = { id: `rec${state.receipts.length + 1}`, ...data };
+    state.receipts.push(record);
+    return record;
+  },
+  findMany: async (args = {}) => {
+    const ids = args.where && args.where.id && args.where.id.in;
+    return state.receipts.filter(r => !ids || ids.includes(r.id));
+  },
+  findUnique: async ({ where }) => state.receipts.find(r => r.id === where.id) || null
+};
+
+const creditNote = {
+  create: async ({ data }) => {
+    const record = { id: `cn${state.creditNotes.length + 1}`, createdAt: new Date(), ...data };
+    state.creditNotes.push(record);
+    return record;
+  },
+  findMany: async (args = {}) => {
+    const where = args.where || {};
+    let list = state.creditNotes.slice();
+    if (where.createdAt) {
+      const { gte, lte } = where.createdAt;
+      list = list.filter(n => (!gte || new Date(n.createdAt) >= new Date(gte)) && (!lte || new Date(n.createdAt) <= new Date(lte)));
+    }
+    return list;
+  }
+};
+
+const closurePeriod = {
+  create: async ({ data }) => {
+    if (state.closures.some(c => c.periodType === data.periodType && c.periodKey === data.periodKey)) {
+      const err = new Error('unique constraint');
+      err.code = 'P2002';
+      throw err;
+    }
+    const record = { id: `cl${state.closures.length + 1}`, closedAt: new Date(), ...data };
+    state.closures.push(record);
+    return record;
+  },
+  findUnique: async ({ where }) => {
+    const key = where && where.periodType_periodKey;
+    if (!key) return null;
+    return state.closures.find(c => c.periodType === key.periodType && c.periodKey === key.periodKey) || null;
+  },
+  findMany: async () => state.closures.slice()
+};
+
+const paymentEvent = {
+  findUnique: async ({ where }) => state.paymentEvents.find(e => e.eventId === where.eventId) || null,
+  create: async ({ data }) => {
+    const record = { id: `evt${state.paymentEvents.length + 1}`, createdAt: new Date(), ...data };
+    state.paymentEvents.push(record);
+    return record;
+  }
+};
+
+// Transaction object used by checkout tests: models + inert raw helpers with a
+// canned receipt-sequence response.
+const makeTx = () => ({
+  tabLineItem: module.exports.tabLineItem,
+  payment: module.exports.payment,
+  receipt: module.exports.receipt,
+  creditNote: module.exports.creditNote,
+  cashShift: module.exports.cashShift,
+  closurePeriod: module.exports.closurePeriod,
+  poolTable: module.exports.poolTable,
+  $executeRawUnsafe: async () => ({}),
+  $queryRawUnsafe: async (sql) => {
+    const text = String(sql);
+    if (text.includes('MAX(number)') && text.includes('"CreditNote"')) return [{ next: (state.creditNotes.length || 0) + 1 }];
+    if (text.includes('MAX(number)') && text.includes('"Receipt"')) return [{ next: (state.receipts.length || 0) + 1 }];
+    return [];
+  },
+  $queryRaw: async () => []
+});
 
 const cashShift = {
   findFirst: async (args = {}) => {
@@ -119,6 +201,11 @@ module.exports = {
   setting,
   payment,
   cashShift,
+  receipt,
+  creditNote,
+  closurePeriod,
+  paymentEvent,
+  __makeTx: makeTx,
   poolTable: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), count: mk() },
   tableType: { findMany: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
@@ -137,5 +224,5 @@ module.exports = {
   $executeRawUnsafe: mk(),
 
   // Transaction helper (tests may mockImplementation on this)
-  $transaction: mk(),
+  $transaction: jest.fn(async (fn) => fn(makeTx())),
 };

@@ -1,16 +1,20 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Coins, Lock, LockOpen, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Coins, FileDown, Lock, LockOpen, RotateCcw, ShieldCheck } from 'lucide-react'
 import {
   apiCashShifts,
   apiCloseCashShift,
   apiCurrentCashShift,
+  apiDayClose,
   apiOpenCashShift,
   apiPayments,
+  apiReconciliation,
   apiRefundPayment,
+  paymentsExportUrl,
   type CashShift,
   type CurrentCashShift,
   type PaymentRecord,
+  type Reconciliation,
 } from '@/lib/api'
 import { money } from '@/lib/format'
 import { useSettings } from '@/components/settings/settings-context'
@@ -35,6 +39,9 @@ export function CashPage() {
   const [counted, setCounted] = React.useState('')
   const [notes, setNotes] = React.useState('')
   const [loading, setLoading] = React.useState(true)
+  const [reconDate, setReconDate] = React.useState(new Date().toISOString().slice(0, 10))
+  const [reconciliation, setReconciliation] = React.useState<Reconciliation | null>(null)
+  const [closingDay, setClosingDay] = React.useState(false)
 
   const load = React.useCallback(async () => {
     if (!posEnabled) {
@@ -51,6 +58,11 @@ export function CashPage() {
   React.useEffect(() => {
     void load()
   }, [load])
+
+  React.useEffect(() => {
+    if (!posEnabled) return
+    void apiReconciliation(reconDate).then((r) => setReconciliation(r.data || null))
+  }, [posEnabled, reconDate])
 
   const openShift = async () => {
     const floatCents = Math.round(parseFloat(openingFloat || '0') * 100)
@@ -84,7 +96,28 @@ export function CashPage() {
     if (!result.ok) {
       return toast({ title: 'Failed to refund', description: result.error || `Error ${result.status}`, variant: 'error' })
     }
-    toast({ title: 'Payment refunded' })
+    const note = result.data?.creditNote
+    toast({
+      title: 'Payment refunded',
+      description: note ? `Credit note #${note.number}/${note.year} issued (VAT ${money(note.vatCents, currency)})` : 'Recorded (no credit note: payment was not invoiced yet)',
+    })
+    await load()
+    void apiReconciliation(reconDate).then((r) => setReconciliation(r.data || null))
+  }
+
+  const closeDay = async () => {
+    setClosingDay(true)
+    const result = await apiDayClose(reconDate)
+    setClosingDay(false)
+    if (!result.ok) {
+      return toast({
+        title: result.error === 'open_shift' ? 'Close the cash shift first' : result.error === 'already_closed' ? 'Day already closed' : 'Failed to close day',
+        description: result.error || `Error ${result.status}`,
+        variant: 'error',
+      })
+    }
+    toast({ title: `Day ${reconDate} closed` })
+    void apiReconciliation(reconDate).then((r) => setReconciliation(r.data || null))
     await load()
   }
 
@@ -220,6 +253,74 @@ export function CashPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+            <ShieldCheck className="h-4 w-4" /> Day close &amp; reconciliation
+            {reconciliation?.closure && (
+              <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                Closed {new Date(reconciliation.closure.closedAt).toLocaleDateString()}
+                {reconciliation.closure.closedBy ? ` · ${reconciliation.closure.closedBy}` : ''}
+              </span>
+            )}
+          </CardTitle>
+          <CardDescription>Payments by method, credit notes and cash-drawer variance for the day.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="recon-date">Date</Label>
+              <Input id="recon-date" type="date" value={reconDate} onChange={(e) => setReconDate(e.target.value)} />
+            </div>
+            <Button variant="outline" asChild>
+              <a href={paymentsExportUrl(reconDate, reconDate)} download>
+                <FileDown /> Export CSV
+              </a>
+            </Button>
+            <ConfirmDialog
+              trigger={
+                <Button disabled={closingDay || Boolean(reconciliation?.closure) || (reconciliation?.cashShifts.openShifts || 0) > 0}>
+                  <Lock /> {reconciliation?.closure ? 'Day closed' : closingDay ? 'Closing…' : 'Close day'}
+                </Button>
+              }
+              title={`Close ${reconDate}?`}
+              description="Locks the day's sales against deletion (closure period) and snapshots the reconciliation totals."
+              confirmLabel="Close day"
+              onConfirm={() => void closeDay()}
+            />
+          </div>
+
+          {reconciliation ? (
+            <>
+              <div className="space-y-1">
+                {Object.entries(reconciliation.payments.byMethod).length === 0 && <p className="text-sm text-muted-foreground">No payments recorded for this day.</p>}
+                {Object.entries(reconciliation.payments.byMethod).map(([method, totals]) => (
+                  <div key={method} className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                    <span className="capitalize">{method} ({totals.count})</span>
+                    <span className="font-semibold">{money(totals.netCents, currency)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                <span>Credit notes (refunds)</span>
+                <span className="font-semibold">{money(reconciliation.creditNotes.totalTtcCents, currency)}</span>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                <span>
+                  Cash drawer · expected {money(reconciliation.cashShifts.expectedCents, currency)} · counted {money(reconciliation.cashShifts.countedCents, currency)}
+                  {reconciliation.cashShifts.openShifts > 0 ? ` · ${reconciliation.cashShifts.openShifts} shift open` : ''}
+                </span>
+                <span className={cn('font-semibold', reconciliation.cashShifts.varianceCents === 0 ? 'text-emerald-600' : 'text-destructive')}>
+                  Variance {signedMoney(reconciliation.cashShifts.varianceCents)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">

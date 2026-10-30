@@ -15,7 +15,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 - **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
 - **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
 - **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
-- **Optional Payments (POS)**: cash payments with split payers and change, payment methods on receipts, cash-shift reconciliation with variance, refunds and “paid by method” reporting — off by default, enable in Settings
+- **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
 - **Multi-language**: English and French menu/locale support
@@ -30,7 +30,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![Dashboard in tabs layout](docs/screenshots/dashboard-tabs.png)
 
-**Dashboard (dark theme)** — theme is shared across the staff app and player pages:
+**Dashboard (dark theme)** — the default look; the theme toggle also provides a light theme across the staff app and player pages:
 
 ![Dashboard in dark theme](docs/screenshots/dashboard-dark.png)
 
@@ -65,6 +65,14 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 **Player table view** — reached by scanning a table's QR code (PIN-protected): live timer, tab and categorised drink ordering:
 
 ![Player table view](docs/screenshots/table-view.png)
+
+**Payments (POS, optional)** — split cash/card payments at checkout, card-terminal flow and cash-shift reconciliation:
+
+![Checkout with split cash/card payments](docs/screenshots/pos-checkout.png)
+
+![Card terminal waiting for the customer](docs/screenshots/pos-card.png)
+
+![Cash & Payments with day-close reconciliation](docs/screenshots/pos-cash.png)
 
 **Login** — full-page local admin login (OIDC deployments redirect to the identity provider):
 

@@ -57,8 +57,12 @@ pool-tables-manager/
 - `Subscription` - Player subscriptions for discounts
 - `Setting` - Application settings (currency, app name, discount %, public base URL, fiscal info, dashboard layout `dashboard_layout`, table-type order `table_type_order`, etc.)
 - `PendingOrder` - Player-submitted drink orders awaiting staff fulfillment
+- `Payment` - Card/cash payments (optional POS): provider, method, amount, status, refunded amount, provider refs, idempotency key
+- `CashShift` - Cash-drawer shifts: opening float, expected/counted/variance
+- `CreditNote` - VAT credit notes (avoir) created when refunding invoiced payments (sequential per year)
+- `PaymentEvent` - Webhook event log for idempotency/audit (unique `event_id`)
 - `Receipt` - Sequentially-numbered receipts issued at checkout (per calendar year)
-- `ClosurePeriod` - Locked VAT accounting period snapshots (day/month/quarter/year)
+- `ClosurePeriod` - Locked VAT accounting period snapshots (day/month/quarter/year); day closures created by the POS day-close store a `reconciliation_json` snapshot
 
 **Key Relationships:**
 - Session → PoolTable (many-to-one)
@@ -144,6 +148,18 @@ pool-tables-manager/
 **Closures**
 - `POST /api/closures` - Lock a VAT period; snapshots totals into `ClosurePeriod` and protects its sessions from `clear-history`
 - `GET /api/closures` - List past closures
+
+**Payments & cash (optional POS)**
+- `GET /api/payments/config` - Feature/provider status (`pos_enabled`, `card_enabled`, provider)
+- `POST /api/payments/card` - Start a card payment on the terminal (amount capped at the server-computed total)
+- `GET /api/payments/:id` / `POST /api/payments/:id/cancel` - Poll / cancel an in-progress card payment
+- `POST /api/payments/:id/refund` - Refund (provider refund for cards); invoiced payments also get a `CreditNote`
+- `GET /api/payments` - Recent payments with table numbers (cash screen)
+- `GET|POST /api/cash-shifts…` - Shift current/open/close/list (expected total and variance)
+- `POST /api/webhooks/stripe` - Signature-verified, idempotent Stripe webhook
+- `GET /api/reports/reconciliation?date=` - Day reconciliation (payments by method, credit notes, cash shifts)
+- `POST /api/reports/day-close` - Close the day (creates a day `ClosurePeriod` with reconciliation snapshot)
+- `GET /api/reports/payments/export?from=&to=` - Per-method payments CSV (payments + credit notes)
 
 **Public Access**
 - `GET /api/public/tables` - Unauthenticated live table-status board data: table number, type, and status (`available`/`occupied`/`maintenance`); includes `numberOfPlayers` and `startedAt` only when occupied. Never exposes PINs, session IDs, or tab data
@@ -398,8 +414,8 @@ Only seeds if database is empty.
 ## Testing
 
 Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma
-mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **12 files /
-39 tests**, run with `cd backend && npm test` (Node 22). See
+mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **15 files /
+57 tests**, run with `cd backend && npm test` (Node 22). See
 [backend/tests/README.md](backend/tests/README.md) for the mocking strategy and CI setup.
 
 ## Data Integrity

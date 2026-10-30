@@ -375,6 +375,7 @@ export interface FinancialReport {
   byTableType: Record<string, number>
   drinksTotal: number
   subscriptionsTotal: number
+  refundsTotal?: number
   byPaymentMethod?: Record<string, number>
   timeSeries?: FinancialReportTimePoint[]
   dayOfWeekAnalysis?: { dayOfWeek: string; total: number }[]
@@ -481,8 +482,65 @@ export function apiPayments(limit = 100) {
   return apiGet<PaymentRecord[]>('/api/payments?limit=' + limit)
 }
 
-export function apiRefundPayment(id: string, amountCents?: number) {
-  return apiSend<PaymentRecord>('/api/payments/' + id + '/refund', 'POST', amountCents == null ? {} : { amountCents })
+export interface RefundResult extends PaymentRecord {
+  creditNote?: { id: string; number: number; year: number; totalTtcCents: number; vatCents: number } | null
+}
+
+export function apiRefundPayment(id: string, amountCents?: number, reason?: string) {
+  return apiSend<RefundResult>('/api/payments/' + id + '/refund', 'POST', {
+    ...(amountCents == null ? {} : { amountCents }),
+    ...(reason ? { reason } : {}),
+  })
+}
+
+export interface ReconciliationMethod {
+  capturedCents: number
+  refundedCents: number
+  netCents: number
+  count: number
+}
+
+export interface Reconciliation {
+  date: string
+  from: string
+  to: string
+  payments: {
+    count: number
+    capturedCents: number
+    refundedCents: number
+    netCents: number
+    byMethod: Record<string, ReconciliationMethod>
+  }
+  creditNotes: { count: number; totalTtcCents: number }
+  cashShifts: {
+    count: number
+    openShifts: number
+    countedCents: number
+    expectedCents: number
+    varianceCents: number
+    shifts: {
+      id: string
+      openedAt: string
+      closedAt?: string | null
+      openingFloatCents: number
+      countedCents?: number | null
+      expectedCents?: number | null
+      varianceCents?: number | null
+    }[]
+  }
+  closure: { periodKey: string; closedAt: string; closedBy?: string | null } | null
+}
+
+export function apiReconciliation(date: string) {
+  return apiGet<Reconciliation>('/api/reports/reconciliation?date=' + encodeURIComponent(date))
+}
+
+export function apiDayClose(date: string) {
+  return apiSend<{ periodKey: string }>('/api/reports/day-close', 'POST', { date })
+}
+
+export function paymentsExportUrl(from: string, to: string) {
+  return '/api/reports/payments/export?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)
 }
 
 export function apiCurrentCashShift() {

@@ -198,6 +198,7 @@ export function ReportsPage() {
       ...Object.entries(report.byTableType || {}).map(([name, amount]) => [`${name} Tables`, amount / 100]),
       ['Drinks/Bar', report.drinksTotal / 100],
       ['Subscriptions', report.subscriptionsTotal / 100],
+      ...(report.refundsTotal ? [['Refunds (credit notes)', -report.refundsTotal / 100]] : []),
       ...Object.entries(report.byPaymentMethod || {}).map(([method, amount]) => [`Paid by ${method}`, amount / 100]),
     ]
     const wb = XLSX.utils.book_new()
@@ -370,6 +371,12 @@ export function ReportsPage() {
                 <span>Subscriptions</span>
                 <span className="font-semibold">{money(report.subscriptionsTotal, currency)}</span>
               </div>
+              {report.refundsTotal != null && report.refundsTotal > 0 && (
+                <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-2 text-sm">
+                  <span>Refunds (credit notes)</span>
+                  <span className="font-semibold text-destructive">-{money(report.refundsTotal, currency)}</span>
+                </div>
+              )}
               {report.byPaymentMethod &&
                 Object.entries(report.byPaymentMethod).map(([method, amount]) => (
                   <div key={method} className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-2 text-sm">

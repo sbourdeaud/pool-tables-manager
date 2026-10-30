@@ -22,6 +22,11 @@ function setupAuthBypass(prisma) {
 function restoreStatefulMocks(prisma) {
   // Restore stateful implementations after jest.resetAllMocks()
   const state = prisma.state;
+
+  // Restore the in-memory transaction helper (used by checkout/refund flows).
+  if (typeof prisma.$transaction.mockImplementation === 'function' && typeof prisma.__makeTx === 'function') {
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma.__makeTx()));
+  }
   
   // Restore setting methods
   prisma.setting.findMany.mockImplementation(async () => 

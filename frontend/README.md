@@ -66,6 +66,9 @@ Local admin login/setup is handled by `src/pages/login.tsx`. OIDC-enabled instal
   grouped sections, search (long menus) and a sticky order bar; the admin page and the dashboard's
   add-drink dialog use the same grouping.
 - Table numbers can be edited inline in Admin → Table Types & Inventory (duplicate numbers return 409).
+- Optional POS (Settings → General → “Payments (POS)”): split cash/card payments, card-terminal flow
+  (Stripe Terminal server-driven or `PAYMENT_PROVIDER=fake`), cash-shift reconciliation, refunds with
+  VAT credit notes, day close and per-method CSV export (Admin → Cash & Payments).
 - Dashboard layout is configurable in Settings → General: **Sections** (collapsible groups + flag
   navigator, collapse state per device) or **Tabs** (one type at a time; drag the grips to reorder).
 - The dashboard can also be reordered by dragging groups/sections; order is stored in the
