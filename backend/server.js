@@ -174,7 +174,24 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-app.get('/auth/logout', (req, res) => {
+app.get('/auth/logout', async (req, res) => {
+  // Local session always ends. With OIDC, also end the identity-provider session
+  // (RP-initiated logout) when an id_token is available; fall back to the local
+  // redirect if the provider does not support it.
+  const sessionUser = req.session ? req.session.user : null;
+  try {
+    const config = await getOidcConfiguration();
+    const idToken = sessionUser && sessionUser.tokenSet ? sessionUser.tokenSet.id_token : null;
+    if(config && idToken){
+      const endSessionUrl = oidc.buildEndSessionUrl(config, {
+        id_token_hint: idToken,
+        post_logout_redirect_uri: `${req.protocol}://${req.get('host')}/`
+      });
+      return req.session.destroy(() => res.redirect(endSessionUrl.href));
+    }
+  } catch (err) {
+    console.warn('OIDC logout error', err.message);
+  }
   req.session.destroy(() => {
     res.redirect('/');
   });

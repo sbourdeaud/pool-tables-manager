@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { NavLink, Link } from 'react-router-dom'
-import { Moon, Sun } from 'lucide-react'
+import { LogOut, Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/components/settings/settings-context'
 import { applyTheme, getStoredTheme, type Theme } from '@/lib/theme'
@@ -69,6 +69,15 @@ export function AppHeader() {
         <div className="ml-auto flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <Sun /> : <Moon />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Log out"
+            title="Log out"
+            onClick={() => { window.location.href = '/auth/logout' }}
+          >
+            <LogOut />
           </Button>
         </div>
       </div>
