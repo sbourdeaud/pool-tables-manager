@@ -19,6 +19,8 @@ Pool Tables Manager is a comprehensive solution for managing pool hall operation
 11. [Admin Features](#admin-features)
 12. [Reports](#reports)
 13. [VAT (TVA) Reporting — France](#vat-tva-reporting--france)
+14. [Payments (optional POS)](#payments-optional-pos)
+15. [Setting Up Card Payments (Administrator)](#setting-up-card-payments-administrator)
 
 ---
 
@@ -333,6 +335,38 @@ Access via menu (☰) → **Admin Panel**
 - Items can have English and French names
 - Display language can be changed in Settings
 
+### Payments (optional POS)
+
+Payments are **off by default**. Enable them in **Settings → General → “Payments (POS)”** (also see
+[Setting Up Card Payments](#setting-up-card-payments-administrator) for card terminals).
+
+Once enabled:
+
+- **Checkout** collects money before the invoice is issued:
+  - **Cash:** type the cash received and click **Add payment** (the change is shown). Use **Exact
+    amount** to pay the remaining balance exactly.
+  - **Card (terminal):** click **Card (terminal) — €X**. A “Present card on the terminal…” banner
+    appears; the customer taps/inserts their card and the payment is added automatically. **Cancel**
+    stops the terminal action.
+  - **Split payments:** add several payments (cash and/or card) until the remaining balance reaches
+    zero. **Complete checkout** is enabled only when the tab is fully paid.
+  - Discounts are locked once a payment has been added (prevents amount drift).
+- **Receipts** (on screen and the printed invoice) list the payment method(s) and any change due.
+- **Admin → Cash & Payments** (shown only when enabled):
+  - **Cash shift:** open a shift with an opening float at the start of the day; at closing enter the
+    counted cash — expected total (float + net cash) and **variance** are computed. A non-zero
+    variance emails the configured maintenance address (when SMTP is set).
+  - **Refunds:** per payment, with an amount (partial allowed) and optional reason. Refunding an
+    invoiced payment issues a numbered **credit note (avoir)**; the toast shows its number.
+  - **Credit notes:** listed with a **Print** button (adds the original receipt reference and the VAT
+    breakdown; save as PDF from the print dialog).
+  - **Day close & reconciliation:** pick a date to see payments by method, credit notes and cash
+    expected/counted/variance; **Export CSV** downloads the payment ledger; **Close day** locks the
+    day (refused while a cash shift is open).
+- **Reports → Financial** shows **Paid by cash/card** and **Refunds (credit notes)** rows (also in the
+  PDF and Excel exports). The **VAT / TVA** report subtracts credit notes and shows a *Refunds
+  (credit notes)* category.
+
 ### Settings
 
 Access via menu (☰) → **Settings**
@@ -355,6 +389,58 @@ Access via menu (☰) → **Settings**
   - Sessions inside a **closed VAT period** are also protected and will not be deleted
 
 ---
+
+## Setting Up Card Payments (Administrator)
+
+### What you need
+
+- The app running (Docker) on a machine that can reach the internet.
+- A **Stripe account** (business details verified). Start in **test mode**.
+- A **Stripe Terminal reader** (e.g. WisePOS E) paired to the venue's Wi‑Fi — or, for testing, a
+  Stripe **simulated reader**.
+- **Stripe must be able to reach** your server at `https://<your-domain>/api/webhooks/stripe`
+  (public HTTPS, reverse proxy, or a tunnel during the pilot). The app itself may stay on HTTP inside
+  the LAN.
+- Cash-only venues need none of this: just enable Payments and use cash.
+
+### Steps
+
+1. **Stripe (test mode)**
+   - Pair/register the reader (Dashboard → Terminal → Readers); note its id (`tmr_…`).
+   - Developers → Webhooks → add `https://<your-domain>/api/webhooks/stripe` with events
+     `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`; copy the
+     signing secret (`whsec_…`).
+2. **Server configuration** (compose environment / `.env`), then restart (`docker compose up -d`):
+   - `STRIPE_SECRET_KEY=sk_test_…` (the live key later)
+   - `STRIPE_TERMINAL_READER_ID=tmr_…`
+   - `STRIPE_WEBHOOK_SECRET=whsec_…`
+   - `COOKIE_SECURE=true` when the app is served over HTTPS
+3. **App settings**
+   - **Settings → General → “Payments (POS)” → on**.
+   - Currency must be `€`, `$` or `£` (sent to Stripe as eur/usd/gbp).
+   - Set the application name and the Fiscal / Legal information (used by reports and your records).
+   - Optional: SMTP settings + maintenance alert email for cash-variance alerts.
+4. **Test without buying hardware**
+   - `PAYMENT_PROVIDER=fake` in the environment: payments capture instantly (no terminal, no network) —
+     good for training/testing the UI.
+   - Or use Stripe test mode with a **simulated reader** to exercise the real card flow.
+5. **Pilot checklist before going live**
+   - Cash sale with split + change; card sale; declined card then retry; cancel on the terminal;
+     partial refund (print the credit note); close the shift; close the day and export the CSV.
+   - Switch Stripe to live keys only after the pilot passes.
+
+### Things to know
+
+- **One reader per deployment**: the reader id is configured in the environment. Multiple counters
+  would need reader selection (not implemented).
+- **Internet dependency**: card payments need a connection; if it drops mid-payment the payment can
+  remain “presenting” — cancel/refund it from the Cash page. Cash always works.
+- **Single staff login**: the app has one admin login today; payments/credit notes record that user.
+- **NF525 (France)**: the app records sales and payments with sequential receipts, immutable lines,
+  credit notes and period closures — but certification is a legal attestation process. Confirm with
+  your expert-comptable before advertising compliance or enabling card payments in production.
+- This integrates **payments**, not an external bar POS (menu/order sync) and not customer
+  self-payment from the phone.
 
 ## Reports
 
