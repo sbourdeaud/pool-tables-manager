@@ -9,10 +9,16 @@ const oidc = require('openid-client');
 const bcrypt = require('bcryptjs');
 const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
+const { getCardProvider, getPublicConfig } = require('./src/payments/provider');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// The Stripe webhook needs the raw body for signature verification; every other
+// request gets the usual JSON parser.
+app.use((req, res, next) => {
+  if (req.path === '/api/webhooks/stripe') return next();
+  return express.json()(req, res, next);
+});
 
 // Rate limiting (CodeQL js/missing-rate-limiting): a generous global limit for
 // normal staff/static traffic plus a tighter one for authentication endpoints.
@@ -1335,6 +1341,17 @@ async function getTableChargeForSession(session){
   return { tableCharge, hoursCharged, vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20 };
 }
 
+// Gross amount due for an active session (table time + non-voided sale items),
+// before any checkout discount. Used to validate card payment amounts.
+async function computeSessionGrossCents(session){
+  const { tableCharge } = await getTableChargeForSession(session);
+  const items = (await prisma.tabLineItem.findMany({
+    where: { sessionId: session.id, voidedAt: null, type: { notIn: ['meta', 'table_settlement', 'settlement'] } }
+  })) || [];
+  const itemsTotal = items.reduce((sum, item) => sum + (item.totalCents || 0), 0);
+  return Math.max(0, tableCharge + itemsTotal);
+}
+
 // Checkout: finalize and pay out a session. Persists the final table-time charge and
 // any discount as durable, VAT-tagged tab line items, issues a sequentially numbered
 // receipt (required for French anti-fraud compliance), then ends the session.
@@ -1373,11 +1390,25 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
         ? req.body.payments
         : [{ method: 'cash', amountCents: totalDueCents }];
       const currency = (await getSettingValue('currency')) || 'EUR';
-      const rows = requested.map(p => ({
-        method: p && p.method === 'card' ? 'card' : 'cash',
-        amountCents: Math.max(0, Math.round(Number(p && p.amountCents) || 0)),
-        tenderedCents: p && p.tenderedCents != null ? Math.max(0, Math.round(Number(p.tenderedCents) || 0)) : null
-      }));
+      const rows = [];
+      for (const p of requested) {
+        if (p && p.method === 'card') {
+          // Cards are captured by the provider first; checkout attaches the payment.
+          const paymentId = p.paymentId ? String(p.paymentId) : '';
+          if (!paymentId) return res.status(400).json({ error: 'payment_id_required' });
+          const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
+          if (!existing || existing.sessionId !== session.id) return res.status(400).json({ error: 'invalid_payment' });
+          if (existing.status !== 'captured') return res.status(400).json({ error: 'payment_not_captured' });
+          if (existing.receiptId) return res.status(400).json({ error: 'payment_already_used' });
+          rows.push({ method: 'card', amountCents: existing.amountCents, paymentId: existing.id });
+        } else {
+          rows.push({
+            method: 'cash',
+            amountCents: Math.max(0, Math.round(Number(p && p.amountCents) || 0)),
+            tenderedCents: p && p.tenderedCents != null ? Math.max(0, Math.round(Number(p.tenderedCents) || 0)) : null
+          });
+        }
+      }
       if(rows.some(r => r.amountCents <= 0)){
         return res.status(400).json({ error: 'invalid_payment_amount' });
       }
@@ -1446,6 +1477,10 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
       const payments = [];
       if(paymentPlan){
         for(const row of paymentPlan.rows){
+          if(row.paymentId){
+            payments.push(await tx.payment.update({ where: { id: row.paymentId }, data: { receiptId: receipt.id } }));
+            continue;
+          }
           payments.push(await tx.payment.create({ data: {
             sessionId: session.id,
             receiptId: receipt.id,
@@ -1506,6 +1541,75 @@ async function cashTotalsBetween(start, end){
   return { capturedCents, refundedCents, netCents: capturedCents - refundedCents, count: rows.length };
 }
 
+function mapPayment(payment){
+  return {
+    id: payment.id,
+    sessionId: payment.sessionId,
+    receiptId: payment.receiptId,
+    method: payment.method,
+    provider: payment.provider,
+    amountCents: payment.amountCents,
+    refundedCents: payment.refundedCents || 0,
+    currency: payment.currency,
+    status: payment.status,
+    createdAt: payment.createdAt,
+    details: payment.detailsJson ? JSON.parse(payment.detailsJson) : null
+  };
+}
+
+// Card-terminal availability for the UI (feature flag + provider status).
+app.get('/api/payments/config', requireAuth, async (req, res) => {
+  try {
+    const posEnabled = await isPosEnabled();
+    res.json({ pos_enabled: posEnabled, ...getPublicConfig() });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Create a card payment on the terminal (server-driven provider call).
+app.post('/api/payments/card', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const provider = getCardProvider();
+    if(!provider) return res.status(409).json({ error: 'card_not_configured' });
+    if(provider.isConfigured && !provider.isConfigured()) return res.status(409).json({ error: 'card_not_configured' });
+
+    const sessionId = req.body && req.body.sessionId ? String(req.body.sessionId) : '';
+    const amountCents = Math.round(Number(req.body && req.body.amountCents) || 0);
+    if(!sessionId || amountCents <= 0) return res.status(400).json({ error: 'invalid_request' });
+
+    const session = await prisma.session.findUnique({ where: { id: sessionId } });
+    if(!session) return res.status(404).json({ error: 'not_found' });
+    if(session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
+
+    // Never allow charging more than the server-computed amount due.
+    const grossCents = await computeSessionGrossCents(session);
+    if(amountCents > grossCents) return res.status(400).json({ error: 'amount_exceeds_total', maxCents: grossCents });
+
+    const currency = (await getSettingValue('currency')) || 'EUR';
+    const idempotencyKey = req.body && req.body.idempotencyKey ? String(req.body.idempotencyKey) : crypto.randomUUID();
+    let intent;
+    try {
+      intent = await provider.createCardPayment({ amountCents, currency, reference: idempotencyKey });
+    } catch (err) {
+      console.error('card payment provider error', err);
+      return res.status(502).json({ error: err.code || 'card_payment_failed' });
+    }
+
+    const payment = await prisma.payment.create({ data: {
+      sessionId: session.id,
+      provider: provider.name,
+      method: 'card',
+      amountCents,
+      currency,
+      status: intent.status || 'presenting',
+      providerRef: intent.providerRef,
+      idempotencyKey,
+      createdBy: getActorName(req)
+    }});
+    res.status(201).json({ paymentId: payment.id, status: payment.status, provider: provider.name });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
 // Recent payments for the cash/reconciliation screen (with table numbers).
 app.get('/api/payments', requireAuth, async (req, res) => {
   try {
@@ -1538,6 +1642,55 @@ app.get('/api/payments', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+// Poll one payment (syncs the live provider status for card payments).
+app.get('/api/payments/:id', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    let payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if(!payment) return res.status(404).json({ error: 'not_found' });
+    if(['presenting', 'pending'].includes(payment.status) && payment.providerRef){
+      const provider = getCardProvider();
+      if(provider && payment.provider === provider.name && (!provider.isConfigured || provider.isConfigured())){
+        try {
+          const live = await provider.getStatus(payment.providerRef);
+          if(live && live.status && live.status !== payment.status){
+            payment = await prisma.payment.update({ where: { id: payment.id }, data: { status: live.status } });
+          }
+        } catch (err) { console.warn('card status check failed', err.message); }
+      }
+    }
+    res.json(mapPayment(payment));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Cancel a pending/in-progress card payment.
+app.post('/api/payments/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if(!payment) return res.status(404).json({ error: 'not_found' });
+    if(payment.method !== 'card') return res.status(400).json({ error: 'not_a_card_payment' });
+    if(payment.status !== 'presenting' && payment.status !== 'pending') {
+      return res.status(409).json({ error: 'not_cancellable', status: payment.status });
+    }
+    const provider = getCardProvider();
+    let status = 'canceled';
+    if(provider && payment.provider === provider.name && payment.providerRef){
+      try {
+        await provider.cancel(payment.providerRef);
+      } catch (err) {
+        console.warn('cancel failed', err.message);
+      }
+      try {
+        const live = await provider.getStatus(payment.providerRef);
+        status = live && live.status ? live.status : status;
+      } catch { /* keep canceled */ }
+    }
+    const updated = await prisma.payment.update({ where: { id: payment.id }, data: { status } });
+    res.json(mapPayment(updated));
+  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
 // Record a refund against a payment (cash reconciliation). VAT credit notes (avoir)
 // are handled separately in the accounting phase — see docs/POS-INTEGRATION-PLAN.md.
 app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
@@ -1552,6 +1705,16 @@ app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
       : remainingCents;
     if(!(requested > 0) || requested > remainingCents){
       return res.status(400).json({ error: 'invalid_amount', remainingCents });
+    }
+    if(payment.method !== 'cash'){
+      const provider = getCardProvider();
+      if(!provider || payment.provider !== provider.name) return res.status(409).json({ error: 'card_not_configured' });
+      try {
+        await provider.refund({ providerRef: payment.providerRef, amountCents: requested });
+      } catch (err) {
+        console.error('card refund failed', err);
+        return res.status(502).json({ error: 'refund_failed', message: err.message });
+      }
     }
     const refundedCents = (payment.refundedCents || 0) + requested;
     const updated = await prisma.payment.update({
@@ -1614,6 +1777,40 @@ app.get('/api/cash-shifts', requireAuth, async (req, res) => {
     const shifts = (await prisma.cashShift.findMany({ orderBy: { openedAt: 'desc' }, take: 50 })) || [];
     res.json(shifts);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+// Stripe webhook: signature-verified, idempotent (PaymentEvent), updates statuses.
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const provider = getCardProvider();
+    if(!provider || provider.name !== 'stripe') return res.status(404).json({ error: 'not_found' });
+    let event;
+    try {
+      event = provider.verifyWebhook(req.body, req.headers['stripe-signature']);
+    } catch (err) {
+      return res.status(400).json({ error: err.code || 'invalid_signature' });
+    }
+    if(!event) return res.status(400).json({ error: 'invalid_signature' });
+
+    const existing = await prisma.paymentEvent.findUnique({ where: { eventId: event.id } });
+    if(existing) return res.json({ received: true, duplicate: true });
+    await prisma.paymentEvent.create({ data: {
+      provider: 'stripe', eventId: event.id, type: event.type, payloadJson: JSON.stringify(event)
+    }});
+
+    const object = event.data && event.data.object;
+    if(object && object.object === 'payment_intent'){
+      const payment = await prisma.payment.findFirst({ where: { providerRef: object.id } });
+      if(payment){
+        const statusMap = { succeeded: 'captured', canceled: 'canceled', payment_failed: 'failed' };
+        const next = statusMap[object.status];
+        if(next && payment.status !== next && payment.status !== 'refunded'){
+          await prisma.payment.update({ where: { id: payment.id }, data: { status: next } });
+        }
+      }
+    }
+    res.json({ received: true });
+  } catch (err) { console.error('webhook error', err); res.status(500).json({ error: 'webhook_error' }); }
 });
 
 // Update session (e.g., player count)

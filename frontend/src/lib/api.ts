@@ -226,6 +226,7 @@ export function apiTransferSession(sessionId: string, newTableId: string) {
 export interface ReceiptPayment {
   id: string
   method: 'cash' | 'card' | string
+  provider?: string
   amountCents: number
   currency: string
   status: string
@@ -236,6 +237,14 @@ export interface PaymentInput {
   method: 'cash' | 'card'
   amountCents: number
   tenderedCents?: number
+  /** Captured card payments are referenced (not re-created) at checkout. */
+  paymentId?: string
+}
+
+export interface PaymentConfig {
+  pos_enabled: boolean
+  card_enabled: boolean
+  provider: string | null
 }
 
 export interface CheckoutReceipt {
@@ -254,6 +263,22 @@ export function apiCheckoutSession(sessionId: string, discountCents: number, pay
     discountCents,
     ...(payments ? { payments } : {}),
   })
+}
+
+export function apiPaymentConfig() {
+  return apiGet<PaymentConfig>('/api/payments/config')
+}
+
+export function apiCreateCardPayment(sessionId: string, amountCents: number) {
+  return apiSend<{ paymentId: string; status: string; provider: string }>('/api/payments/card', 'POST', { sessionId, amountCents })
+}
+
+export function apiGetPayment(id: string) {
+  return apiGet<ReceiptPayment>('/api/payments/' + id)
+}
+
+export function apiCancelPayment(id: string) {
+  return apiSend<ReceiptPayment>('/api/payments/' + id + '/cancel', 'POST')
 }
 
 export function apiSessionSettle(
@@ -424,6 +449,7 @@ export interface PaymentRecord {
   sessionId: string
   receiptId?: string | null
   method: string
+  provider?: string
   amountCents: number
   refundedCents: number
   currency: string

@@ -255,6 +255,21 @@ Configure in `docker-compose.yml`:
 - `SESSION_SECRET`: Secret for session encryption
 - `NODE_ENV`: Set to `production` for production deployments
 
+**Optional card terminal (POS Phase 2)** — enable after enabling “Payments (POS)” in Settings:
+
+- `PAYMENT_PROVIDER=fake`: deterministic provider for testing (no hardware).
+- `STRIPE_SECRET_KEY`: Stripe secret key (test or live) — enables card payments.
+- `STRIPE_TERMINAL_READER_ID`: reader (`tmr_…`) registered in the Stripe Dashboard.
+- `STRIPE_WEBHOOK_SECRET`: signing secret for `https://<your-domain>/api/webhooks/stripe`
+  (the endpoint needs to be reachable by Stripe — public HTTPS or a tunnel during testing).
+- `COOKIE_SECURE=true`: set when serving the app over HTTPS.
+
+## Releases & container images
+
+Release tags publish a slim multi-arch container image to GHCR
+(`ghcr.io/sbourdeaud/pool-tables-manager:<tag>` and `:latest`) — see
+[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
+
 ## Ports
 
 - **3000**: Application HTTP port

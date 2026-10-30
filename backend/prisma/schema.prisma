@@ -136,6 +136,17 @@ model Payment {
   @@index([createdAt])
 }
 
+model PaymentEvent {
+  id          String   @id @default(uuid())
+  provider    String
+  eventId     String   @unique @map("event_id")
+  type        String
+  payloadJson String   @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([provider, createdAt])
+}
+
 model CashShift {
   id                String    @id @default(uuid())
   openingFloatCents Int       @default(0) @map("opening_float_cents")

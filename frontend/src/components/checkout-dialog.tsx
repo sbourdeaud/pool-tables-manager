@@ -1,6 +1,6 @@
 import * as React from 'react'
-import { CheckCircle2, Printer } from 'lucide-react'
-import { apiCheckoutSession, apiEndSession, apiSessionDetail, type CheckoutReceipt, type PaymentInput, type SessionDetail } from '@/lib/api'
+import { CheckCircle2, Printer, Ban, CreditCard, Loader2 } from 'lucide-react'
+import { apiCancelPayment, apiCheckoutSession, apiCreateCardPayment, apiEndSession, apiGetPayment, apiPaymentConfig, apiSessionDetail, type CheckoutReceipt, type PaymentConfig, type PaymentInput, type SessionDetail } from '@/lib/api'
 import { money } from '@/lib/format'
 import { printEstimateReceipt, printFinalReceipt } from '@/lib/receipts'
 import { useSettings } from '@/components/settings/settings-context'
@@ -33,15 +33,19 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
   const [receipt, setReceipt] = React.useState<CheckoutReceipt | null>(null)
   const [payments, setPayments] = React.useState<PaymentInput[]>([])
   const [tender, setTender] = React.useState('')
+  const [cardConfig, setCardConfig] = React.useState<PaymentConfig | null>(null)
+  const [cardPayment, setCardPayment] = React.useState<{ paymentId: string; status: string } | null>(null)
 
   React.useEffect(() => {
     if (!open || !sessionId) return
     setReceipt(null)
     setPayments([])
     setTender('')
+    setCardPayment(null)
     setDiscountValue('0')
     setDiscountType('%')
     setLoading(true)
+    void apiPaymentConfig().then((r) => setCardConfig(r.data || null))
     void apiSessionDetail(sessionId).then((r) => {
       setDetail(r.data || null)
       setLoading(false)
@@ -58,6 +62,42 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
   const paidCents = payments.reduce((sum, p) => sum + p.amountCents, 0)
   const remainingCents = Math.max(0, total - paidCents)
 
+  const addCardTerminalPayment = async () => {
+    if (!sessionId || remainingCents <= 0 || cardPayment) return
+    try {
+      const result = await apiCreateCardPayment(sessionId, remainingCents)
+      if (result.ok && result.data) {
+        toast({ title: 'Present card on the terminal' })
+        setCardPayment({ paymentId: result.data.paymentId, status: result.data.status })
+      } else {
+        toast({
+          title: 'Card payment failed',
+          description: result.error === 'card_not_configured'
+            ? 'No card terminal is configured on the server.'
+            : result.error || `Error ${result.status}`,
+          variant: 'error',
+        })
+      }
+    } catch (err) {
+      toast({ title: 'Card payment failed', description: err instanceof Error ? err.message : 'Network error', variant: 'error' })
+    }
+  }
+
+  const cancelCardPayment = async () => {
+    if (!cardPayment) return
+    try {
+      const result = await apiCancelPayment(cardPayment.paymentId)
+      if (result.ok && result.data) {
+        toast({ title: 'Card payment canceled' })
+        setCardPayment({ paymentId: result.data.id, status: result.data.status })
+      } else {
+        toast({ title: 'Failed to cancel', variant: 'error' })
+      }
+    } catch (err) {
+      toast({ title: 'Failed to cancel', description: err instanceof Error ? err.message : 'Network error', variant: 'error' })
+    }
+  }
+
   const addCashPayment = (exact = false) => {
     const tendered = exact ? remainingCents : Math.round(parseFloat(tender || '0') * 100)
     if (!Number.isFinite(tendered) || tendered <= 0) return
@@ -66,6 +106,36 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
     setPayments((current) => [...current, { method: 'cash', amountCents: applied, tenderedCents: tendered > applied ? tendered : undefined }])
     setTender('')
   }
+
+  // Poll the card payment while the reader is waiting for the customer.
+  React.useEffect(() => {
+    if (!cardPayment || cardPayment.status !== 'presenting' || !sessionId) return
+    const paymentId = cardPayment.paymentId
+    const timer = window.setInterval(async () => {
+      try {
+        const res = await apiGetPayment(paymentId)
+        if (res.ok && res.data) {
+          const status = res.data.status
+          if (status === 'captured') {
+            setCardPayment(null)
+            setPayments((current) => [...current, { method: 'card', amountCents: res.data!.amountCents, paymentId: res.data!.id }])
+            toast({ title: 'Card payment captured' })
+          } else if (status !== 'presenting' && status !== 'pending') {
+            window.clearInterval(timer)
+            setCardPayment({ paymentId, status })
+            toast({
+              title: status === 'canceled' ? 'Card payment canceled' : 'Card payment failed',
+              description: `Status: ${status}`,
+              variant: 'error',
+            })
+          }
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [cardPayment, sessionId, toast])
 
   const complete = async () => {
     if (!sessionId) return
@@ -168,7 +238,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
               <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[140px_1fr]">
                 <div className="space-y-1.5">
                   <Label>Discount type</Label>
-                  <Select value={discountType} onValueChange={(v) => setDiscountType(v as '%' | 'currency')}>
+                  <Select value={discountType} onValueChange={(v) => setDiscountType(v as '%' | 'currency')} disabled={payments.length > 0}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -231,6 +301,30 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {cardPayment && (
+                    <div className="flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Present card on the terminal…
+                      </span>
+                      <Button variant="outline" size="sm" aria-label="Cancel card payment" onClick={() => void cancelCardPayment()}>
+                        <Ban /> Cancel
+                      </Button>
+                    </div>
+                  )}
+
+                  {cardPayment && ['failed', 'canceled'].includes(cardPayment.status) && (
+                    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      Card payment {cardPayment.status === 'canceled' ? 'canceled' : 'failed'} — try again or take cash instead.
+                    </div>
+                  )}
+
+                  {remainingCents > 0 && !cardPayment && cardConfig?.card_enabled && (
+                    <Button variant="outline" onClick={() => void addCardTerminalPayment()}>
+                      <CreditCard /> Card (terminal) — {money(remainingCents, currency)}
+                    </Button>
                   )}
 
                   {remainingCents > 0 && (

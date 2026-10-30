@@ -148,7 +148,34 @@ self-payment from the player phone (would need hosted checkout on the phone — 
 | Scope creep into full POS | This plan's phases; external POS sync explicitly out of scope |
 | Provider lock-in | Adapter interface; vendor-specific code isolated in one module |
 
-## 11. Phase 1 — implementation status (this branch)
+## 11. Phase 2 — implementation status (this branch)
+
+**Card payments via Stripe Terminal (server-driven)** are now implemented alongside the Phase 1 cash
+flow. The card provider is optional and selected per deployment:
+
+- `PAYMENT_PROVIDER=fake` — deterministic in-memory provider for tests/dev (no hardware, no network).
+- `STRIPE_SECRET_KEY` set — Stripe Terminal. `STRIPE_TERMINAL_READER_ID` selects the (Dashboard-
+  registered) reader; `STRIPE_WEBHOOK_SECRET` secures `POST /api/webhooks/stripe`.
+
+Implemented:
+
+- `POST /api/payments/card` — creates the PaymentIntent, starts the reader flow, records a `Payment`
+  row (`presenting`), and **caps the amount at the server-computed total due**.
+- `GET /api/payments/:id` — polls and syncs the live provider status.
+- `POST /api/payments/:id/cancel` — cancels the terminal action + intent.
+- `POST /api/payments/:id/refund` — card refunds through the provider (cash unchanged).
+- Checkout **attaches captured card payments** (`payments: [{method:'card', paymentId}]`); attaching
+  requires a captured, unattached payment belonging to the same session; totals must match.
+- Webhook: signature verification (`stripe.webhooks.constructEvent`), raw body, **idempotent** via
+  the `PaymentEvent` table (`event_id` unique), `payment_intent.succeeded/canceled/payment_failed`
+  update payment statuses.
+- Checkout dialog: card button per remaining balance, "present card…" state with cancel, decline
+  banners, discount inputs locked while payments exist (prevents amount drift).
+
+**Limits:** one pre-registered reader via env (multi-reader/pooling later); webhooks must reach the
+server (public HTTPS/tunnel during pilot); only Stripe test mode until the pilot.
+
+## 12. Phase 1 — implementation status (this branch)
 
 Implemented behind the optional `pos_enabled` toggle:
 
