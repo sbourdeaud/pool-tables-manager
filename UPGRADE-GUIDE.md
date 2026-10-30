@@ -17,6 +17,20 @@ React UI + Prisma 7 stack, and how to perform similar upgrades in the future.
 
 `npm audit` reports **0 vulnerabilities** for both the backend (production deps) and the frontend.
 
+## Container images
+
+Release tags (`v*`) publish multi-arch images (`linux/amd64`, `linux/arm64`) to GHCR via
+`.github/workflows/publish-image.yml`:
+
+```bash
+docker pull ghcr.io/sbourdeaud/pool-tables-manager:v1.0
+docker pull ghcr.io/sbourdeaud/pool-tables-manager:latest
+```
+
+The runtime image is Alpine-based and built in a multi-stage Dockerfile (production-only
+dependencies, npm cache excluded, dependency source maps stripped). Compose picks the published
+image automatically (`docker compose pull`); `--build` still builds locally from source.
+
 ## Database impact of the 2026 upgrade
 
 **No manual database work is required.** The only schema change is migration

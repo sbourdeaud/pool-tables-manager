@@ -74,11 +74,24 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 ```bash
 git clone <repository-url>
 cd pool-tables-manager
+```
+
+**Option A — prebuilt image** (published to GHCR on every release, amd64 + arm64):
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Pin a version with `IMAGE_TAG`, e.g. `IMAGE_TAG=v1.0 docker compose pull && IMAGE_TAG=v1.0 docker compose up -d`.
+
+**Option B — build from source:**
+
+```bash
 docker compose up -d --build
 ```
 
-The application initialises the database (all migrations), generates the Prisma client and starts the
-server automatically.
+In both cases the application initialises the database (all migrations), generates the Prisma client
+and starts the server automatically.
 
 **Access**: <http://localhost:3000> — on first launch you are asked to define the local admin password
 (or enable OIDC later in Settings → Security).

@@ -2,3 +2,7 @@ node_modules
 npm-debug.log
 .env
 .DS_Store
+tests
+**/*.md
+prisma/add_createdAt.sql
+.gitignore

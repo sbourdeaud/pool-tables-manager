@@ -9,12 +9,33 @@ For a fresh deployment with an empty database:
 git clone <repository-url>
 cd pool-tables-manager
 
-# 2. Start the containers
-docker-compose up -d
+# 2a. Start from the prebuilt image (recommended)
+docker compose pull && docker compose up -d
+
+# 2b. …or build locally from source
+docker compose up -d --build
 
 # 3. Check logs to verify initialization
-docker-compose logs -f app
+docker compose logs -f app
 ```
+
+### Using the prebuilt image (GHCR)
+
+Images are published on every release tag to
+`ghcr.io/sbourdeaud/pool-tables-manager` (`linux/amd64` and `linux/arm64`), tagged with the release
+(e.g. `v1.0`) and `latest`. `docker-compose.yml` references that image and still supports local
+builds:
+
+```bash
+# Run a specific published version
+IMAGE_TAG=v1.0 docker compose pull app
+IMAGE_TAG=v1.0 docker compose up -d
+
+# Or the latest published image
+docker compose pull && docker compose up -d
+```
+
+Building from source remains available with `docker compose up -d --build`.
 
 The application will automatically:
 - Wait for the database to be ready
