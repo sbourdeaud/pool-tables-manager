@@ -30,7 +30,7 @@ function fakeResponse() {
   return res;
 }
 
-const LISTING = REQUIRED_TABLES.map((t, i) => `${100 + i}; 1259 16${i} TABLE public "${t}" app`).join('\n');
+const LISTING = REQUIRED_TABLES.map((t, i) => `${100 + i}; 1259 16${i} TABLE public ${t} postgres`).join('\n');
 
 describe('Database backup service', () => {
   test('streams a compressed dump with a download filename', async () => {

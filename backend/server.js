@@ -489,6 +489,37 @@ app.delete('/api/admin/clear-history', requireAuth, async (req, res) => {
   }
 });
 
+// Database backup/restore (admin only). Export streams a compressed custom-format
+// dump; import validates the archive and restores it atomically.
+const backupService = createBackupService({ prisma });
+
+app.get('/api/admin/backup/export', requireAuth, async (req, res) => {
+  try {
+    const result = await backupService.exportTo(res);
+    if (result && result.busy) return res.status(409).json({ error: 'backup_in_progress' });
+  } catch (err) {
+    console.error('backup export failed', err);
+    if (!res.headersSent) res.status(500).json({ error: 'backup_failed' });
+    else res.destroy();
+  }
+});
+
+app.post('/api/admin/backup/import', requireAuth, express.raw({ type: 'application/octet-stream', limit: '256mb' }), async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'empty_upload' });
+    }
+    const result = await backupService.importFrom(req.body);
+    if (result.busy) return res.status(409).json({ error: 'backup_in_progress' });
+    if (result.invalid) return res.status(400).json({ error: result.invalid, missing: result.missing, message: result.message });
+    if (result.failed) return res.status(422).json({ error: result.failed, message: result.message });
+    res.json(result);
+  } catch (err) {
+    console.error('backup import failed', err);
+    res.status(500).json({ error: 'backup_import_failed' });
+  }
+});
+
 // Email a financial report (HTML body, optionally with a client-generated PDF attachment)
 app.post('/api/reports/email', requireAuth, async (req, res) => {
   try {

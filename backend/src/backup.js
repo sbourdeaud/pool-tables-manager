@@ -99,7 +99,8 @@ function createBackupService({ spawnFn = spawn, databaseUrl = process.env.DATABA
       if (listing.code !== 0) {
         return { invalid: 'invalid_archive', message: listing.stderr.slice(-500) };
       }
-      const missing = REQUIRED_TABLES.filter((table) => !listing.stdout.includes(`"${table}"`));
+      // pg_restore lists tables as `TABLE public TableName` (unquoted).
+      const missing = REQUIRED_TABLES.filter((table) => !new RegExp('TABLE (?:DATA )?public ' + table + '(?:\\s|$)').test(listing.stdout));
       if (missing.length > 0) {
         return { invalid: 'not_app_backup', missing };
       }
