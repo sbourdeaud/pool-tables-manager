@@ -43,6 +43,8 @@ src/
   pages/                      dashboard, admin-home, drinks, tables, subscriptions, reports, settings, login
   table/                      player table app (entry src/table/main.tsx)
   status/                     public status board (entry src/status/main.tsx)
+  pages/help.tsx              in-app Help (renders USER_GUIDE.md with a TOC)
+  lib/i18n.tsx                UI internationalization (en/fr/de/es/it) + LanguageSelect
   components/ui/              shadcn-style primitives (button, input, card, dialog, select, switch, ...)
   components/settings/        settings sections + field/switch helpers
   lib/                        api client, auth context, theme, formatting, QR helpers

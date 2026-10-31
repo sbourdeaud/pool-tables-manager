@@ -4,6 +4,7 @@ import { apiSessionDetail, apiSessionSettle, apiSetPlayerCount, type SessionDeta
 import { money } from '@/lib/format'
 import { printSettlementReceipt } from '@/lib/receipts'
 import { useSettings } from '@/components/settings/settings-context'
+import { useI18n } from '@/lib/i18n'
 import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +23,7 @@ interface SettlementDialogProps {
 
 export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, onDone }: SettlementDialogProps) {
   const { settings } = useSettings()
+  const { t } = useI18n()
   const { toast } = useToast()
   const currency = settings.currency || '$'
   const [detail, setDetail] = React.useState<SessionDetail | null>(null)
@@ -60,14 +62,14 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
     })
     if (!result.ok) {
       setBusy(false)
-      toast({ title: 'Settlement failed', description: result.error || `Error ${result.status}`, variant: 'error' })
+      toast({ title: t('Settlement failed'), description: result.error || `Error ${result.status}`, variant: 'error' })
       return
     }
     const next = Math.max(1, numberOfPlayers - 1)
     const patched = await apiSetPlayerCount(sessionId, next)
     if (!patched.ok) console.warn('Failed to update player count after settlement')
     setBusy(false)
-    toast({ title: 'Player settled' })
+    toast({ title: t('Player settled') })
     onClose()
     onDone()
   }
@@ -76,23 +78,23 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Player Settlement</DialogTitle>
-          <DialogDescription>Settle one player&apos;s share — table time and selected items.</DialogDescription>
+          <DialogTitle>{t('Player Settlement')}</DialogTitle>
+          <DialogDescription>{t('Settle one player\'s share — table time and selected items.')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <label className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
             <Switch checked={isSubscriber} onCheckedChange={setIsSubscriber} />
-            <span className="text-sm font-medium">This player is a subscriber</span>
+            <span className="text-sm font-medium">{t('This player is a subscriber')}</span>
           </label>
 
           {tableCharge > 0 && (
             <div className="space-y-2">
-              <Label>Table time</Label>
+              <Label>{t('Table Time')}</Label>
               {(
                 [
-                  ['none', 'Do not settle table time'],
-                  ['share', `Player share (${money(Math.round(tableCharge / nonSubscriberCount), currency)})`],
-                  ['full', `Full table charge (${money(tableCharge, currency)})`],
+                  ['none', t('Do not settle table time')],
+                  ['share', t('Player share ({amount})', { amount: money(Math.round(tableCharge / nonSubscriberCount), currency) })],
+                  ['full', t('Full table charge ({amount})', { amount: money(tableCharge, currency) })],
                 ] as const
               ).map(([value, label]) => (
                 <label
@@ -111,7 +113,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
 
           {items.length > 0 && (
             <div className="space-y-2">
-              <Label>Items to settle</Label>
+              <Label>{t('Items to settle')}</Label>
               {items.map((item) => (
                 <div key={item.id} className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2">
                   <div>
@@ -137,7 +139,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
           )}
 
           <div className="flex items-center justify-between rounded-lg bg-accent/60 px-3 py-2 text-sm font-semibold">
-            <span>Settlement total</span>
+            <span>{t('Settlement total')}</span>
             <span>{money(tableSettlement + selectedTotal, currency)}</span>
           </div>
         </DialogBody>
@@ -146,14 +148,14 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
             variant="outline"
             onClick={() => void printSettlementReceipt(tableSettlement, selectedItems, items, currency, sessionId || '')}
           >
-            <Printer /> Print receipt
+            <Printer /> {t('Print receipt')}
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              {t('Cancel')}
             </Button>
             <Button disabled={busy} onClick={() => void settle()}>
-              <UserMinus /> {busy ? 'Settling…' : 'Settle player'}
+              <UserMinus /> {busy ? t('Settling…') : t('Settle player')}
             </Button>
           </div>
         </DialogFooter>

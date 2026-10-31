@@ -10,13 +10,14 @@ const bcrypt = require('bcryptjs');
 const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
 const { getCardProvider, getPublicConfig } = require('./src/payments/provider');
+const { createBackupService } = require('./src/backup');
 
 const app = express();
 app.use(cors());
 // The Stripe webhook needs the raw body for signature verification; every other
 // request gets the usual JSON parser.
 app.use((req, res, next) => {
-  if (req.path === '/api/webhooks/stripe') return next();
+  if (req.path === '/api/webhooks/stripe' || req.path === '/api/admin/backup/import') return next();
   return express.json()(req, res, next);
 });
 
@@ -384,7 +385,7 @@ async function checkAndSendMaintenanceAlert(tableId, secondsAdded){
 }
 
 // Admin OIDC test endpoint
-app.get('/api/admin/oidc/test', async (req, res) => {
+app.get('/api/admin/oidc/test', requireAuth, async (req, res) => {
   try {
     const s = await getOidcSettings();
     if(!s || !s.oidc_issuer) return res.status(400).json({ error: 'oidc_not_configured' });
@@ -397,7 +398,7 @@ app.get('/api/admin/oidc/test', async (req, res) => {
 });
 
 // Admin: send a test email using the configured SMTP settings
-app.post('/api/admin/smtp/test', async (req, res) => {
+app.post('/api/admin/smtp/test', requireAuth, async (req, res) => {
   try {
     const to = String((req.body && req.body.to) || '').trim();
     if(!isValidEmail(to)) return res.status(400).json({ error: 'invalid_email' });
@@ -420,10 +421,25 @@ app.get('/api/i18n/:locale', (req, res) => {
 });
 
 // Settings
+// Settings that are safe to expose without an admin session (used by the public
+// player/status pages and the login screen). Everything else — OIDC/SMTP secrets,
+// the local admin hash, fiscal identity — requires authentication.
+const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order'];
+
 app.get('/api/settings', async (req, res) => {
   try {
     const rows = await prisma.setting.findMany();
     const obj = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    const authenticated = !!(req.session && req.session.user);
+
+    if(!authenticated){
+      const safe = {};
+      for(const key of PUBLIC_SETTING_KEYS){
+        if(Object.prototype.hasOwnProperty.call(obj, key)) safe[key] = obj[key];
+      }
+      return res.json(safe);
+    }
+
     // Never expose the SMTP password; expose only whether one is stored.
     if(Object.prototype.hasOwnProperty.call(obj, 'smtp_pass')){
       obj.smtp_pass_set = !!obj.smtp_pass;
@@ -449,7 +465,7 @@ app.patch('/api/settings', requireAuth, async (req, res) => {
 // Clear all session history (danger zone). Sessions that fall within a closed
 // accounting period are preserved (French law requires closed-period sales records
 // be retained, not deleted) - only unclosed/test data can be wiped from here.
-app.delete('/api/admin/clear-history', async (req, res) => {
+app.delete('/api/admin/clear-history', requireAuth, async (req, res) => {
   try {
     const closures = await prisma.closurePeriod.findMany({ select: { fromDate: true, toDate: true } });
     const protectedRanges = closures.map(c => `(ended_at >= '${c.fromDate.toISOString()}' AND ended_at <= '${c.toDate.toISOString()}')`);
@@ -470,6 +486,37 @@ app.delete('/api/admin/clear-history', async (req, res) => {
   } catch (e) { 
     console.error(e); 
     res.status(500).json({ error: 'db_error' }); 
+  }
+});
+
+// Database backup/restore (admin only). Export streams a compressed custom-format
+// dump; import validates the archive and restores it atomically.
+const backupService = createBackupService({ prisma });
+
+app.get('/api/admin/backup/export', requireAuth, async (req, res) => {
+  try {
+    const result = await backupService.exportTo(res);
+    if (result && result.busy) return res.status(409).json({ error: 'backup_in_progress' });
+  } catch (err) {
+    console.error('backup export failed', err);
+    if (!res.headersSent) res.status(500).json({ error: 'backup_failed' });
+    else res.destroy();
+  }
+});
+
+app.post('/api/admin/backup/import', requireAuth, express.raw({ type: 'application/octet-stream', limit: '256mb' }), async (req, res) => {
+  try {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'empty_upload' });
+    }
+    const result = await backupService.importFrom(req.body);
+    if (result.busy) return res.status(409).json({ error: 'backup_in_progress' });
+    if (result.invalid) return res.status(400).json({ error: result.invalid, missing: result.missing, message: result.message });
+    if (result.failed) return res.status(422).json({ error: result.failed, message: result.message });
+    res.json(result);
+  } catch (err) {
+    console.error('backup import failed', err);
+    res.status(500).json({ error: 'backup_import_failed' });
   }
 });
 
@@ -573,7 +620,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       const table = Array.isArray(tableData) ? tableData[0] : tableData;
       
       if(table && sess.started_at && sess.ended_at){
-        const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+        const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+        const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Check for subscriber discount
@@ -696,7 +745,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
           const table = Array.isArray(tableData) ? tableData[0] : tableData;
           
           if(table && sess.started_at && sess.ended_at){
-            const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+            const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+            const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+            const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
             const hoursCharged = Math.ceil(elapsedMs / 3600000);
             
             const subscriberMeta = await prisma.tabLineItem.findFirst({
@@ -789,7 +840,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
           where: { sessionId: sess.id, type: { notIn: ['meta', 'settlement', 'table_settlement'] }, voidedAt: null }
         });
         
-        const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+        const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+        const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Calculate table charge for this session
@@ -1520,6 +1573,12 @@ app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+function getNonSubscriberChargeStart(startedAt, startMeta){
+  const sessionStart = new Date(startedAt).getTime();
+  const recordedStart = startMeta && startMeta.createdAt ? new Date(startMeta.createdAt).getTime() : NaN;
+  return Number.isFinite(recordedStart) && recordedStart > sessionStart ? recordedStart : sessionStart;
+}
+
 // Compute the live table-time charge (and the table type's VAT rate) for an active session
 async function getTableChargeForSession(session){
   const tableRows = await prisma.$queryRawUnsafe(`
@@ -1532,11 +1591,13 @@ async function getTableChargeForSession(session){
 
   const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
   const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
+  const nonSubscriberStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
   const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
   const nonSubscriberCount = (session.numberOfPlayers || 1) - subscriberCount;
   const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
 
-  const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+  const chargeStart = getNonSubscriberChargeStart(session.startedAt, nonSubscriberStartMeta);
+  const elapsedMs = Date.now() - chargeStart;
   const hoursCharged = Math.ceil(elapsedMs / 3600000);
   let tableCharge = 0;
   if(nonSubscriberCount > 0){
@@ -2194,6 +2255,12 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'no_updates' });
     }
 
+    const previousSessionRows = await prisma.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+    const previousSession = Array.isArray(previousSessionRows) ? previousSessionRows[0] : previousSessionRows;
+    if (!previousSession) return res.status(404).json({ error: 'not_found' });
+    const previousSubscriberMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    const previousNonSubscriberCount = (Number(previousSession.number_of_players) || 1) - (Number(previousSubscriberMeta?.quantity) || 0);
+
     if (typeof numberOfPlayers !== 'undefined') {
       const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
       const row = Array.isArray(out) ? out[0] : out;
@@ -2219,6 +2286,14 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
     const row = Array.isArray(rows) ? rows[0] : rows;
     if (!row) return res.status(404).json({ error: 'not_found' });
     const meta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    const nextNonSubscriberCount = (Number(row.number_of_players) || 1) - (Number(meta?.quantity) || 0);
+    const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at' } });
+    if (nextNonSubscriberCount <= 0 || previousNonSubscriberCount <= 0) {
+      if (nonSubscriberStartMeta) await prisma.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+      if (previousNonSubscriberCount <= 0 && nextNonSubscriberCount > 0) {
+        await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at', quantity: 1, unitPrice: 0, totalCents: 0 } });
+      }
+    }
     res.json({
       id: row.id,
       tableId: row.table_id,
@@ -2347,7 +2422,7 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 });
 
 // Session detail including tab items and totals
-app.get('/api/sessions/:id', async (req, res) => {
+app.get('/api/sessions/:id', requireAuth, async (req, res) => {
   try {
     const s = await prisma.session.findUnique({ where: { id: req.params.id } });
     if(!s) return res.status(404).json({ error: 'not_found' });
@@ -2376,7 +2451,9 @@ app.get('/api/sessions/:id', async (req, res) => {
       `, s.tableId);
       const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
       if(table && table.base_hourly_cents){
-        const elapsedMs = Date.now() - new Date(s.startedAt).getTime();
+        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
+        const chargeStart = getNonSubscriberChargeStart(s.startedAt, chargeStartMeta);
+        const elapsedMs = Date.now() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Get subscriber discount setting
@@ -2481,7 +2558,7 @@ app.delete('/api/tab-items/:id', requireAuth, async (req, res) => {
 });
 
 // Switch table for an active session
-app.post('/api/sessions/:id/switch', async (req, res) => {
+app.post('/api/sessions/:id/switch', requireAuth, async (req, res) => {
   try{
     const { newTableId } = req.body;
     const sessionId = req.params.id;
@@ -2581,7 +2658,7 @@ app.delete('/api/subscriptions/:id', requireAuth, async (req, res) => {
 });
 
 // Patrons (users)
-app.post('/api/patrons', async (req, res) => {
+app.post('/api/patrons', requireAuth, async (req, res) => {
   try{
     const { name, email } = req.body;
     const p = await prisma.user.create({ data: { name, email, role: 'user' } });
@@ -2678,7 +2755,9 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     let tableCharge = 0;
     if(session.startedAt && session.status === 'active'){
       if(tableType && tableType.base_hourly_cents){
-        const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
+        const chargeStart = getNonSubscriberChargeStart(session.startedAt, chargeStartMeta);
+        const elapsedMs = Date.now() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Get subscriber discount setting
@@ -2876,6 +2955,11 @@ app.post('/api/pending-orders/:id/cancel', requireAuth, async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }
+});
+
+// Swagger-style API explorer (spec at /openapi.json, static assets vendored).
+app.get('/api-docs', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'api-docs.html'));
 });
 
 // SPA fallback: serve the React app for client-side routes. API/auth paths and

@@ -4,6 +4,7 @@ import { apiPublicTables, type PublicTable } from '@/lib/api'
 import { elapsedDuration } from '@/lib/format'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
+import { LanguageSelect, useI18n } from '@/lib/i18n'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#e11d48', '#06b6d4']
 
@@ -19,6 +20,7 @@ function hashColor(str: string) {
 const POLL_MS = 5000
 
 export function StatusApp() {
+  const { t } = useI18n()
   const [tables, setTables] = React.useState<PublicTable[] | null>(null)
   const [live, setLive] = React.useState(true)
   const [now, setNow] = React.useState(Date.now())
@@ -81,17 +83,18 @@ export function StatusApp() {
       <div className="mx-auto w-full max-w-6xl space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Table Status</h1>
-            <p className="text-sm text-muted-foreground">Live availability — updates automatically</p>
+            <h1 className="text-2xl font-bold tracking-tight">{t('Table Status')}</h1>
+            <p className="text-sm text-muted-foreground">{t('Live availability — updates automatically')}</p>
           </div>
           <div className="flex items-center gap-2">
+            <LanguageSelect className="rounded-lg border bg-card shadow-sm" />
             <span
               className={cn(
                 'rounded-full px-3 py-1 text-xs font-semibold',
                 live ? 'bg-emerald-500/15 text-emerald-600' : 'bg-amber-500/15 text-amber-600',
               )}
             >
-              {live ? 'Live' : 'Reconnecting…'}
+              {live ? t('Live') : t('Reconnecting…')}
             </span>
             <button
               type="button"
@@ -105,9 +108,9 @@ export function StatusApp() {
         </div>
 
         {tables === null ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>
+          <p className="py-12 text-center text-sm text-muted-foreground">{t('Loading…')}</p>
         ) : groups.length === 0 ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">No tables configured</p>
+          <p className="py-12 text-center text-sm text-muted-foreground">{t('No tables configured')}</p>
         ) : (
           groups.map(([typeName, groupTables]) => (
             <section key={typeName} className="space-y-3">
@@ -116,7 +119,7 @@ export function StatusApp() {
                   {typeName}
                 </span>
                 <span className="text-sm text-muted-foreground">
-                  {groupTables.length} table{groupTables.length === 1 ? '' : 's'}
+                  {groupTables.length} {groupTables.length === 1 ? t('table') : t('tables')}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -137,12 +140,12 @@ export function StatusApp() {
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xl font-bold">#{tb.number}</span>
-                          <span className="text-[11px] uppercase tracking-wider opacity-75">{status}</span>
+                          <span className="text-[11px] uppercase tracking-wider opacity-75">{t(status.charAt(0).toUpperCase() + status.slice(1))}</span>
                         </div>
                         {status === 'occupied' && (
                           <div className="flex flex-col gap-1 text-[13px] opacity-85">
                             <span>
-                              {tb.numberOfPlayers || 1} player{(tb.numberOfPlayers || 1) > 1 ? 's' : ''}
+                              {tb.numberOfPlayers || 1} {((tb.numberOfPlayers || 1) > 1 ? t('players') : t('player'))}
                             </span>
                             <span className="font-semibold tabular-nums">{elapsedDuration(tb.startedAt, now)}</span>
                           </div>

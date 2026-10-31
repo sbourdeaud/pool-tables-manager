@@ -169,6 +169,11 @@ pool-tables-manager/
 
 **Admin**
 - `DELETE /api/admin/clear-history` - Clear all ended sessions and tab data (sessions inside a closed `ClosurePeriod` are preserved)
+- `GET /api/admin/backup/export` - Stream a consistent compressed `pg_dump` custom-format archive
+- `POST /api/admin/backup/import` - Upload that archive (`application/octet-stream`, ≤256 MB) and restore it
+  (validated against the app tables, restored with `pg_restore --single-transaction --clean --if-exists`,
+  then `prisma migrate deploy`; the Prisma pool is disconnected so pooled connections see restored objects).
+  Implementation: `backend/src/backup.js`; requires the `postgresql-client` tools installed in the image.
 
 ### UUID Handling Pattern
 
@@ -412,11 +417,47 @@ On server startup, the system automatically creates:
 
 Only seeds if database is empty.
 
+## UI internationalization
+
+- `frontend/src/lib/i18n.tsx` provides `I18nProvider` (wraps all three entry points: staff SPA,
+  player app, status board), `useI18n()` and `t('English source text', {vars})`.
+- Dictionaries are **keyed by the English source string** (`en/fr/de/es/it`), so untranslated strings
+  fall back to English automatically — add entries to a dictionary to translate more.
+- The selected language is stored in `localStorage.lang` (shared with the legacy app) and set on
+  `document.documentElement.lang`. `LanguageSelect` is used in the header, Settings, the player page
+  and the status board.
+- Coverage: global chrome, login, dashboard + dialogs, checkout/settlement, the player table page,
+  the status board and admin home are translated. Other admin screens use the English fallback until
+  their strings are added to the dictionaries (help/documentation prose stays English).
+
+## API documentation
+
+- Interactive **Swagger UI** at `/api-docs`, backed by the OpenAPI 3.0.3 spec
+  `backend/public/openapi.json` (vendored Swagger UI assets in `backend/public/vendor/swagger-ui/`).
+- **Auth model:** admin endpoints require the session cookie `connect.sid`; try `POST
+  /auth/local/login` in Swagger UI first so same-origin calls carry the cookie. Public endpoints:
+  `/health`, `/api/i18n/*`, `/api/auth/info`, `GET /api/drinks`, `/api/public/*`, Stripe webhooks.
+  `GET /api/settings` returns only a public-safe subset (`app_name`, `currency`, `public_base_url`,
+  `subscriber_discount`, `dashboard_layout`, `table_type_order`) unless authenticated.
+- `clear-history`, SMTP/OIDC tests, session detail/transfer and patron creation require auth.
+
+## In-app help
+
+The **Help** menu (`/help`) renders `USER_GUIDE.md` with a generated table of contents
+(react-markdown + rehype-slug). `frontend/scripts/copy-docs.mjs` copies the guide into
+`backend/public/help/` during `npm run build` (env: `DOCS_SOURCE_DIR`, `DOCS_OUT_DIR`).
+
+## Wiki
+
+`docs/wiki/` holds the wiki pages (`Home`, `API-Reference`); `scripts/sync-wiki.sh` pushes them plus
+the User Guide to the GitHub wiki. One-time prerequisite: enable the wiki and create its first page in
+the GitHub UI (the wiki git repository does not exist before that).
+
 ## Testing
 
 Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma
-mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **15 files /
-61 tests**, run with `cd backend && npm test` (Node 22). See
+mock; `openid-client` is stubbed because OIDC flows are not unit-tested; backup tests inject a fake
+`spawn`). Current suite: **16 files / 70 tests**, run with `cd backend && npm test` (Node 22). See
 [backend/tests/README.md](backend/tests/README.md) for the mocking strategy and CI setup.
 
 ## Data Integrity

@@ -34,6 +34,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
 import { SettlementDialog } from '@/components/settlement-dialog'
 import { playNewOrderChime, playPoolBallSound } from '@/lib/audio'
+import { useI18n } from '@/lib/i18n'
 import { chargedHours, elapsedDuration, money, minutesAgo } from '@/lib/format'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
@@ -69,6 +70,7 @@ type DialogState =
 export function DashboardPage() {
   const { settings, save: saveSetting } = useSettings()
   const { toast } = useToast()
+  const { t } = useI18n()
   const currency = settings.currency || localStorage.getItem('currency') || '$'
   const [types, setTypes] = React.useState<TableType[]>([])
   const [tables, setTables] = React.useState<TableRow[]>([])
@@ -236,9 +238,9 @@ export function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Tables</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('Tables')}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Live view of sessions, tabs and pending drink orders.
+            {t('Live view of sessions, tabs and pending drink orders.')}
           </p>
         </div>
       </div>
@@ -260,7 +262,7 @@ export function DashboardPage() {
       ) : groups.length === 0 ? (
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">
-            No tables configured yet. Add table types and tables under Admin → Table Types & Inventory.
+            {t('No tables configured yet. Add table types and tables under Admin → Table Types & Inventory.')}
           </CardContent>
         </Card>
       ) : layout === 'tabs' ? (
@@ -324,13 +326,13 @@ export function DashboardPage() {
                             {type.name_en}
                           </span>
                           <span className="text-sm text-muted-foreground">
-                            {groupTables.length} table{groupTables.length === 1 ? '' : 's'}
+                            {groupTables.length} {groupTables.length === 1 ? t('table') : t('tables')}
                           </span>
                           <Button
                             variant="ghost"
                             size="icon"
                             className="ml-auto h-7 w-7"
-                            aria-label={collapsed ? 'Expand section' : 'Collapse section'}
+                            aria-label={collapsed ? t('Expand section') : t('Collapse section')}
                             onClick={() => toggleCollapsed(type.name_en)}
                           >
                             <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed && '-rotate-90')} />
@@ -354,7 +356,7 @@ export function DashboardPage() {
       <StartSessionDialog
         state={dialog}
         onClose={() => setDialog(null)}
-        onStarted={() => void finishAction('Session started')}
+        onStarted={() => void finishAction(t('Session started'))}
       />
       <AddDrinkDialog
         state={dialog}
@@ -367,7 +369,7 @@ export function DashboardPage() {
         tables={tables}
         sessions={sessions}
         onClose={() => setDialog(null)}
-        onDone={() => void finishAction('Session transferred')}
+        onDone={() => void finishAction(t('Session transferred'))}
       />
       <QrDialog state={dialog} onClose={() => setDialog(null)} />
       <CheckoutDialog
@@ -394,6 +396,7 @@ export function DashboardPage() {
 }
 
 function SortableTypeSection({ id, name, children }: { id: string; name: string; children: (handle: React.ReactNode) => React.ReactNode }) {
+  const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, data: { name } })
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -409,8 +412,8 @@ function SortableTypeSection({ id, name, children }: { id: string; name: string;
           type="button"
           {...attributes}
           {...listeners}
-          aria-label="Reorder table type"
-          title="Drag to reorder"
+          aria-label={t('Reorder table type')}
+          title={t('Drag to reorder')}
           className="cursor-grab touch-none rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
         >
           <GripVertical className="h-4 w-4" />
@@ -431,6 +434,7 @@ function flagChip(name?: string | null) {
 }
 
 function SortableTabTrigger({ id, name, count, occupied }: { id: string; name: string; count: number; occupied: number }) {
+  const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   return (
     <div
@@ -450,8 +454,8 @@ function SortableTabTrigger({ id, name, count, occupied }: { id: string; name: s
         type="button"
         {...attributes}
         {...listeners}
-        aria-label={`Reorder ${name}`}
-        title="Drag to reorder"
+        aria-label={`${t('Reorder table type')}: ${name}`}
+        title={t('Drag to reorder')}
         className="ml-0.5 cursor-grab touch-none rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
       >
         <GripVertical className="h-3.5 w-3.5" />
@@ -462,6 +466,7 @@ function SortableTabTrigger({ id, name, count, occupied }: { id: string; name: s
 
 function PendingOrdersPanel({ orders, currency, onChanged }: { orders: PendingOrder[]; currency: string; onChanged: () => Promise<void> }) {
   const { toast } = useToast()
+  const { t } = useI18n()
 
   const act = async (order: PendingOrder, fulfill: boolean) => {
     const result = fulfill ? await apiFulfillOrder(order.id) : await apiCancelOrder(order.id)
@@ -473,23 +478,23 @@ function PendingOrdersPanel({ orders, currency, onChanged }: { orders: PendingOr
     <Card className="border-amber-500/40 bg-amber-500/[0.06]">
       <CardContent className="space-y-3 p-4">
         <h2 className="flex items-center gap-2 text-sm font-bold">
-          <Bell className="h-4 w-4 text-amber-600" /> Pending Orders ({orders.length})
+          <Bell className="h-4 w-4 text-amber-600" /> {t('Pending Orders ({count})', { count: orders.length })}
         </h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {orders.map((order) => (
             <div key={order.id} className="space-y-2 rounded-lg border bg-card p-3">
               <div className="flex items-center justify-between text-sm font-semibold">
-                <span>Table #{order.tableNumber ?? '?'}</span>
+                <span>{t('Table #{number}', { number: order.tableNumber ?? '?' })}</span>
                 <span className="text-xs font-normal text-muted-foreground">{minutesAgo(order.createdAt)}</span>
               </div>
               <p className="text-sm">{order.items.map((i) => `${i.quantity} × ${i.description}`).join(', ')}</p>
               <p className="text-xs text-muted-foreground">{money(order.totalCents, currency)}</p>
               <div className="flex gap-2 pt-1">
                 <Button size="sm" className="flex-1" onClick={() => void act(order, true)}>
-                  <Check /> Fulfilled
+                  <Check /> {t('Fulfilled')}
                 </Button>
                 <Button size="sm" variant="outline" className="flex-1" onClick={() => void act(order, false)}>
-                  <X /> Cancel
+                  <X /> {t('Cancel')}
                 </Button>
               </div>
             </div>
@@ -519,6 +524,7 @@ interface TableTileProps {
 }
 
 function TableTile(props: TableTileProps) {
+  const { t } = useI18n()
   const { table, session, totalCents, now, currency, type } = props
   const occupied = Boolean(session)
   const start = session?.startedAt
@@ -541,12 +547,12 @@ function TableTile(props: TableTileProps) {
           #{table.number}
           {session?.pin && <span className="ml-2 font-mono text-sm font-bold opacity-70">({session.pin})</span>}
         </div>
-        <span className="rounded-md bg-background/70 px-2 py-1 text-xs font-semibold capitalize">{occupied ? 'occupied' : table.status}</span>
+        <span className="rounded-md bg-background/70 px-2 py-1 text-xs font-semibold capitalize">{occupied ? t('Occupied') : t(table.status)}</span>
       </div>
 
       {maintenanceDue && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1.5 text-xs font-bold text-amber-600">
-          Maintenance due — {(((table.usedSinceMaintenanceSeconds || 0) + (start ? (now - new Date(start).getTime()) / 1000 : 0)) / 3600).toFixed(1)}h / {type.maxUsedHours}h used
+          {t('Maintenance due — {used}h / {max}h used', { used: (((table.usedSinceMaintenanceSeconds || 0) + (start ? (now - new Date(start).getTime()) / 1000 : 0)) / 3600).toFixed(1), max: type.maxUsedHours ?? '' })}
         </div>
       )}
 
@@ -555,13 +561,13 @@ function TableTile(props: TableTileProps) {
           <div className="flex items-center gap-2 text-sm font-semibold">
             <User className="h-4 w-4" />
             <span>
-              {session.numberOfPlayers || 1} player{(session.numberOfPlayers || 1) > 1 ? 's' : ''}
+              {session.numberOfPlayers || 1} {(session.numberOfPlayers || 1) > 1 ? t('players') : t('player')}
             </span>
             <div className="ml-auto flex items-center gap-1">
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onSettle(session)} aria-label="Settle player">
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onSettle(session)} aria-label={t('Settle player')}>
                 <Minus />
               </Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onAddPlayer(session)} aria-label="Add player">
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onAddPlayer(session)} aria-label={t('Add player')}>
                 <Plus />
               </Button>
             </div>
@@ -571,7 +577,7 @@ function TableTile(props: TableTileProps) {
             <span className="text-xs text-muted-foreground">({chargedHours(start, now)}h charged)</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Open tab</span>
+            <span className="text-xs text-muted-foreground">{t('Open tab')}</span>
             <span className="text-sm font-bold">{totalCents != null ? money(totalCents, currency) : '—'}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -586,28 +592,28 @@ function TableTile(props: TableTileProps) {
           </div>
           <div className="mt-auto flex flex-wrap gap-2 border-t pt-3">
             <Button size="sm" variant="outline" className="flex-1" onClick={() => props.onAddDrink(session)}>
-              <Beer /> Drink
+              <Beer /> {t('Drink')}
             </Button>
             <Button size="sm" variant="outline" className="flex-1" onClick={() => props.onTransfer(session)}>
-              <ArrowLeftRight /> Transfer
+              <ArrowLeftRight /> {t('Transfer')}
             </Button>
             <Button size="sm" className="flex-1" onClick={() => props.onCheckout(session)}>
-              <CheckCircle2 /> Checkout
+              <CheckCircle2 /> {t('Checkout')}
             </Button>
           </div>
         </>
       ) : (
         <>
-          <p className="text-sm text-muted-foreground">Available</p>
+          <p className="text-sm text-muted-foreground">{t('Available')}</p>
           <Button className="mt-auto w-full" onClick={props.onStart}>
-            <Play /> Start Session
+            <Play /> {t('Start Session')}
           </Button>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" className="flex-1" onClick={() => void props.onMaintenance()}>
-              <Wrench /> Maintenance
+              <Wrench /> {t('Maintenance')}
             </Button>
             <Button size="sm" variant="outline" className="flex-1 text-destructive" onClick={() => void props.onDelete()}>
-              <Trash2 /> Delete
+              <Trash2 /> {t('Delete')}
             </Button>
           </div>
         </>
@@ -618,6 +624,7 @@ function TableTile(props: TableTileProps) {
 
 function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast()
+  const { t } = useI18n()
   const open = state?.kind === 'add-player'
   const session = state?.kind === 'add-player' ? state.session : null
   const [busy, setBusy] = React.useState(false)
@@ -630,9 +637,9 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
     const result = await apiUpdateSession(session.id, { numberOfPlayers, subscriberCount })
     setBusy(false)
     if (!result.ok) {
-      return toast({ title: 'Failed to add player', description: result.error || `Error ${result.status}`, variant: 'error' })
+      return toast({ title: t('Failed to add player'), description: result.error || `Error ${result.status}`, variant: 'error' })
     }
-    toast({ title: isSubscriber ? 'Subscriber added' : 'Non-subscriber added' })
+    toast({ title: isSubscriber ? t('Subscriber added') : t('Non-subscriber added') })
     onDone()
   }
 
@@ -640,23 +647,23 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add player</DialogTitle>
+          <DialogTitle>{t('Add player')}</DialogTitle>
           <DialogDescription>
             {session
-              ? `The session now has ${(session.numberOfPlayers || 1)} player${(session.numberOfPlayers || 1) === 1 ? '' : 's'}. Is the new player a subscriber?`
-              : 'Is the new player a subscriber?'}
+              ? t('The session now has {count} player(s). Is the new player a subscriber?', { count: session.numberOfPlayers || 1 })
+              : t('Is the new player a subscriber?')}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-2">
           <Button className="w-full justify-start" disabled={busy} onClick={() => void add(true)}>
-            <User /> Subscriber — free table time
+            <User /> {t('Subscriber — free table time')}
           </Button>
           <Button variant="outline" className="w-full justify-start" disabled={busy} onClick={() => void add(false)}>
-            <User /> Non-subscriber — pays their share
+            <User /> {t('Non-subscriber — pays their share')}
           </Button>
         </DialogBody>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -664,6 +671,7 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
 }
 
 function StartSessionDialog({ state, onClose, onStarted }: { state: DialogState; onClose: () => void; onStarted: () => void }) {
+  const { t } = useI18n()
   const [subs, setSubs] = React.useState(0)
   const [nonsubs, setNonsubs] = React.useState(1)
   const [busy, setBusy] = React.useState(false)
@@ -693,22 +701,22 @@ function StartSessionDialog({ state, onClose, onStarted }: { state: DialogState;
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Start Session — Table #{table?.number}</DialogTitle>
-          <DialogDescription>How many players are playing?</DialogDescription>
+          <DialogTitle>{t('Start Session — Table #{number}', { number: table?.number ?? '' })}</DialogTitle>
+          <DialogDescription>{t('How many players are playing?')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <Counter label="Subscribers (free table time)" value={subs} onChange={setSubs} />
-          <Counter label="Non-subscribers" value={nonsubs} min={0} onChange={setNonsubs} />
+          <Counter label={t('Subscribers (free table time)')} value={subs} onChange={setSubs} />
+          <Counter label={t('Non-subscribers')} value={nonsubs} min={0} onChange={setNonsubs} />
           <p className={`text-xs ${subs + nonsubs === 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {subs + nonsubs === 0 ? 'Add at least one player to start the session.' : `Total players: ${subs + nonsubs}`}
+            {subs + nonsubs === 0 ? t('Add at least one player to start the session.') : t('Total players: {count}', { count: subs + nonsubs })}
           </p>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('Cancel')}
           </Button>
           <Button onClick={() => void start()} disabled={busy || subs + nonsubs < 1}>
-            <Play /> {busy ? 'Starting…' : 'Start Session'}
+            <Play /> {busy ? t('Starting…') : t('Start Session')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -735,6 +743,7 @@ function Counter({ label, value, onChange, min = 0 }: { label: string; value: nu
 
 function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogState; currency: string; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast()
+  const { t } = useI18n()
   const open = state?.kind === 'drink'
   const session = state?.kind === 'drink' ? state.session : null
   const [drinks, setDrinks] = React.useState<Drink[]>([])
@@ -767,7 +776,7 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
     if (result.ok) {
       setItems((current) => current.filter((i) => i.id !== itemId))
     } else {
-      toast({ title: 'Failed to remove item', variant: 'error' })
+      toast({ title: t('Failed to remove item'), variant: 'error' })
     }
   }
 
@@ -784,7 +793,7 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
         vatRatePercent: d.vatRatePercent,
       })
       if (!result.ok) {
-        toast({ title: 'Failed to add item', description: d.name, variant: 'error' })
+        toast({ title: t('Failed to add item'), description: d.name, variant: 'error' })
         setBusy(false)
         return
       }
@@ -799,13 +808,13 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Drinks</DialogTitle>
-          <DialogDescription>Add items to the open tab.</DialogDescription>
+          <DialogTitle>{t('Add Drinks')}</DialogTitle>
+          <DialogDescription>{t('Add items to the open tab.')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
           {items.length > 0 && (
             <div className="space-y-2">
-              <Label className="block">On this tab</Label>
+              <Label className="block">{t('On this tab')}</Label>
               {items.map((item) => (
                 <div key={item.id} className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
                   <span>
@@ -822,8 +831,8 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
             </div>
           )}
           <div className="space-y-2">
-            <Label className="block">Menu</Label>
-            {drinks.length === 0 && <p className="text-sm text-muted-foreground">No drinks configured.</p>}
+            <Label className="block">{t('Menu')}</Label>
+            {drinks.length === 0 && <p className="text-sm text-muted-foreground">{t('No drinks configured.')}</p>}
             {drinks.length > 0 && (
               <>
                 <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
@@ -841,22 +850,22 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
                           active ? 'border-primary bg-primary text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
                         )}
                       >
-                        {value === 'all' ? 'All' : DRINK_CATEGORIES.find((c) => c.value === value)?.short}
+                        {value === 'all' ? t('All') : t(DRINK_CATEGORIES.find((c) => c.value === value)?.short || '')}
                       </button>
                     )
                   })}
                 </div>
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input className="pl-8" placeholder="Search the menu…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                  <Input className="pl-8" placeholder={t('Search the menu…')} value={search} onChange={(e) => setSearch(e.target.value)} />
                 </div>
               </>
             )}
-            {drinks.length > 0 && visibleGroups.length === 0 && <p className="py-2 text-center text-sm text-muted-foreground">Nothing matches that search.</p>}
+            {drinks.length > 0 && visibleGroups.length === 0 && <p className="py-2 text-center text-sm text-muted-foreground">{t('Nothing matches that search.')}</p>}
             {visibleGroups.map((group) => (
               <div key={group.value} className="space-y-2">
                 <p className="flex items-center gap-1.5 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                  <group.icon className="h-3.5 w-3.5" /> {group.label}
+                  <group.icon className="h-3.5 w-3.5" /> {t(group.label)}
                 </p>
                 {group.drinks.map((d) => (
                   <div key={d.id} className="flex items-center justify-between rounded-md border px-3 py-2">
@@ -894,10 +903,10 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
         <DialogFooter>
           <span className="mr-auto self-center text-sm font-semibold">{money(basketTotal, currency)}</span>
           <Button variant="outline" onClick={onClose}>
-            Close
+            {t('Close')}
           </Button>
           <Button onClick={() => void place()} disabled={busy || basketTotal <= 0}>
-            {busy ? 'Adding…' : 'Add to tab'}
+            {busy ? t('Adding…') : t('Add to tab')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -907,6 +916,7 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
 
 function TransferDialog({ state, tables, sessions, onClose, onDone }: { state: DialogState; tables: TableRow[]; sessions: SessionRow[]; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast()
+  const { t } = useI18n()
   const open = state?.kind === 'transfer'
   const session = state?.kind === 'transfer' ? state.session : null
   const [busy, setBusy] = React.useState(false)
@@ -922,27 +932,27 @@ function TransferDialog({ state, tables, sessions, onClose, onDone }: { state: D
     const result = await apiTransferSession(session.id, tableId)
     setBusy(false)
     if (result.ok) onDone()
-    else toast({ title: 'Failed to transfer', variant: 'error' })
+    else toast({ title: t('Failed to transfer'), variant: 'error' })
   }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Transfer to Table</DialogTitle>
-          <DialogDescription>Choose an available table for this session.</DialogDescription>
+          <DialogTitle>{t('Transfer to Table')}</DialogTitle>
+          <DialogDescription>{t('Choose an available table for this session.')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-2">
-          {candidates.length === 0 && <p className="text-sm text-muted-foreground">No other tables are available.</p>}
+          {candidates.length === 0 && <p className="text-sm text-muted-foreground">{t('No other tables are available.')}</p>}
           {candidates.map((tb) => (
             <Button key={tb.id} variant="outline" className="w-full justify-start" disabled={busy} onClick={() => void transfer(tb.id)}>
-              Table #{tb.number}
+              {t('Table #{number}', { number: tb.number })}
             </Button>
           ))}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('Cancel')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -951,6 +961,7 @@ function TransferDialog({ state, tables, sessions, onClose, onDone }: { state: D
 }
 
 function QrDialog({ state, onClose }: { state: DialogState; onClose: () => void }) {
+  const { t } = useI18n()
   const open = state?.kind === 'qr'
   const tableNumber = state?.kind === 'qr' ? state.tableNumber : 0
   const pin = state?.kind === 'qr' ? state.pin : undefined
@@ -961,7 +972,7 @@ function QrDialog({ state, onClose }: { state: DialogState; onClose: () => void 
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Scan to View Tab — Table #{tableNumber}</DialogTitle>
+          <DialogTitle>{t('Scan to View Tab — Table #{number}', { number: tableNumber })}</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col items-center gap-3">
           <div className="h-64 w-64 rounded-lg bg-white p-2 [&_svg]:h-full [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: svg }} />
@@ -969,7 +980,7 @@ function QrDialog({ state, onClose }: { state: DialogState; onClose: () => void 
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Close
+            {t('Close')}
           </Button>
         </DialogFooter>
       </DialogContent>

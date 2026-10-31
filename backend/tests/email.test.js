@@ -21,16 +21,18 @@ describe('Email / SMTP', () => {
     setupAuthBypass(prisma);
   });
 
-  test('GET /api/settings redacts smtp_pass but reports whether one is set', async () => {
+  test('GET /api/settings hides SMTP configuration from unauthenticated callers', async () => {
     prisma.setting.findMany.mockResolvedValue([
       { key: 'smtp_host', value: 'smtp.example.com' },
-      { key: 'smtp_pass', value: 'secret' }
+      { key: 'smtp_pass', value: 'secret' },
+      { key: 'currency', value: '€' }
     ]);
     const res = await agent.get('/api/settings');
     expect(res.status).toBe(200);
+    expect(res.body.currency).toBe('€');
+    expect(res.body.smtp_host).toBeUndefined();
     expect(res.body.smtp_pass).toBeUndefined();
-    expect(res.body.smtp_pass_set).toBe(true);
-    expect(res.body.smtp_host).toBe('smtp.example.com');
+    expect(res.body.smtp_pass_set).toBeUndefined();
   });
 
   test('POST /api/reports/email rejects an invalid address', async () => {
