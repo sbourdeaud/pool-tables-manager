@@ -3,10 +3,18 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
 import GithubSlugger from 'github-slugger'
-import { BookOpen, ChevronDown, ExternalLink } from 'lucide-react'
+import { BookOpen, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import {
+  NavigationMenu,
+  NavigationMenuContent,
+  NavigationMenuItem,
+  NavigationMenuLink,
+  NavigationMenuList,
+  NavigationMenuTrigger,
+} from '@/components/ui/navigation-menu'
 import { useI18n } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
 
 interface TocItem {
   depth: number
@@ -20,13 +28,16 @@ interface TocSection {
   children: TocItem[]
 }
 
+interface TocGroup {
+  title: string
+  sections: TocSection[]
+}
+
 const components: Components = {
-  h1: (props) => <h1 className="mt-8 scroll-mt-20 text-2xl font-bold tracking-tight" {...props} />,
-  h2: (props) => (
-    <h2 className="mt-8 scroll-mt-20 border-b pb-1 text-xl font-bold tracking-tight" {...props} />
-  ),
-  h3: (props) => <h3 className="mt-6 scroll-mt-20 text-base font-bold" {...props} />,
-  h4: (props) => <h4 className="mt-5 scroll-mt-20 text-sm font-bold" {...props} />,
+  h1: (props) => <h1 className="mt-8 text-2xl font-bold tracking-tight" {...props} />,
+  h2: (props) => <h2 className="mt-8 border-b pb-1 text-xl font-bold tracking-tight" {...props} />,
+  h3: (props) => <h3 className="mt-6 text-base font-bold" {...props} />,
+  h4: (props) => <h4 className="mt-5 text-sm font-bold" {...props} />,
   p: (props) => <p className="my-3 text-sm leading-6 text-foreground/90" {...props} />,
   ul: (props) => <ul className="my-3 list-disc space-y-1 pl-6 text-sm leading-6" {...props} />,
   ol: (props) => <ol className="my-3 list-decimal space-y-1 pl-6 text-sm leading-6" {...props} />,
@@ -34,12 +45,8 @@ const components: Components = {
   a: (props) => (
     <a className="font-medium text-primary underline underline-offset-4 hover:opacity-80" target={props.href && props.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" {...props} />
   ),
-  code: (props) => (
-    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]" {...props} />
-  ),
-  pre: (props) => (
-    <pre className="my-3 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-5" {...props} />
-  ),
+  code: (props) => <code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px]" {...props} />,
+  pre: (props) => <pre className="my-3 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-5" {...props} />,
   blockquote: (props) => (
     <blockquote className="my-3 border-l-4 border-primary/40 bg-muted/30 py-1 pl-4 text-sm text-muted-foreground" {...props} />
   ),
@@ -54,6 +61,15 @@ const components: Components = {
   img: (props) => <img className="my-4 max-w-full rounded-lg border" {...props} />,
 }
 
+function removeInDocumentContents(markdown: string): string {
+  const lines = markdown.split('\n')
+  const start = lines.findIndex((line) => /^##\s+Table of Contents\s*$/i.test(line))
+  if (start < 0) return markdown
+  let end = lines.findIndex((line, index) => index > start && /^##\s+/.test(line))
+  if (end < 0) end = lines.length
+  return [...lines.slice(0, start), ...lines.slice(end)].join('\n')
+}
+
 function buildToc(markdown: string): TocSection[] {
   const slugger = new GithubSlugger()
   const sections: TocSection[] = []
@@ -65,9 +81,6 @@ function buildToc(markdown: string): TocSection[] {
     const depth = match[1].length
     const item = { depth, text, id: slugger.slug(text) }
     if (depth === 2) {
-      // The English source carries its own in-document table of contents with
-      // English anchor links; the localized sidebar replaces it.
-      if (item.id === 'table-of-contents') continue
       current = { title: item.text, id: item.id, children: [] }
       sections.push(current)
     } else if (current) {
@@ -77,10 +90,55 @@ function buildToc(markdown: string): TocSection[] {
   return sections
 }
 
+function groupToc(toc: TocSection[], t: (key: string) => string): TocGroup[] {
+  return [
+    { title: t('Dashboard'), sections: toc.slice(0, 4) },
+    { title: t('Session'), sections: toc.slice(4, 9) },
+    { title: t('Admin'), sections: toc.slice(9, 13) },
+    { title: t('Financial'), sections: toc.slice(13, 15) },
+    { title: t('Help'), sections: toc.slice(15) },
+  ].filter((group) => group.sections.length > 0)
+}
+
+function SectionMenuLinks({ section, activeId }: { section: TocSection; activeId: string }) {
+  const sectionActive = section.id === activeId || section.children.some((child) => child.id === activeId)
+  return (
+    <li className="min-w-0 rounded-lg border bg-background p-3">
+      <NavigationMenuLink asChild>
+        <a
+          href={`#${section.id}`}
+          aria-current={section.id === activeId ? 'location' : undefined}
+          className={cn('block truncate rounded-sm text-sm font-semibold hover:text-primary', sectionActive && 'text-primary')}
+        >
+          {section.title}
+        </a>
+      </NavigationMenuLink>
+      {section.children.length > 0 && (
+        <ul className="mt-2 space-y-1 border-l pl-3">
+          {section.children.map((child) => (
+            <li key={child.id}>
+              <NavigationMenuLink asChild>
+                <a
+                  href={`#${child.id}`}
+                  aria-current={child.id === activeId ? 'location' : undefined}
+                  className={cn('block truncate rounded-sm py-0.5 text-xs text-muted-foreground hover:text-foreground', child.id === activeId && 'font-semibold text-primary')}
+                >
+                  {child.text}
+                </a>
+              </NavigationMenuLink>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
 export function HelpPage() {
   const { t, language } = useI18n()
   const [markdown, setMarkdown] = React.useState('')
   const [error, setError] = React.useState<string | null>(null)
+  const [activeId, setActiveId] = React.useState('')
 
   React.useEffect(() => {
     let active = true
@@ -91,7 +149,7 @@ export function HelpPage() {
           if (localized.ok) {
             const text = await localized.text()
             if (active) {
-              setMarkdown(text)
+              setMarkdown(removeInDocumentContents(text))
               setError(null)
             }
             return
@@ -101,7 +159,7 @@ export function HelpPage() {
         if (!response.ok) throw new Error(String(response.status))
         const text = await response.text()
         if (active) {
-          setMarkdown(text)
+          setMarkdown(removeInDocumentContents(text))
           setError(null)
         }
       } catch {
@@ -115,6 +173,47 @@ export function HelpPage() {
   }, [language, t])
 
   const toc = React.useMemo(() => buildToc(markdown), [markdown])
+  const groups = React.useMemo(() => groupToc(toc, t), [toc, t])
+  const navRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const nav = navRef.current
+    if (!nav) return
+    const apply = () => {
+      const header = document.querySelector('header')
+      const headerHeight = header ? header.getBoundingClientRect().height : 56
+      document.documentElement.style.scrollPaddingTop = `${Math.round(headerHeight + nav.getBoundingClientRect().height + 8)}px`
+    }
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(nav)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.scrollPaddingTop = ''
+    }
+  }, [markdown, groups])
+
+  React.useEffect(() => {
+    if (toc.length === 0) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+        if (visible[0]) setActiveId(visible[0].target.id)
+      },
+      { rootMargin: '-160px 0px -65% 0px', threshold: 0 },
+    )
+    for (const section of toc) {
+      const heading = document.getElementById(section.id)
+      if (heading) observer.observe(heading)
+      for (const child of section.children) {
+        const subheading = document.getElementById(child.id)
+        if (subheading) observer.observe(subheading)
+      }
+    }
+    return () => observer.disconnect()
+  }, [toc, markdown])
 
   return (
     <div className="space-y-6">
@@ -141,46 +240,39 @@ export function HelpPage() {
       ) : !markdown ? (
         <p className="text-sm text-muted-foreground">{t('Loading the guide…')}</p>
       ) : (
-        <div className="grid gap-8 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
+        <>
+          <div ref={navRef} className="sticky top-14 z-30 -mx-4 border-y bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:mx-0 lg:rounded-lg lg:border">
             <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">{t('Contents')}</p>
-            <nav className="space-y-0.5 text-sm">
-              {toc.map((section) => (
-                <Collapsible key={section.id} defaultOpen>
-                  <div className="flex items-center justify-between gap-1 rounded-md px-2 py-1 hover:bg-muted/50">
-                    <a
-                      href={`#${section.id}`}
-                      className="min-w-0 flex-1 truncate font-medium text-foreground/80 hover:text-foreground"
-                    >
-                      {section.title}
-                    </a>
-                    <CollapsibleTrigger className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={section.title}>
-                      <ChevronDown className="h-4 w-4 transition-transform data-[state=open]:rotate-180" />
-                    </CollapsibleTrigger>
-                  </div>
-                  <CollapsibleContent>
-                    <div className="ml-3 space-y-0.5 border-l pl-2">
-                      {section.children.map((child) => (
-                        <a
-                          key={child.id}
-                          href={`#${child.id}`}
-                          className="block truncate py-0.5 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          {child.text}
-                        </a>
-                      ))}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              ))}
-            </nav>
-          </aside>
-          <article className="min-w-0 max-w-3xl">
+            <NavigationMenu>
+              <NavigationMenuList>
+                {groups.map((group) => {
+                  const groupActive = group.sections.some(
+                    (section) => section.id === activeId || section.children.some((child) => child.id === activeId),
+                  )
+                  return (
+                    <NavigationMenuItem key={group.title}>
+                      <NavigationMenuTrigger className={cn(groupActive && 'bg-accent text-accent-foreground')}>
+                        {group.title}
+                      </NavigationMenuTrigger>
+                      <NavigationMenuContent>
+                        <ul className="grid max-h-[min(65vh,34rem)] w-[min(92vw,760px)] gap-2 overflow-y-auto p-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {group.sections.map((section) => (
+                            <SectionMenuLinks key={section.id} section={section} activeId={activeId} />
+                          ))}
+                        </ul>
+                      </NavigationMenuContent>
+                    </NavigationMenuItem>
+                  )
+                })}
+              </NavigationMenuList>
+            </NavigationMenu>
+          </div>
+          <article className="mx-auto w-full max-w-4xl">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]} components={components}>
               {markdown}
             </ReactMarkdown>
           </article>
-        </div>
+        </>
       )}
     </div>
   )
