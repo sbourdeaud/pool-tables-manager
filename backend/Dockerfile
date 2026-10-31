@@ -25,7 +25,7 @@ WORKDIR /app
 
 # bash for the entrypoint; openssl libraries for Prisma's schema engine
 # (Prisma 7 has no Rust query engine, but `migrate deploy` uses the schema engine).
-RUN apk add --no-cache bash openssl
+RUN apk add --no-cache bash openssl postgresql-client
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/prisma.config.ts ./

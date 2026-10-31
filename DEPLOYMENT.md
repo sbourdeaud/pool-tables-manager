@@ -170,7 +170,14 @@ docker exec pool-tables-manager-app-1 npx prisma migrate status
 docker exec -it pool-tables-manager-db-1 psql -U postgres -d pool_tables
 ```
 
-### Backup Database
+### Backup Database via the app
+
+Admins can export/restore from **Admin → Database Backup** (consistent compressed `pg_dump` archive).
+The image ships `postgresql-client` for this; restores are transactional and followed by
+`prisma migrate deploy`. Restore only archives produced by this app and the same PostgreSQL major
+version, and prefer doing it outside opening hours.
+
+### Backup Database with pg_dump
 ```bash
 docker exec pool-tables-manager-db-1 pg_dump -U postgres pool_tables > backup.sql
 ```
@@ -268,11 +275,17 @@ See the **“Setting Up Card Payments”** section of [USER_GUIDE.md](USER_GUIDE
 dashboard steps, pilot checklist and troubleshooting (webhooks, stuck payments, settlement
 differences, key rotation, disabling payments).
 
+## API explorer
+
+Each installation serves an interactive Swagger UI at `/api-docs` (spec: `/openapi.json`). Log in
+through `POST /auth/local/login` inside it to try admin endpoints with the session cookie.
+
 ## Releases & container images
 
 Release tags publish a slim multi-arch container image to GHCR
 (`ghcr.io/sbourdeaud/pool-tables-manager:<tag>` and `:latest`) — see
-[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
+[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md). Merging into `master` automatically creates the next patch
+release (minor for `feat:` commits, major for breaking ones) and publishes its image.
 
 ## Ports
 

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { LanguageSelect, useI18n } from '@/lib/i18n'
 
 function useTableNumber(): string | null {
   const params = new URLSearchParams(window.location.search)
@@ -30,6 +31,7 @@ function useThemeToggle() {
 export function TableApp() {
   const tableNumber = useTableNumber()
   const { theme, toggle } = useThemeToggle()
+  const { t } = useI18n()
   const [pin, setPin] = React.useState<string | null>(null)
   const [pinError, setPinError] = React.useState('')
   const [detail, setDetail] = React.useState<PublicTableDetail | null>(null)
@@ -73,16 +75,25 @@ export function TableApp() {
   React.useEffect(() => {
     if (!pin) return
     void load()
-    const refresh = window.setInterval(() => void load(), 60000)
+    // Refresh frequently so staff actions (e.g. fulfilling an order) show up
+    // promptly, and immediately when the player returns to the tab.
+    const refresh = window.setInterval(() => void load(), 10000)
     const tick = window.setInterval(() => setNow(Date.now()), 1000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
     return () => {
       window.clearInterval(refresh)
       window.clearInterval(tick)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
   }, [load, pin])
 
   if (!tableNumber) {
-    return <Centered>Invalid table URL</Centered>
+    return <Centered>{t('Invalid table URL')}</Centered>
   }
 
   let body: React.ReactNode
@@ -93,9 +104,9 @@ export function TableApp() {
       setPin(entered)
     }} />
   } else if (loadError === 'notfound') {
-    body = <Centered>Table not found</Centered>
+    body = <Centered>{t('Table not found')}</Centered>
   } else if (loadError === 'error') {
-    body = <Centered>Error loading table information</Centered>
+    body = <Centered>{t('Error loading table information')}</Centered>
   } else if (!detail) {
     body = (
       <Centered>
@@ -108,14 +119,20 @@ export function TableApp() {
 
   return (
     <div className="min-h-screen px-4 py-6">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label="Toggle theme"
-        className="fixed right-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-lg border bg-card shadow-sm"
-      >
-        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-      </button>
+      <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
+        <div className="rounded-lg border bg-card px-1 shadow-sm">
+          <LanguageSelect className="h-9" />
+        </div>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={t('Toggle theme')}
+          title={t('Toggle theme')}
+          className="flex h-10 w-10 items-center justify-center rounded-lg border bg-card shadow-sm"
+        >
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+      </div>
       <div className="mx-auto w-full max-w-xl">{body}</div>
     </div>
   )
@@ -130,6 +147,7 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function PinEntry({ error, onSubmit }: { error: string; onSubmit: (pin: string) => void }) {
+  const { t } = useI18n()
   const [digits, setDigits] = React.useState(['', '', '', ''])
   const refs = React.useRef<(HTMLInputElement | null)[]>([])
 
@@ -151,8 +169,8 @@ function PinEntry({ error, onSubmit }: { error: string; onSubmit: (pin: string) 
     <Card>
       <CardContent className="space-y-4 p-6 text-center">
         <div>
-          <h1 className="text-lg font-bold">Enter PIN Code</h1>
-          <p className="text-sm text-muted-foreground">Please enter the 4-digit PIN to view this table</p>
+          <h1 className="text-lg font-bold">{t('Enter PIN Code')}</h1>
+          <p className="text-sm text-muted-foreground">{t('Please enter the 4-digit PIN to view this table')}</p>
         </div>
         <div className="flex justify-center gap-2">
           {digits.map((digit, index) => (
@@ -176,7 +194,7 @@ function PinEntry({ error, onSubmit }: { error: string; onSubmit: (pin: string) 
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button className="w-full" onClick={submit}>
-          View Table
+          {t('View Table')}
         </Button>
       </CardContent>
     </Card>
@@ -198,6 +216,7 @@ function TableDetail({
   pin: string
   onOrderPlaced: () => void
 }) {
+  const { t } = useI18n()
   const [drinks, setDrinks] = React.useState<Drink[]>([])
   const [basket, setBasket] = React.useState<Record<string, number>>({})
   const [placing, setPlacing] = React.useState(false)
@@ -211,6 +230,14 @@ function TableDetail({
     void apiDrinks(localStorage.getItem('lang') || 'en').then((r) => setDrinks(r.data || []))
   }, [])
 
+  // Order feedback ("Order sent!", errors) is transient: hide it after a few
+  // seconds so it does not linger across the automatic refreshes.
+  React.useEffect(() => {
+    if (!message) return
+    const timer = window.setTimeout(() => setMessage(null), 5000)
+    return () => window.clearTimeout(timer)
+  }, [message])
+
   const session = detail.session
   if (!session) {
     return (
@@ -218,7 +245,7 @@ function TableDetail({
         <CardContent className="space-y-1 p-6 text-center">
           <h1 className="text-2xl font-bold">{detail.table.name || 'Table #' + detail.table.number}</h1>
           {detail.table.type && <p className="text-sm text-muted-foreground">{detail.table.type}</p>}
-          <p className="pt-4 text-sm text-muted-foreground">No active session</p>
+          <p className="pt-4 text-sm text-muted-foreground">{t('No active session')}</p>
         </CardContent>
       </Card>
     )
@@ -237,10 +264,10 @@ function TableDetail({
     setPlacing(false)
     if (result.ok) {
       setBasket({})
-      setMessage({ text: 'Order sent! A staff member will bring it shortly.' })
+      setMessage({ text: t('Order sent! A staff member will bring it shortly.') })
       onOrderPlaced()
     } else {
-      setMessage({ text: 'Could not place order. Please try again or ask staff for help.', error: true })
+      setMessage({ text: t('Could not place order. Please try again or ask staff for help.'), error: true })
     }
   }
 
@@ -254,29 +281,29 @@ function TableDetail({
           </div>
           <div className="grid grid-cols-3 gap-2 rounded-lg bg-muted/40 p-3 text-center">
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Started</p>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{t('Started')}</p>
               <p className="text-base font-semibold">{start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Duration</p>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{t('Duration')}</p>
               <p className="font-mono text-base font-semibold tabular-nums">{formatSeconds(elapsedSeconds)}</p>
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Players</p>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{t('Players')}</p>
               <p className="text-base font-semibold">{session.numberOfPlayers || 1}</p>
             </div>
           </div>
 
           {(detail.tableCharge || 0) > 0 && (
             <div>
-              <p className="mb-2 text-sm font-semibold text-muted-foreground">Table Time</p>
-              <Row label="Table Time" sub={`${Math.max(1, Math.ceil(elapsedSeconds / 3600))}h charged`} value={money(detail.tableCharge, currency)} />
+              <p className="mb-2 text-sm font-semibold text-muted-foreground">{t('Table Time')}</p>
+              <Row label={t('Table Time')} sub={`${Math.max(1, Math.ceil(elapsedSeconds / 3600))}h charged`} value={money(detail.tableCharge, currency)} />
             </div>
           )}
 
           {detail.items && detail.items.length > 0 && (
             <div>
-              <p className="mb-2 text-sm font-semibold text-muted-foreground">Items</p>
+              <p className="mb-2 text-sm font-semibold text-muted-foreground">{t('Items')}</p>
               <div className="space-y-2">
                 {detail.items.map((item, index) => (
                   <Row
@@ -291,16 +318,16 @@ function TableDetail({
           )}
 
           <div className="flex items-center justify-between rounded-lg bg-accent/60 px-4 py-3">
-            <span className="text-sm font-semibold">Total Due</span>
+            <span className="text-sm font-semibold">{t('Total Due')}</span>
             <span className="text-xl font-extrabold">{money(detail.totalCents, currency)}</span>
           </div>
 
           {detail.pendingOrders && detail.pendingOrders.length > 0 && (
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-muted-foreground">Your Orders (Pending)</p>
+              <p className="text-sm font-semibold text-muted-foreground">{t('Your Orders (Pending)')}</p>
               {detail.pendingOrders.map((order, index) => (
                 <div key={index} className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-                  <p className="font-semibold text-amber-600">Being prepared — {money(order.totalCents, currency)}</p>
+                  <p className="font-semibold text-amber-600">{t('Being prepared — {amount}', { amount: money(order.totalCents, currency) })}</p>
                   <p>{order.items.map((i) => `${i.quantity} × ${i.description}`).join(', ')}</p>
                 </div>
               ))}
@@ -311,8 +338,8 @@ function TableDetail({
 
       <Card>
         <CardContent className="space-y-3 p-5 pb-0">
-          <p className="text-sm font-semibold text-muted-foreground">Order Drinks</p>
-          {drinks.length === 0 && <p className="text-sm text-muted-foreground">Menu unavailable.</p>}
+          <p className="text-sm font-semibold text-muted-foreground">{t('Order Drinks')}</p>
+          {drinks.length === 0 && <p className="text-sm text-muted-foreground">{t('Menu unavailable.')}</p>}
 
           {drinks.length > 0 && (
             <>
@@ -331,7 +358,7 @@ function TableDetail({
                         active ? 'border-primary bg-primary text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
                       )}
                     >
-                      {value === 'all' ? 'All' : DRINK_CATEGORIES.find((c) => c.value === value)?.short}
+                      {value === 'all' ? t('All') : t(DRINK_CATEGORIES.find((c) => c.value === value)?.short || '')}
                     </button>
                   )
                 })}
@@ -342,7 +369,7 @@ function TableDetail({
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     className="pl-8"
-                    placeholder="Search the menu…"
+                    placeholder={t('Search the menu…')}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -358,7 +385,7 @@ function TableDetail({
                   return (
                     <div key={group.value} className="space-y-2">
                       <p className="flex items-center gap-1.5 pt-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        <Icon className="h-3.5 w-3.5" /> {group.label} ({groupDrinksFiltered.length})
+                        <Icon className="h-3.5 w-3.5" /> {t(group.label)} ({groupDrinksFiltered.length})
                       </p>
                       {groupDrinksFiltered.map((d) => (
                         <div key={d.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
@@ -394,7 +421,7 @@ function TableDetail({
                 })}
 
               {groups.every((g) => g.drinks.every((d) => !d.name.toLowerCase().includes(search.trim().toLowerCase()))) && (
-                <p className="py-3 text-center text-sm text-muted-foreground">Nothing matches that search.</p>
+                <p className="py-3 text-center text-sm text-muted-foreground">{t('Nothing matches that search.')}</p>
               )}
             </>
           )}
@@ -403,11 +430,11 @@ function TableDetail({
 
           <div className="sticky bottom-0 -mx-5 mt-2 flex items-center justify-between gap-3 rounded-b-xl border-t bg-card/95 px-5 py-3 backdrop-blur">
             <div>
-              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Your order</p>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{t('Your order')}</p>
               <p className="text-base font-extrabold tabular-nums">{money(basketTotal, currency)}</p>
             </div>
             <Button disabled={placing || basketTotal <= 0} onClick={() => void placeOrder()}>
-              {placing ? 'Placing…' : 'Place Order'}
+              {placing ? t('Placing…') : t('Place Order')}
             </Button>
           </div>
         </CardContent>

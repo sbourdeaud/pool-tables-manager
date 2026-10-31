@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useI18n } from '@/lib/i18n'
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -24,6 +25,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 export function VatReportSection() {
   const { settings } = useSettings()
   const { toast } = useToast()
+  const { t } = useI18n()
   const currency = settings.currency || '$'
   const today = new Date()
   const [form, setForm] = React.useState<Record<string, string>>({
@@ -65,7 +67,7 @@ export function VatReportSection() {
     const result = await apiVatReport(params)
     setLoading(false)
     if (!result.ok || !result.data) {
-      toast({ title: 'Failed to load VAT report', description: result.error || `Error ${result.status}`, variant: 'error' })
+      toast({ title: t('Failed to load VAT report'), description: result.error || `Error ${result.status}`, variant: 'error' })
       setReport(null)
       return
     }
@@ -82,16 +84,16 @@ export function VatReportSection() {
     const result = await apiCreateClosure(params)
     setClosing(false)
     if (result.ok) {
-      toast({ title: 'VAT period closed', description: result.data?.periodKey })
+      toast({ title: t('VAT period closed'), description: result.data?.periodKey })
       await Promise.all([generate(), loadClosures()])
       return
     }
     if (result.status === 409) {
-      toast({ title: 'Period already closed', variant: 'error' })
+      toast({ title: t('Period already closed'), variant: 'error' })
       await Promise.all([generate(), loadClosures()])
       return
     }
-    toast({ title: 'Failed to close period', description: result.error || `Error ${result.status}`, variant: 'error' })
+    toast({ title: t('Failed to close period'), description: result.error || `Error ${result.status}`, variant: 'error' })
   }
 
   const setField = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }))
@@ -103,34 +105,34 @@ export function VatReportSection() {
         <CardContent className="p-5">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
             <div className="space-y-1.5">
-              <Label>Period type</Label>
+              <Label>{t('Period type')}</Label>
               <Select value={form.periodType} onValueChange={(v) => setField('periodType', v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="day">Day</SelectItem>
-                  <SelectItem value="month">Month</SelectItem>
-                  <SelectItem value="quarter">Quarter</SelectItem>
-                  <SelectItem value="year">Year</SelectItem>
+                  <SelectItem value="day">{t('Day')}</SelectItem>
+                  <SelectItem value="month">{t('Month')}</SelectItem>
+                  <SelectItem value="quarter">{t('Quarter')}</SelectItem>
+                  <SelectItem value="year">{t('Year')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {form.periodType === 'day' && (
               <div className="space-y-1.5">
-                <Label htmlFor="vat-date">Date</Label>
+                <Label htmlFor="vat-date">{t('Date')}</Label>
                 <Input id="vat-date" type="date" value={form.date} onChange={(e) => setField('date', e.target.value)} />
               </div>
             )}
             {form.periodType !== 'day' && (
               <div className="space-y-1.5">
-                <Label htmlFor="vat-year">Year</Label>
+                <Label htmlFor="vat-year">{t('Year')}</Label>
                 <Input id="vat-year" type="number" min="2020" max="2099" value={form.year} onChange={(e) => setField('year', e.target.value)} />
               </div>
             )}
             {form.periodType === 'month' && (
               <div className="space-y-1.5">
-                <Label>Month</Label>
+                <Label>{t('Month')}</Label>
                 <Select value={form.month} onValueChange={(v) => setField('month', v)}>
                   <SelectTrigger>
                     <SelectValue />
@@ -138,7 +140,7 @@ export function VatReportSection() {
                   <SelectContent>
                     {MONTHS.map((m, i) => (
                       <SelectItem key={m} value={String(i + 1)}>
-                        {m}
+                        {t(m)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -147,22 +149,22 @@ export function VatReportSection() {
             )}
             {form.periodType === 'quarter' && (
               <div className="space-y-1.5">
-                <Label>Quarter</Label>
+                <Label>{t('Quarter')}</Label>
                 <Select value={form.quarter} onValueChange={(v) => setField('quarter', v)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">Q1 (Jan–Mar)</SelectItem>
-                    <SelectItem value="2">Q2 (Apr–Jun)</SelectItem>
-                    <SelectItem value="3">Q3 (Jul–Sep)</SelectItem>
-                    <SelectItem value="4">Q4 (Oct–Dec)</SelectItem>
+                    <SelectItem value="1">{t('Q1 (Jan–Mar)')}</SelectItem>
+                    <SelectItem value="2">{t('Q2 (Apr–Jun)')}</SelectItem>
+                    <SelectItem value="3">{t('Q3 (Jul–Sep)')}</SelectItem>
+                    <SelectItem value="4">{t('Q4 (Oct–Dec)')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             )}
             <Button onClick={() => void generate()} disabled={loading}>
-              {loading ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Load VAT report
+              {loading ? <Loader2 className="animate-spin" /> : <ShieldCheck />} {t('Load VAT report')}
             </Button>
           </div>
         </CardContent>
@@ -173,7 +175,7 @@ export function VatReportSection() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-                VAT (TVA) — {report.periodKey}
+                {t('VAT (TVA) — {periodKey}', { periodKey: report.periodKey })}
                 <span
                   className={
                     report.closed
@@ -181,37 +183,38 @@ export function VatReportSection() {
                       : 'rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-600'
                   }
                 >
-                  {report.closed ? `Closed ${report.closedAt ? new Date(report.closedAt).toLocaleDateString() : ''}` : 'Open'}
+                  {report.closed ? (report.closedAt ? t('Closed {date}', { date: new Date(report.closedAt).toLocaleDateString() }) : t('Closed')) : t('Open')}
                 </span>
               </CardTitle>
               <CardDescription>
-                {new Date(report.fromDate).toLocaleDateString()} – {new Date(report.toDate).toLocaleDateString()} · {report.lineCount} ledger line
-                {report.lineCount === 1 ? '' : 's'}
+                {report.lineCount === 1
+                  ? t('{from} – {to} · {count} ledger line', { from: new Date(report.fromDate).toLocaleDateString(), to: new Date(report.toDate).toLocaleDateString(), count: report.lineCount })
+                  : t('{from} – {to} · {count} ledger lines', { from: new Date(report.fromDate).toLocaleDateString(), to: new Date(report.toDate).toLocaleDateString(), count: report.lineCount })}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-3">
-                <Metric label="Total (TTC)" value={money(report.grandTotalTtcCents, currency)} emphasis />
-                <Metric label="VAT (TVA)" value={money(report.grandVatCents, currency)} />
-                <Metric label="Total (HT)" value={money(report.grandHtCents, currency)} />
+                <Metric label={t('Total (TTC)')} value={money(report.grandTotalTtcCents, currency)} emphasis />
+                <Metric label={t('VAT (TVA)')} value={money(report.grandVatCents, currency)} />
+                <Metric label={t('Total (HT)')} value={money(report.grandHtCents, currency)} />
               </div>
 
               <div className="space-y-2">
-                <Label className="block">By VAT rate</Label>
+                <Label className="block">{t('By VAT rate')}</Label>
                 {rates.length > 0 && (
                   <div className="grid grid-cols-4 items-center gap-2 px-3 text-[11px] uppercase tracking-wider text-muted-foreground">
-                    <span>Rate</span>
-                    <span className="text-right">TTC</span>
-                    <span className="text-right">VAT</span>
-                    <span className="text-right">HT</span>
+                    <span>{t('Rate')}</span>
+                    <span className="text-right">{t('TTC')}</span>
+                    <span className="text-right">{t('VAT')}</span>
+                    <span className="text-right">{t('HT')}</span>
                   </div>
                 )}
-                {rates.length === 0 && <p className="text-sm text-muted-foreground">No VAT-rated sales in this period.</p>}
+                {rates.length === 0 && <p className="text-sm text-muted-foreground">{t('No VAT-rated sales in this period.')}</p>}
                 {rates.map((rate) => {
                   const bucket = report.byRate[rate]
                   return (
                     <div key={rate} className="grid grid-cols-4 items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-                      <span className="font-semibold">VAT {rate}%</span>
+                      <span className="font-semibold">{t('VAT {rate}%', { rate })}</span>
                       <span className="text-right tabular-nums">{money(bucket.totalTtcCents, currency)}</span>
                       <span className="text-right tabular-nums text-muted-foreground">{money(bucket.vatCents, currency)}</span>
                       <span className="text-right tabular-nums text-muted-foreground">{money(bucket.htCents, currency)}</span>
@@ -221,10 +224,10 @@ export function VatReportSection() {
               </div>
 
               <div className="space-y-2">
-                <Label className="block">By category (TTC)</Label>
+                <Label className="block">{t('By category (TTC)')}</Label>
                 {Object.entries(report.byCategory).map(([category, cents]) => (
                   <div key={category} className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-                    <span>{CATEGORY_LABELS[category] || category}</span>
+                    <span>{t(CATEGORY_LABELS[category] || category)}</span>
                     <span className="font-semibold tabular-nums">{money(cents, currency)}</span>
                   </div>
                 ))}
@@ -233,19 +236,19 @@ export function VatReportSection() {
               <div className="flex flex-wrap gap-2 pt-1">
                 <Button variant="outline" asChild>
                   <a href={vatExportUrl(params)} download>
-                    <FileDown /> Export CSV ledger
+                    <FileDown /> {t('Export CSV ledger')}
                   </a>
                 </Button>
                 {!report.closed && (
                   <ConfirmDialog
                     trigger={
                       <Button variant="outline" disabled={closing}>
-                        <Lock /> {closing ? 'Closing…' : 'Close period'}
+                        <Lock /> {closing ? t('Closing…') : t('Close period')}
                       </Button>
                     }
-                    title={`Close VAT period ${report.periodKey}?`}
-                    description="Once closed, this period's sales history can no longer be cleared from Settings → Danger Zone. Use this after the VAT declaration has been filed."
-                    confirmLabel="Close period"
+                    title={t('Close VAT period {periodKey}?', { periodKey: report.periodKey })}
+                    description={t("Once closed, this period's sales history can no longer be cleared from Settings → Danger Zone. Use this after the VAT declaration has been filed.")}
+                    confirmLabel={t('Close period')}
                     onConfirm={() => void closePeriod()}
                   />
                 )}
@@ -255,26 +258,26 @@ export function VatReportSection() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Closed periods</CardTitle>
-              <CardDescription>Periods locked for accounting — their history is protected from deletion.</CardDescription>
+              <CardTitle className="text-base">{t('Closed periods')}</CardTitle>
+              <CardDescription>{t('Periods locked for accounting — their history is protected from deletion.')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              {closures.length === 0 && <p className="text-sm text-muted-foreground">No periods closed yet.</p>}
+              {closures.length === 0 && <p className="text-sm text-muted-foreground">{t('No periods closed yet.')}</p>}
               {closures.map((c) => (
                 <div key={c.id || c.periodKey} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
                   <div>
                     <p className="font-semibold">
-                      {c.periodKey} <span className="font-normal text-muted-foreground">({c.periodType})</span>
+                      {c.periodKey} <span className="font-normal text-muted-foreground">({t(c.periodType)})</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {new Date(c.fromDate).toLocaleDateString()} – {new Date(c.toDate).toLocaleDateString()}
-                      {c.closedBy ? ` · by ${c.closedBy}` : ''}
+                      {c.closedBy ? t(' · by {user}', { user: c.closedBy }) : ''}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold tabular-nums">{money(c.totalTtcCents, currency)}</p>
                     <p className="text-xs text-muted-foreground tabular-nums">
-                      VAT {money(c.totalVatCents, currency)} · HT {money(c.totalHtCents, currency)}
+                      {t('VAT {vat} · HT {ht}', { vat: money(c.totalVatCents, currency), ht: money(c.totalHtCents, currency) })}
                     </p>
                   </div>
                 </div>

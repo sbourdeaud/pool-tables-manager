@@ -1,0 +1,112 @@
+name: Release on merge to master
+
+on:
+  push:
+    branches: [master, main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: release-on-merge
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag, release and publish image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+
+          # Skip when HEAD is already tagged (manual releases, re-runs).
+          if git describe --tags --exact-match HEAD >/dev/null 2>&1; then
+            echo "HEAD is already tagged — nothing to release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          LATEST=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          RANGE="${LATEST}..HEAD"
+          SUBJECTS=$(git log "$RANGE" --pretty=format:%s || true)
+          BODIES=$(git log "$RANGE" --pretty=format:%B || true)
+
+          BUMP=patch
+          if echo "$BODIES" | grep -q 'BREAKING CHANGE'; then
+            BUMP=major
+          elif echo "$SUBJECTS" | grep -qE '^[a-zA-Z]+(\([^)]+\))?!:' ; then
+            BUMP=major
+          elif echo "$SUBJECTS" | grep -qiE '^(feat|feature)(\([^)]+\))?:' ; then
+            BUMP=minor
+          fi
+
+          V=${LATEST#v}
+          MAJ=${V%%.*}
+          REST=${V#*.}
+          MIN=${REST%%.*}
+          PAT=${REST#*.}
+          case "$BUMP" in
+            major) MAJ=$((MAJ + 1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN + 1)); PAT=0 ;;
+            patch) PAT=$((PAT + 1)) ;;
+          esac
+          TAG="v${MAJ}.${MIN}.${PAT}"
+
+          echo "Latest tag: $LATEST — bump: $BUMP — next: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "previous=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Create GitHub release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --title "$TAG" --generate-notes --latest
+
+          # Append how to run the published image.
+          body=$(mktemp)
+          gh release view "$TAG" --json body -q .body > "$body"
+          {
+            printf '\n---\n\n'
+            printf '**Container image** (linux/amd64, linux/arm64):\n\n'
+            printf '```bash\ndocker pull ghcr.io/%s:%s\ndocker pull ghcr.io/%s:latest\n```\n' "$GITHUB_REPOSITORY" "$TAG" "$GITHUB_REPOSITORY"
+            printf '\nUpgrade with `git pull && docker compose up -d --build`; database migrations apply automatically.\n'
+          } >> "$body"
+          gh release edit "$TAG" --notes-file "$body"
+
+      - name: Publish container image
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A tag pushed with GITHUB_TOKEN does not trigger other workflows, so
+          # dispatch the image publish explicitly (workflow_dispatch is allowed).
+          gh workflow run publish-image.yml -f tag="$TAG" -f update_latest=true

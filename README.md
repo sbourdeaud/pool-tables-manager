@@ -6,6 +6,17 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 > [!NOTE]
 > **AI-generated code**: This application is coded using AI (built pair-programming style with [Kilo Code](https://github.com/Kilo-Org/kilocode), an agentic coding assistant). Review the code and test it in your own environment before using it in production.
 
+## Table of Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quick Start](#quick-start)
+- [Technology Stack](#technology-stack)
+- [Development](#development)
+- [Updating](#updating)
+- [Documentation](#documentation)
+- [Support](#support)
+
 ## Features
 
 - **Session Management**: Track active sessions, players and table usage with live timers
@@ -15,10 +26,11 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 - **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
 - **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
 - **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
+- **Database Backups**: one-click export of a consistent, compressed snapshot and transactional restore — Admin → Database Backup
 - **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
-- **Multi-language**: English and French menu/locale support
+- **Multi-language UI**: English, French, German, Spanish and Italian for the staff app, player table view and public status board (menu item names support English/French translations)
 
 ## Screenshots
 
@@ -37,6 +49,10 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 **Admin panel** — drinks menu, table types & inventory, subscriptions, reports and settings:
 
 ![Admin panel](docs/screenshots/admin-panel.png)
+
+**Database backup** — download a compressed snapshot or restore one (Admin → Database Backup):
+
+![Database backup](docs/screenshots/backup.png)
 
 **Drink menu management** — categories group the menu on the player ordering screen:
 
@@ -73,6 +89,12 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 ![Card terminal waiting for the customer](docs/screenshots/pos-card.png)
 
 ![Cash & Payments with day-close reconciliation](docs/screenshots/pos-cash.png)
+
+**In-app documentation** — Help menu renders the User Guide with a table of contents; `/api-docs` is an interactive Swagger UI:
+
+![In-app help](docs/screenshots/help.png)
+
+![API reference (Swagger UI)](docs/screenshots/api-docs.png)
 
 **Login** — full-page local admin login (OIDC deployments redirect to the identity provider):
 
@@ -158,6 +180,8 @@ Database migrations (if any) are applied automatically at container start — se
 - **[docs/POS-INTEGRATION-PLAN.md](docs/POS-INTEGRATION-PLAN.md)**: point-of-sale / card terminal integration plan
 - **[frontend/README.md](frontend/README.md)**: React app, shadcn CLI workflow and build notes
 - **[backend/tests/README.md](backend/tests/README.md)**: testing documentation and CI integration
+- **In-app help**: the user guide is available at `/help` in the app (Help menu) and in the [repository wiki](https://github.com/sbourdeaud/pool-tables-manager/wiki)
+- **API reference**: interactive Swagger UI at `/api-docs` (OpenAPI spec at [`openapi.json`](backend/public/openapi.json))
 
 ## Support
 

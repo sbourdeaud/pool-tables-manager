@@ -211,6 +211,10 @@ export function apiSetPlayerCount(sessionId: string, numberOfPlayers: number) {
   return apiSend('/api/sessions/' + sessionId, 'PATCH', { numberOfPlayers })
 }
 
+export function apiUpdateSession(sessionId: string, patch: { numberOfPlayers?: number; subscriberCount?: number }) {
+  return apiSend('/api/sessions/' + sessionId, 'PATCH', patch)
+}
+
 export function apiAddTabItem(sessionId: string, item: { description: string; quantity: number; unitPrice: number; vatRatePercent?: number | null }) {
   return apiSend('/api/sessions/' + sessionId + '/items', 'POST', { type: 'menu_item', ...item })
 }
@@ -598,6 +602,37 @@ export function apiCloseCashShift(id: string, body: { countedCents: number; note
 
 export function apiCashShifts() {
   return apiGet<CashShift[]>('/api/cash-shifts')
+}
+
+// ---- Database backup ----
+export function backupExportUrl() {
+  return '/api/admin/backup/export'
+}
+
+export interface BackupImportResult {
+  ok?: boolean
+  error?: string
+  missing?: string[]
+  message?: string
+  sizeBytes?: number
+  migrations?: { code: number; output: string }
+  disconnected?: boolean
+}
+
+export async function apiImportBackup(file: File): Promise<{ ok: boolean; status: number; data?: BackupImportResult }> {
+  try {
+    const body = await file.arrayBuffer()
+    const res = await fetch('/api/admin/backup/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body,
+    })
+    const data = (await res.json().catch(() => undefined)) as BackupImportResult | undefined
+    if (res.status === 401) notifyUnauthorized()
+    return { ok: res.ok, status: res.status, data }
+  } catch (err) {
+    return { ok: false, status: 0, data: { error: 'network_error', message: err instanceof Error ? err.message : 'network error' } }
+  }
 }
 
 // ---- Public (player / status) ----

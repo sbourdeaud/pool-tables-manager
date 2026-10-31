@@ -40,6 +40,8 @@ The header has three entries plus the theme toggle and a logout button:
 - **Dashboard** - Live tables, sessions and pending orders
 - **Admin** - Menu, table inventory, subscriptions, reports and settings
 - **Public Status** - Opens the customer-facing availability board in a new tab (no login needed)
+- **Help** - In-app user guide (this document) with a table of contents; includes a link to the API reference
+- **Language selector** - Available in the header (desktop), Settings → Localization & Pricing, the player table page and the public status board. The choice is remembered on the device; drink names follow the menu translations (English/French today)
 - **Log out** (top-right) - Ends the admin session. With OIDC enabled the identity-provider
   session is ended too when supported; you are returned to the login page
 
@@ -88,7 +90,7 @@ Each tile shows:
 - **Transfer** - Move the session to another table
 - **Checkout** - Apply a discount, print the tab estimate, complete payment and print the invoice
 - **−** next to the player count - Player settlement (one player pays their share and leaves)
-- **+** - Add a player
+- **+** - Add a player — asks whether they are a subscriber (affects the discount)
 - **QR thumbnail** - Enlarge the player QR code
 
 ---
@@ -145,10 +147,11 @@ When subscribers play with non-subscribers:
 
 ### Quick Add Drinks
 
-1. Click **🍺 Drink** on an active table tile
-2. Browse the drink menu
+1. Click **Drink** on an active table tile
+2. Browse the drink menu — use the **category pills** (Cold / Hot / Alcoholic) and the **search box**
+   to find items quickly
 3. Use **+** and **-** buttons to select quantities
-4. Click **Add to Tab**
+4. Click **Add to tab**
 
 ### Custom Charges
 
@@ -288,7 +291,7 @@ Example: `http://localhost:3000/table.html?number=5`
 - Running total
 - A drink menu they can order from directly (PIN required) — see [Pending Orders](#pending-orders-player-self-service)
 
-**Auto-Refresh:** View updates every 60 seconds automatically.
+**Auto-Refresh:** The view refreshes automatically (every ~10 seconds, and immediately when you return to the tab), so fulfilled orders and tab changes appear promptly.
 
 ### QR Codes
 
@@ -380,7 +383,7 @@ Access via menu (☰) → **Settings**
 - **Application Name:** Header display name (e.g., "Joe's Pool Hall")
 - **Public Base URL:** Hostname/IP or FQDN used when generating table QR codes (see [QR Codes](#qr-codes)); leave blank to use the address you're currently browsing from
 - **Dashboard layout:** Sections (collapsible groups + flag navigator) or Tabs (one type per tab)
-- **Language:** English or Français
+- **Language:** English, Français, Deutsch, Español or Italiano — changes the interface on this device (also selectable from the header, the player table page and the public status board)
 - **Currency:** $ (USD), € (EUR), or £ (GBP)
 - **Subscriber Discount:** Percentage discount (0-100%)
 - **Audio Cues:** Toggle UI click sounds and the new-order chime
@@ -633,7 +636,7 @@ The application is fully responsive and works on:
 
 **Items not appearing on tab**
 - Confirm item was added (check for success message)
-- Wait 60 seconds for auto-refresh (public view)
+- Wait ~10 seconds for auto-refresh (public view), or return to the tab to refresh immediately
 - Refresh the dashboard manually
 
 **Wrong amounts showing**
@@ -654,27 +657,35 @@ If issues persist:
 ## Frequently Asked Questions
 
 **Q: Can I edit a session after it's started?**
+
 A: Yes, you can add/remove items and adjust player count during the session.
 
 **Q: What happens if I accidentally end a session?**
+
 A: Ended sessions cannot be reopened. You would need to start a new session.
 
 **Q: Can players add items themselves?**
+
 A: No, only staff can add items. Players can only view their tab.
 
 **Q: How do I handle comp (free) sessions?**
+
 A: Start a session with 1 player, add items, then checkout and don't charge.
 
 **Q: Can I change the hourly rate mid-session?**
+
 A: No, rate changes only affect new sessions. Active sessions use the original rate.
 
 **Q: What if internet goes down?**
+
 A: The system requires network access. Active sessions remain, but updates pause until connection restored.
 
 **Q: Can I export report data?**
+
 A: Currently, reports are view-only. Use browser print/PDF for records.
 
 **Q: How far back can I view reports?**
+
 A: As long as session history is retained (until manually cleared via Settings).
 
 ---
@@ -682,36 +693,36 @@ A: As long as session history is retained (until manually cleared via Settings).
 ## Feature Summary
 
 ### Core Features
-✓ Real-time session monitoring
-✓ Automatic time-based charging
-✓ Multi-player support with settlements
-✓ PIN-protected player views
-✓ Drink and item management
-✓ Custom charge support
-✓ Table transfers
-✓ Receipt printing
-✓ Player self-service drink ordering with audio-notified Pending Orders queue
-✓ QR codes for one-tap table access from a player's phone
+- Real-time session monitoring
+- Automatic time-based charging
+- Multi-player support with settlements
+- PIN-protected player views
+- Drink and item management
+- Custom charge support
+- Table transfers
+- Receipt printing
+- Player self-service drink ordering with audio-notified Pending Orders queue
+- QR codes for one-tap table access from a player's phone
 
 ### Admin Features
-✓ Table type and inventory management
-✓ Bulk table creation
-✓ Drink menu configuration with VAT rates
-✓ Subscription management
-✓ Financial reporting (multiple periods)
-✓ VAT (TVA) reporting, CSV export, and period closures for French compliance
-✓ Multi-currency support
-✓ Subscriber discount system
-✓ Session history management
-✓ Configurable public base URL for QR codes
-✓ Fiscal/legal business information
+- Table type and inventory management
+- Bulk table creation
+- Drink menu configuration with VAT rates
+- Subscription management
+- Financial reporting (multiple periods)
+- VAT (TVA) reporting, CSV export, and period closures for French compliance
+- Multi-currency support
+- Subscriber discount system
+- Session history management
+- Configurable public base URL for QR codes
+- Fiscal/legal business information
 
 ### Player Features
-✓ Real-time tab viewing
-✓ Auto-refreshing display
-✓ Mobile-friendly interface
-✓ PIN-protected access
-✓ Self-service drink ordering via QR code
+- Real-time tab viewing
+- Auto-refreshing display
+- Mobile-friendly interface
+- PIN-protected access
+- Self-service drink ordering via QR code
 
 ---
 
