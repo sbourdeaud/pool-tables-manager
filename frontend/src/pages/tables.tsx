@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 
 interface TypeForm {
   name: string
@@ -39,6 +40,7 @@ const EMPTY_FORM: TypeForm = { name: '', hourly: '', vat: '20', maxHours: '' }
 export function TablesPage() {
   const { settings, save: saveSetting } = useSettings()
   const { toast } = useToast()
+  const { t } = useI18n()
   const currency = settings.currency || '$'
   const [types, setTypes] = React.useState<TableType[]>([])
   const [tables, setTables] = React.useState<TableRow[]>([])
@@ -95,8 +97,8 @@ export function TablesPage() {
       vatRatePercent: parseInt(form.vat, 10),
       maxUsedHours: form.maxHours ? parseInt(form.maxHours, 10) : null,
     })
-    if (!result.ok) return toast({ title: 'Failed to add table type', variant: 'error' })
-    toast({ title: 'Table type added' })
+    if (!result.ok) return toast({ title: t('Failed to add table type'), variant: 'error' })
+    toast({ title: t('Table type added') })
     setForm(EMPTY_FORM)
     await load()
   }
@@ -109,8 +111,8 @@ export function TablesPage() {
       vatRatePercent: parseInt(editing.form.vat, 10),
       maxUsedHours: editing.form.maxHours ? parseInt(editing.form.maxHours, 10) : null,
     })
-    if (!result.ok) return toast({ title: 'Failed to update table type', variant: 'error' })
-    toast({ title: 'Table type updated' })
+    if (!result.ok) return toast({ title: t('Failed to update table type'), variant: 'error' })
+    toast({ title: t('Table type updated') })
     setEditing(null)
     await load()
   }
@@ -118,17 +120,17 @@ export function TablesPage() {
   const removeType = async (id: string) => {
     const result = await apiDeleteTableType(id)
     if (!result.ok) {
-      return toast({ title: 'Cannot delete table type', description: result.status === 409 ? 'Tables exist for this type.' : result.error, variant: 'error' })
+      return toast({ title: t('Cannot delete table type'), description: result.status === 409 ? t('Tables exist for this type.') : result.error, variant: 'error' })
     }
-    toast({ title: 'Table type deleted' })
+    toast({ title: t('Table type deleted') })
     await load()
   }
 
   const addTables = async (typeId: string) => {
     const quantity = quantities[typeId] || 1
     const result = await apiAddTables(typeId, quantity)
-    if (!result.ok) return toast({ title: 'Failed to add tables', variant: 'error' })
-    toast({ title: `${quantity} table${quantity === 1 ? '' : 's'} added` })
+    if (!result.ok) return toast({ title: t('Failed to add tables'), variant: 'error' })
+    toast({ title: quantity === 1 ? t('{count} table added', { count: quantity }) : t('{count} tables added', { count: quantity }) })
     setQuantities((q) => ({ ...q, [typeId]: 1 }))
     await load()
   }
@@ -137,26 +139,26 @@ export function TablesPage() {
     if (!editingNumber) return
     const next = parseInt(editingNumber.value, 10)
     if (!Number.isFinite(next) || next < 1) {
-      return toast({ title: 'Enter a valid table number (1 or more)', variant: 'error' })
+      return toast({ title: t('Enter a valid table number (1 or more)'), variant: 'error' })
     }
     const result = await apiUpdateTableNumber(id, next)
     if (!result.ok) {
       return toast({
-        title: result.status === 409 ? 'Number already in use' : 'Failed to update table number',
-        description: result.status === 409 ? 'Another table already has this number.' : result.error,
+        title: result.status === 409 ? t('Number already in use') : t('Failed to update table number'),
+        description: result.status === 409 ? t('Another table already has this number.') : result.error,
         variant: 'error',
       })
     }
     setEditingNumber(null)
-    toast({ title: `Table renumbered to #${next}` })
+    toast({ title: t('Table renumbered to #{number}', { number: next }) })
     await load()
   }
 
   const quickStart = async (table: TableRow) => {
     const result = await apiStartSession(table.id, 1, 0)
-    if (!result.ok) return toast({ title: 'Failed to start session', variant: 'error' })
+    if (!result.ok) return toast({ title: t('Failed to start session'), variant: 'error' })
     playPoolBallSound()
-    toast({ title: `Session started on table #${table.number}` })
+    toast({ title: t('Session started on table #{number}', { number: table.number }) })
     await load()
   }
 
@@ -164,29 +166,29 @@ export function TablesPage() {
     <div className="space-y-6">
       <div>
         <Link to="/admin" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Back to Admin
+          <ArrowLeft className="h-4 w-4" /> {t('Back to Admin')}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight">Table Types &amp; Inventory</h1>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">{t('Table Types & Inventory')}</h1>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Plus className="h-4 w-4" /> Add table type
+            <Plus className="h-4 w-4" /> {t('Add table type')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={createType} className="grid gap-4 sm:grid-cols-[1fr_150px_150px_120px_auto] sm:items-end">
             <div className="space-y-1.5">
-              <Label htmlFor="type-name">Name</Label>
-              <Input id="type-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="American" required />
+              <Label htmlFor="type-name">{t('Name')}</Label>
+              <Input id="type-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('American')} required />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="type-hourly">Hourly rate ({currency})</Label>
+              <Label htmlFor="type-hourly">{t('Hourly rate ({currency})', { currency })}</Label>
               <Input id="type-hourly" type="number" min="0" step="0.01" value={form.hourly} onChange={(e) => setForm({ ...form, hourly: e.target.value })} placeholder="12.00" required />
             </div>
             <div className="space-y-1.5">
-              <Label>VAT</Label>
+              <Label>{t('VAT')}</Label>
               <Select value={form.vat} onValueChange={(vat) => setForm({ ...form, vat })}>
                 <SelectTrigger>
                   <SelectValue />
@@ -199,10 +201,10 @@ export function TablesPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="type-max">Max hours</Label>
-              <Input id="type-max" type="number" min="0" step="1" value={form.maxHours} onChange={(e) => setForm({ ...form, maxHours: e.target.value })} placeholder="optional" />
+              <Label htmlFor="type-max">{t('Max hours')}</Label>
+              <Input id="type-max" type="number" min="0" step="1" value={form.maxHours} onChange={(e) => setForm({ ...form, maxHours: e.target.value })} placeholder={t('optional')} />
             </div>
-            <Button type="submit">Add Table Type</Button>
+            <Button type="submit">{t('Add Table Type')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -218,21 +220,21 @@ export function TablesPage() {
                   <CardTitle className="flex items-center gap-2 text-base">
                     <CircleDot className="h-4 w-4" /> {type.name_en}
                     <span className="text-xs font-normal text-muted-foreground">
-                      {money(type.base_hourly_cents, currency)}/h · VAT {type.vatRatePercent ?? 20}%
-                      {type.maxUsedHours ? ` · maintenance every ${type.maxUsedHours}h` : ''}
+                      {t('{amount}/h · VAT {rate}%', { amount: money(type.base_hourly_cents, currency), rate: type.vatRatePercent ?? 20 })}
+                      {type.maxUsedHours ? t(' · maintenance every {hours}h', { hours: type.maxUsedHours }) : ''}
                     </span>
                   </CardTitle>
-                  <CardDescription>{typeTables.length} table{typeTables.length === 1 ? '' : 's'}</CardDescription>
+                  <CardDescription>{typeTables.length === 1 ? t('{count} table', { count: typeTables.length }) : t('{count} tables', { count: typeTables.length })}</CardDescription>
                 </div>
                 <div className="flex gap-1">
-                  <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Move up" disabled={index === 0} onClick={() => moveType(type.name_en, -1)}>
+                  <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={t('Move up')} disabled={index === 0} onClick={() => moveType(type.name_en, -1)}>
                     <ArrowUp />
                   </Button>
                   <Button
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
-                    aria-label="Move down"
+                    aria-label={t('Move down')}
                     disabled={index === orderedTypes.length - 1}
                     onClick={() => moveType(type.name_en, 1)}
                   >
@@ -242,7 +244,7 @@ export function TablesPage() {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
-                    aria-label="Edit type"
+                    aria-label={t('Edit type')}
                     onClick={() =>
                       setEditing({
                         id: type.id,
@@ -259,13 +261,13 @@ export function TablesPage() {
                   </Button>
                   <ConfirmDialog
                     trigger={
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label="Delete type">
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label={t('Delete type')}>
                         <Trash2 />
                       </Button>
                     }
-                    title="Delete table type?"
-                    description="This only works if no tables exist for this type."
-                    confirmLabel="Delete type"
+                    title={t('Delete table type?')}
+                    description={t('This only works if no tables exist for this type.')}
+                    confirmLabel={t('Delete type')}
                     onConfirm={() => void removeType(type.id)}
                   />
                 </div>
@@ -286,7 +288,7 @@ export function TablesPage() {
                       <SelectItem value="0">0%</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Input type="number" min="0" step="1" placeholder="Max h" value={editing.form.maxHours} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, maxHours: e.target.value } })} />
+                  <Input type="number" min="0" step="1" placeholder={t('Max h')} value={editing.form.maxHours} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, maxHours: e.target.value } })} />
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => void saveType()}>
                       Save
@@ -300,7 +302,7 @@ export function TablesPage() {
 
               <div className="flex flex-wrap items-end gap-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor={`qty-${type.id}`}>Quantity</Label>
+                  <Label htmlFor={`qty-${type.id}`}>{t('Quantity')}</Label>
                   <Input
                     id={`qty-${type.id}`}
                     type="number"
@@ -311,12 +313,12 @@ export function TablesPage() {
                   />
                 </div>
                 <Button variant="outline" onClick={() => void addTables(type.id)}>
-                  <Plus /> Add Tables
+                  <Plus /> {t('Add Tables')}
                 </Button>
               </div>
 
               <div className="space-y-2">
-                {typeTables.length === 0 && <p className="text-sm text-muted-foreground">No tables of this type yet.</p>}
+                {typeTables.length === 0 && <p className="text-sm text-muted-foreground">{t('No tables of this type yet.')}</p>}
                 {typeTables.map((tb) => (
                   <div key={tb.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2">
                     {editingNumber?.id === tb.id ? (
@@ -325,7 +327,7 @@ export function TablesPage() {
                           type="number"
                           min="1"
                           autoFocus
-                          aria-label="Table number"
+                          aria-label={t('Table number')}
                           className="h-7 w-20"
                           value={editingNumber.value}
                           onChange={(e) => setEditingNumber({ id: tb.id, value: e.target.value })}
@@ -334,10 +336,10 @@ export function TablesPage() {
                             if (e.key === 'Escape') setEditingNumber(null)
                           }}
                         />
-                        <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Save table number" onClick={() => void saveTableNumber(tb.id)}>
+                        <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={t('Save table number')} onClick={() => void saveTableNumber(tb.id)}>
                           <Check />
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Cancel" onClick={() => setEditingNumber(null)}>
+                        <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={t('Cancel')} onClick={() => setEditingNumber(null)}>
                           <X />
                         </Button>
                       </span>
@@ -348,8 +350,8 @@ export function TablesPage() {
                           size="icon"
                           variant="ghost"
                           className="h-6 w-6 text-muted-foreground"
-                          aria-label={`Change table number ${tb.number}`}
-                          title="Change table number"
+                          aria-label={t('Change table number {number}', { number: tb.number })}
+                          title={t('Change table number')}
                           onClick={() => setEditingNumber({ id: tb.id, value: String(tb.number) })}
                         >
                           <Pencil className="h-3 w-3" />
@@ -362,12 +364,12 @@ export function TablesPage() {
                         tb.status === 'maintenance' ? 'bg-amber-500/15 text-amber-600' : 'bg-accent text-accent-foreground',
                       )}
                     >
-                      {tb.status}
+                      {tb.status === 'maintenance' ? t('Maintenance') : tb.status === 'occupied' ? t('Occupied') : t('Available')}
                     </span>
                     <div className="ml-auto flex gap-1">
                       {tb.status !== 'maintenance' && (
                         <Button size="sm" variant="outline" onClick={() => void quickStart(tb)}>
-                          <Play /> Start
+                          <Play /> {t('Start')}
                         </Button>
                       )}
                       <Button
@@ -375,17 +377,17 @@ export function TablesPage() {
                         variant="outline"
                         onClick={() => void apiSetTableStatus(tb.id, tb.status === 'maintenance' ? 'available' : 'maintenance').then(load)}
                       >
-                        <Wrench /> {tb.status === 'maintenance' ? 'Set available' : 'Maintenance'}
+                        <Wrench /> {tb.status === 'maintenance' ? t('Set available') : t('Maintenance')}
                       </Button>
                       <ConfirmDialog
                         trigger={
                           <Button size="sm" variant="outline" className="text-destructive">
-                            <Trash2 /> Delete
+                            <Trash2 /> {t('Delete')}
                           </Button>
                         }
-                        title={`Delete table #${tb.number}?`}
-                        description="The table will be removed from the venue."
-                        confirmLabel="Delete table"
+                        title={t('Delete table #{number}?', { number: tb.number })}
+                        description={t('The table will be removed from the venue.')}
+                        confirmLabel={t('Delete table')}
                         onConfirm={() => void apiDeleteTable(tb.id).then(load)}
                       />
                     </div>
