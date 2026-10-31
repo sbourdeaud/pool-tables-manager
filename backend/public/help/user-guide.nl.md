@@ -624,27 +624,35 @@ Als het probleem blijft bestaan:
 ## Veelgestelde vragen
 
 **V: Kan ik een sessie aanpassen nadat deze is gestart?**
+
 A: Ja, je kunt items toevoegen/verwijderen en tijdens de sessie het aantal spelers aanpassen.
 
 **V: Wat gebeurt er als ik per ongeluk een sessie beëindig?**
+
 A: Beëindigde sessies kunnen niet opnieuw worden geopend. Je moet dan een nieuwe sessie starten.
 
 **V: Kunnen spelers zelf items toevoegen?**
+
 A: Nee, alleen personeel kan items toevoegen. Spelers kunnen alleen hun rekening bekijken.
 
 **V: Hoe verwerk ik gratis sessies?**
+
 A: Start een sessie met 1 speler, voeg items toe en reken daarna af zonder kosten in rekening te brengen.
 
 **V: Kan ik het uurtarief tijdens een sessie wijzigen?**
+
 A: Nee, tariefwijzigingen gelden alleen voor nieuwe sessies. Voor actieve sessies blijft het oorspronkelijke tarief gelden.
 
 **V: Wat als het internet uitvalt?**
+
 A: Het systeem heeft netwerktoegang nodig. Actieve sessies blijven bestaan, maar updates worden onderbroken totdat de verbinding is hersteld.
 
 **V: Kan ik rapportgegevens exporteren?**
+
 A: Rapporten zijn momenteel alleen te bekijken. Gebruik Afdrukken/PDF in je browser om ze te bewaren.
 
 **V: Hoe ver terug kan ik rapporten bekijken?**
+
 A: Zolang de sessiegeschiedenis bewaard blijft (totdat deze handmatig via Instellingen wordt gewist).
 
 ---
@@ -652,36 +660,36 @@ A: Zolang de sessiegeschiedenis bewaard blijft (totdat deze handmatig via Instel
 ## Functieoverzicht
 
 ### Kernfuncties
-✓ Live sessiebewaking
-✓ Automatische tijdgebaseerde kostenberekening
-✓ Ondersteuning voor meerdere spelers met afrekeningen
-✓ Met pincode beveiligde spelerweergaven
-✓ Beheer van dranken en items
-✓ Ondersteuning voor aangepaste kosten
-✓ Tafelsessies overdragen
-✓ Bonnen afdrukken
-✓ Zelfbediening voor drankbestellingen door spelers, met een met geluid gemelde wachtrij voor openstaande bestellingen
-✓ QR-codes waarmee spelers met één tik de tafel op hun telefoon openen
+- Live sessiebewaking
+- Automatische tijdgebaseerde kostenberekening
+- Ondersteuning voor meerdere spelers met afrekeningen
+- Met pincode beveiligde spelerweergaven
+- Beheer van dranken en items
+- Ondersteuning voor aangepaste kosten
+- Tafelsessies overdragen
+- Bonnen afdrukken
+- Zelfbediening voor drankbestellingen door spelers, met een met geluid gemelde wachtrij voor openstaande bestellingen
+- QR-codes waarmee spelers met één tik de tafel op hun telefoon openen
 
 ### Beheerfuncties
-✓ Beheer van tafeltypen en tafelvoorraad
-✓ Meerdere tafels tegelijk aanmaken
-✓ Drankenkaart configureren met btw-tarieven
-✓ Abonnementen beheren
-✓ Financiële rapportage (meerdere periodes)
-✓ Btw-rapportage (TVA), CSV-export en periodeafsluitingen voor Franse regelgeving
-✓ Ondersteuning voor meerdere valuta
-✓ Kortingssysteem voor abonnees
-✓ Sessiegeschiedenis beheren
-✓ Openbare basis-URL voor QR-codes instellen
-✓ Fiscale/juridische bedrijfsgegevens
+- Beheer van tafeltypen en tafelvoorraad
+- Meerdere tafels tegelijk aanmaken
+- Drankenkaart configureren met btw-tarieven
+- Abonnementen beheren
+- Financiële rapportage (meerdere periodes)
+- Btw-rapportage (TVA), CSV-export en periodeafsluitingen voor Franse regelgeving
+- Ondersteuning voor meerdere valuta
+- Kortingssysteem voor abonnees
+- Sessiegeschiedenis beheren
+- Openbare basis-URL voor QR-codes instellen
+- Fiscale/juridische bedrijfsgegevens
 
 ### Spelerfuncties
-✓ Rekeningen live bekijken
-✓ Weergave wordt automatisch vernieuwd
-✓ Mobielvriendelijke interface
-✓ Toegang beveiligd met een pincode
-✓ Zelf dranken bestellen via een QR-code
+- Rekeningen live bekijken
+- Weergave wordt automatisch vernieuwd
+- Mobielvriendelijke interface
+- Toegang beveiligd met een pincode
+- Zelf dranken bestellen via een QR-code
 
 ---
 

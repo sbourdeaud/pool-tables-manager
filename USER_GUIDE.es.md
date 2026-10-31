@@ -590,27 +590,35 @@ Si el problema persiste:
 ## Preguntas frecuentes
 
 **P: ¿Puedo editar una sesión después de iniciarla?**
+
 R: Sí, puedes añadir o quitar artículos y ajustar el número de jugadores durante la sesión.
 
 **P: ¿Qué pasa si finalizo una sesión por accidente?**
+
 R: Las sesiones finalizadas no se pueden volver a abrir. Tendrías que iniciar una sesión nueva.
 
 **P: ¿Los jugadores pueden añadir artículos por su cuenta?**
+
 R: No, solo el personal puede añadir artículos. Los jugadores solo pueden consultar su cuenta.
 
 **P: ¿Cómo gestiono las sesiones de cortesía (gratis)?**
+
 R: Inicia una sesión con 1 jugador, añade los artículos y luego cobra sin solicitar el pago.
 
 **P: ¿Puedo cambiar la tarifa por hora durante una sesión?**
+
 R: No, los cambios de tarifa solo afectan a las sesiones nuevas. Las sesiones activas mantienen la tarifa original.
 
 **P: ¿Qué pasa si se cae Internet?**
+
 R: El sistema requiere acceso a la red. Las sesiones activas continúan, pero las actualizaciones se pausan hasta que se restablezca la conexión.
 
 **P: ¿Puedo exportar los datos de los informes?**
+
 R: Actualmente, los informes son solo de consulta. Usa la función de impresión del navegador o guarda una copia en PDF.
 
 **P: ¿Hasta cuándo puedo consultar los informes?**
+
 R: Mientras se conserve el historial de sesiones (hasta que se borre manualmente desde Ajustes).
 
 ---
@@ -618,36 +626,36 @@ R: Mientras se conserve el historial de sesiones (hasta que se borre manualmente
 ## Resumen de funciones
 
 ### Funciones principales
-✓ Seguimiento de sesiones en tiempo real
-✓ Cobro automático según el tiempo
-✓ Compatibilidad con varios jugadores y liquidaciones
-✓ Vistas para jugadores protegidas con PIN
-✓ Gestión de bebidas y artículos
-✓ Compatibilidad con cargos personalizados
-✓ Transferencia de mesas
-✓ Impresión de recibos
-✓ Pedidos de bebidas de autoservicio para jugadores con cola de pedidos pendientes y avisos de audio
-✓ Códigos QR para acceder a una mesa con un solo toque desde el teléfono del jugador
+- Seguimiento de sesiones en tiempo real
+- Cobro automático según el tiempo
+- Compatibilidad con varios jugadores y liquidaciones
+- Vistas para jugadores protegidas con PIN
+- Gestión de bebidas y artículos
+- Compatibilidad con cargos personalizados
+- Transferencia de mesas
+- Impresión de recibos
+- Pedidos de bebidas de autoservicio para jugadores con cola de pedidos pendientes y avisos de audio
+- Códigos QR para acceder a una mesa con un solo toque desde el teléfono del jugador
 
 ### Funciones de administración
-✓ Gestión de tipos de mesa e inventario
-✓ Creación de mesas en lote
-✓ Configuración del menú de bebidas con tipos de IVA
-✓ Gestión de suscripciones
-✓ Informes financieros (varios periodos)
-✓ Informes de IVA (TVA), exportación CSV y cierres de periodos para cumplir con la normativa francesa
-✓ Compatibilidad con varias monedas
-✓ Sistema de descuentos para abonados
-✓ Gestión del historial de sesiones
-✓ URL base pública configurable para los códigos QR
-✓ Información fiscal/legal de la empresa
+- Gestión de tipos de mesa e inventario
+- Creación de mesas en lote
+- Configuración del menú de bebidas con tipos de IVA
+- Gestión de suscripciones
+- Informes financieros (varios periodos)
+- Informes de IVA (TVA), exportación CSV y cierres de periodos para cumplir con la normativa francesa
+- Compatibilidad con varias monedas
+- Sistema de descuentos para abonados
+- Gestión del historial de sesiones
+- URL base pública configurable para los códigos QR
+- Información fiscal/legal de la empresa
 
 ### Funciones para jugadores
-✓ Consulta de la cuenta en tiempo real
-✓ Visualización con actualización automática
-✓ Interfaz adaptada a dispositivos móviles
-✓ Acceso protegido con PIN
-✓ Pedidos de bebidas de autoservicio mediante código QR
+- Consulta de la cuenta en tiempo real
+- Visualización con actualización automática
+- Interfaz adaptada a dispositivos móviles
+- Acceso protegido con PIN
+- Pedidos de bebidas de autoservicio mediante código QR
 
 ---
 

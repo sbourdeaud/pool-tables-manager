@@ -590,27 +590,35 @@ Si le problème persiste :
 ## Foire aux questions
 
 **Q : Puis-je modifier une session après son démarrage ?**
+
 R : Oui, vous pouvez ajouter ou supprimer des articles et ajuster le nombre de joueurs pendant la session.
 
 **Q : Que se passe-t-il si je termine une session par erreur ?**
+
 R : Les sessions terminées ne peuvent pas être rouvertes. Vous devrez démarrer une nouvelle session.
 
 **Q : Les joueurs peuvent-ils ajouter eux-mêmes des articles ?**
+
 R : Non, seul le personnel peut ajouter des articles. Les joueurs peuvent uniquement consulter leur addition.
 
 **Q : Comment gérer les sessions offertes (gratuites) ?**
+
 R : Démarrez une session avec 1 joueur, ajoutez les articles, puis terminez l’encaissement sans facturer.
 
 **Q : Puis-je modifier le tarif horaire en cours de session ?**
+
 R : Non, les changements de tarif ne s’appliquent qu’aux nouvelles sessions. Les sessions en cours conservent le tarif initial.
 
 **Q : Que se passe-t-il en cas de coupure d’Internet ?**
+
 R : Le système nécessite un accès au réseau. Les sessions en cours sont conservées, mais les mises à jour sont suspendues jusqu’au rétablissement de la connexion.
 
 **Q : Puis-je exporter les données des rapports ?**
+
 R : Actuellement, les rapports sont consultables uniquement à l’écran. Utilisez l’impression du navigateur ou l’export PDF pour les conserver.
 
 **Q : Jusqu’à quelle date puis-je consulter les rapports ?**
+
 R : Tant que l’historique des sessions est conservé (jusqu’à son effacement manuel dans Paramètres).
 
 ---
@@ -618,36 +626,36 @@ R : Tant que l’historique des sessions est conservé (jusqu’à son effacemen
 ## Récapitulatif des fonctionnalités
 
 ### Fonctionnalités principales
-✓ Suivi des sessions en temps réel
-✓ Facturation automatique selon la durée
-✓ Prise en charge de plusieurs joueurs avec règlements
-✓ Vues des joueurs protégées par code PIN
-✓ Gestion des boissons et des articles
-✓ Prise en charge des frais personnalisés
-✓ Transfert de tables
-✓ Impression des reçus
-✓ Commande de boissons en libre-service par les joueurs, avec file de commandes en attente signalée par un son
-✓ Codes QR pour accéder aux tables d’un seul geste depuis le téléphone d’un joueur
+- Suivi des sessions en temps réel
+- Facturation automatique selon la durée
+- Prise en charge de plusieurs joueurs avec règlements
+- Vues des joueurs protégées par code PIN
+- Gestion des boissons et des articles
+- Prise en charge des frais personnalisés
+- Transfert de tables
+- Impression des reçus
+- Commande de boissons en libre-service par les joueurs, avec file de commandes en attente signalée par un son
+- Codes QR pour accéder aux tables d’un seul geste depuis le téléphone d’un joueur
 
 ### Fonctionnalités d’administration
-✓ Gestion des types de tables et de l’inventaire
-✓ Création groupée de tables
-✓ Configuration de la carte des boissons avec taux de TVA
-✓ Gestion des abonnements
-✓ Rapports financiers (plusieurs périodes)
-✓ Rapports de TVA, export CSV et clôtures de période pour la conformité française
-✓ Prise en charge de plusieurs devises
-✓ Système de remise pour les abonnés
-✓ Gestion de l’historique des sessions
-✓ URL publique de base configurable pour les codes QR
-✓ Informations fiscales/légales de l’entreprise
+- Gestion des types de tables et de l’inventaire
+- Création groupée de tables
+- Configuration de la carte des boissons avec taux de TVA
+- Gestion des abonnements
+- Rapports financiers (plusieurs périodes)
+- Rapports de TVA, export CSV et clôtures de période pour la conformité française
+- Prise en charge de plusieurs devises
+- Système de remise pour les abonnés
+- Gestion de l’historique des sessions
+- URL publique de base configurable pour les codes QR
+- Informations fiscales/légales de l’entreprise
 
 ### Fonctionnalités côté joueur
-✓ Consultation de l’addition en temps réel
-✓ Affichage actualisé automatiquement
-✓ Interface adaptée aux mobiles
-✓ Accès protégé par code PIN
-✓ Commande de boissons en libre-service par code QR
+- Consultation de l’addition en temps réel
+- Affichage actualisé automatiquement
+- Interface adaptée aux mobiles
+- Accès protégé par code PIN
+- Commande de boissons en libre-service par code QR
 
 ---
 
