@@ -98,7 +98,9 @@ Each tile shows:
 1. Click **▶ Start** on an available table
 2. Set the number of players (default: 1)
 3. (Optional) Select subscribers from your list
-   - Subscribers receive discounts when playing
+   - Subscribers receive discounts when playing; **subscriber-only sessions are allowed** (0
+     non-subscribers) and play free table time
+   - At least one player (subscriber or not) is required
 4. Click **Start Session**
 
 **What Happens:**

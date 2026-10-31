@@ -630,6 +630,7 @@ function StartSessionDialog({ state, onClose, onStarted }: { state: DialogState;
 
   const start = async () => {
     if (!table) return
+    if (subs + nonsubs < 1) return
     setBusy(true)
     const result = await apiStartSession(table.id, subs + nonsubs, subs)
     setBusy(false)
@@ -648,14 +649,16 @@ function StartSessionDialog({ state, onClose, onStarted }: { state: DialogState;
         </DialogHeader>
         <DialogBody className="space-y-4">
           <Counter label="Subscribers (free table time)" value={subs} onChange={setSubs} />
-          <Counter label="Non-subscribers" value={nonsubs} min={1} onChange={setNonsubs} />
-          <p className="text-xs text-muted-foreground">Total players: {subs + nonsubs}</p>
+          <Counter label="Non-subscribers" value={nonsubs} min={0} onChange={setNonsubs} />
+          <p className={`text-xs ${subs + nonsubs === 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {subs + nonsubs === 0 ? 'Add at least one player to start the session.' : `Total players: ${subs + nonsubs}`}
+          </p>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => void start()} disabled={busy}>
+          <Button onClick={() => void start()} disabled={busy || subs + nonsubs < 1}>
             <Play /> {busy ? 'Starting…' : 'Start Session'}
           </Button>
         </DialogFooter>
