@@ -6,6 +6,10 @@ import { settingsFr } from './i18n-settings-fr'
 import { settingsDe } from './i18n-settings-de'
 import { settingsEs } from './i18n-settings-es'
 import { settingsIt } from './i18n-settings-it'
+import { adminFr } from './i18n-admin-fr'
+import { adminDe } from './i18n-admin-de'
+import { adminEs } from './i18n-admin-es'
+import { adminIt } from './i18n-admin-it'
 
 export type Language = 'en' | 'fr' | 'de' | 'es' | 'it'
 
@@ -394,10 +398,10 @@ const extra: Record<Language, Dict> = {
 
 const dictionaries: Record<Language, Dict> = {
   en: {},
-  fr: { ...fr, ...extra.fr, ...settingsFr },
-  de: { ...de, ...extra.de, ...settingsDe },
-  es: { ...es, ...extra.es, ...settingsEs },
-  it: { ...it, ...extra.it, ...settingsIt },
+  fr: { ...fr, ...extra.fr, ...settingsFr, ...adminFr },
+  de: { ...de, ...extra.de, ...settingsDe, ...adminDe },
+  es: { ...es, ...extra.es, ...settingsEs, ...adminEs },
+  it: { ...it, ...extra.it, ...settingsIt, ...adminIt },
 }
 
 function interpolate(template: string, vars?: Record<string, string | number>): string {

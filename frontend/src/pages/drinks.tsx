@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useI18n } from '@/lib/i18n'
 
 const VAT_OPTIONS = [
   { value: '20', label: '20% (standard)' },
@@ -22,6 +23,7 @@ const VAT_OPTIONS = [
 export function DrinksPage() {
   const { settings } = useSettings()
   const { toast } = useToast()
+  const { t } = useI18n()
   const currency = settings.currency || '$'
   const [drinks, setDrinks] = React.useState<Drink[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -50,8 +52,8 @@ export function DrinksPage() {
       vatRatePercent: parseInt(vat, 10),
       category: category || null,
     })
-    if (!result.ok) return toast({ title: 'Failed to add drink', variant: 'error' })
-    toast({ title: 'Drink added' })
+    if (!result.ok) return toast({ title: t('Failed to add drink'), variant: 'error' })
+    toast({ title: t('Drink added') })
     setName('')
     setPrice('')
     setVat('20')
@@ -67,16 +69,16 @@ export function DrinksPage() {
       vatRatePercent: parseInt(editing.vat, 10),
       category: editing.category || null,
     })
-    if (!result.ok) return toast({ title: 'Failed to update drink', variant: 'error' })
-    toast({ title: 'Drink updated' })
+    if (!result.ok) return toast({ title: t('Failed to update drink'), variant: 'error' })
+    toast({ title: t('Drink updated') })
     setEditing(null)
     await load()
   }
 
   const remove = async (id: string) => {
     const result = await apiDeleteDrink(id)
-    if (!result.ok) return toast({ title: 'Failed to delete drink', variant: 'error' })
-    toast({ title: 'Drink deleted' })
+    if (!result.ok) return toast({ title: t('Failed to delete drink'), variant: 'error' })
+    toast({ title: t('Drink deleted') })
     await load()
   }
 
@@ -84,29 +86,29 @@ export function DrinksPage() {
     <div className="space-y-6">
       <div>
         <Link to="/admin" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Back to Admin
+          <ArrowLeft className="h-4 w-4" /> {t('Back to Admin')}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight">Drinks Menu</h1>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">{t('Drinks Menu')}</h1>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Beer className="h-4 w-4" /> Add drink
+            <Beer className="h-4 w-4" /> {t('Add drink')}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={add} className="grid gap-4 sm:grid-cols-[1fr_120px_170px_170px_auto] sm:items-end">
             <div className="space-y-1.5">
-              <Label htmlFor="drink-name">Drink name</Label>
-              <Input id="drink-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Beer" required />
+              <Label htmlFor="drink-name">{t('Drink name')}</Label>
+              <Input id="drink-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('Beer')} required />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="drink-price">Price ({currency})</Label>
+              <Label htmlFor="drink-price">{t('Price ({currency})', { currency })}</Label>
               <Input id="drink-price" type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="6.00" required />
             </div>
             <div className="space-y-1.5">
-              <Label>VAT</Label>
+              <Label>{t('VAT')}</Label>
               <Select value={vat} onValueChange={setVat}>
                 <SelectTrigger>
                   <SelectValue />
@@ -114,30 +116,30 @@ export function DrinksPage() {
                 <SelectContent>
                   {VAT_OPTIONS.map((o) => (
                     <SelectItem key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Category</Label>
+              <Label>{t('Category')}</Label>
               <Select value={category || 'none'} onValueChange={(v) => setCategory(v === 'none' ? '' : v)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No category</SelectItem>
+                  <SelectItem value="none">{t('No category')}</SelectItem>
                   {DRINK_CATEGORIES.map((c) => (
                     <SelectItem key={c.value} value={c.value}>
-                      {c.label}
+                      {t(c.label)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <Button type="submit">
-              <Plus /> Add Drink
+              <Plus /> {t('Add Drink')}
             </Button>
           </form>
         </CardContent>
@@ -145,8 +147,8 @@ export function DrinksPage() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Menu</CardTitle>
-          <CardDescription>{loading ? 'Loading…' : `${drinks.length} drink${drinks.length === 1 ? '' : 's'}`}</CardDescription>
+          <CardTitle className="text-base">{t('Menu')}</CardTitle>
+          <CardDescription>{loading ? t('Loading…') : drinks.length === 1 ? t('{count} drink', { count: drinks.length }) : t('{count} drinks', { count: drinks.length })}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
           {drinks.map((d) =>
@@ -161,7 +163,7 @@ export function DrinksPage() {
                   <SelectContent>
                     {VAT_OPTIONS.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
-                        {o.label}
+                        {t(o.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -171,10 +173,10 @@ export function DrinksPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No category</SelectItem>
+                    <SelectItem value="none">{t('No category')}</SelectItem>
                     {DRINK_CATEGORIES.map((c) => (
                       <SelectItem key={c.value} value={c.value}>
-                        {c.label}
+                        {t(c.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -193,8 +195,8 @@ export function DrinksPage() {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{d.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {money(d.price_cents, currency)} — VAT {d.vatRatePercent ?? 20}% ·{' '}
-                    <span className="font-medium text-foreground/80">{categoryLabel(d.category)}</span>
+                    {money(d.price_cents, currency)} — {t('VAT {rate}%', { rate: d.vatRatePercent ?? 20 })} ·{' '}
+                    <span className="font-medium text-foreground/80">{t(categoryLabel(d.category))}</span>
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-1">
@@ -202,20 +204,20 @@ export function DrinksPage() {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
-                    aria-label="Edit"
+                    aria-label={t('Edit')}
                     onClick={() => setEditing({ id: d.id, name: d.name, price: (d.price_cents / 100).toFixed(2), vat: String(d.vatRatePercent ?? 20), category: d.category || '' })}
                   >
                     <Pencil />
                   </Button>
                   <ConfirmDialog
                     trigger={
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label="Delete">
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label={t('Delete')}>
                         <Trash2 />
                       </Button>
                     }
-                    title="Delete drink?"
-                    description={`“${d.name}” will be removed from the menu. Existing tab items are unaffected.`}
-                    confirmLabel="Delete drink"
+                    title={t('Delete drink?')}
+                    description={t('“{name}” will be removed from the menu. Existing tab items are unaffected.', { name: d.name })}
+                    confirmLabel={t('Delete drink')}
                     onConfirm={() => void remove(d.id)}
                   />
                 </div>
