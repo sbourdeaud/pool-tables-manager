@@ -169,6 +169,11 @@ pool-tables-manager/
 
 **Admin**
 - `DELETE /api/admin/clear-history` - Clear all ended sessions and tab data (sessions inside a closed `ClosurePeriod` are preserved)
+- `GET /api/admin/backup/export` - Stream a consistent compressed `pg_dump` custom-format archive
+- `POST /api/admin/backup/import` - Upload that archive (`application/octet-stream`, ≤256 MB) and restore it
+  (validated against the app tables, restored with `pg_restore --single-transaction --clean --if-exists`,
+  then `prisma migrate deploy`; the Prisma pool is disconnected so pooled connections see restored objects).
+  Implementation: `backend/src/backup.js`; requires the `postgresql-client` tools installed in the image.
 
 ### UUID Handling Pattern
 
@@ -415,8 +420,8 @@ Only seeds if database is empty.
 ## Testing
 
 Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma
-mock; `openid-client` is stubbed because OIDC flows are not unit-tested). Current suite: **15 files /
-61 tests**, run with `cd backend && npm test` (Node 22). See
+mock; `openid-client` is stubbed because OIDC flows are not unit-tested; backup tests inject a fake
+`spawn`). Current suite: **16 files / 70 tests**, run with `cd backend && npm test` (Node 22). See
 [backend/tests/README.md](backend/tests/README.md) for the mocking strategy and CI setup.
 
 ## Data Integrity

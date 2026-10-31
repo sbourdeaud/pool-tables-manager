@@ -15,6 +15,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 - **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
 - **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
 - **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
+- **Database Backups**: one-click export of a consistent, compressed snapshot and transactional restore — Admin → Database Backup
 - **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
@@ -37,6 +38,10 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 **Admin panel** — drinks menu, table types & inventory, subscriptions, reports and settings:
 
 ![Admin panel](docs/screenshots/admin-panel.png)
+
+**Database backup** — download a compressed snapshot or restore one (Admin → Database Backup):
+
+![Database backup](docs/screenshots/backup.png)
 
 **Drink menu management** — categories group the menu on the player ordering screen:
 

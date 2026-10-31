@@ -170,7 +170,14 @@ docker exec pool-tables-manager-app-1 npx prisma migrate status
 docker exec -it pool-tables-manager-db-1 psql -U postgres -d pool_tables
 ```
 
-### Backup Database
+### Backup Database via the app
+
+Admins can export/restore from **Admin → Database Backup** (consistent compressed `pg_dump` archive).
+The image ships `postgresql-client` for this; restores are transactional and followed by
+`prisma migrate deploy`. Restore only archives produced by this app and the same PostgreSQL major
+version, and prefer doing it outside opening hours.
+
+### Backup Database with pg_dump
 ```bash
 docker exec pool-tables-manager-db-1 pg_dump -U postgres pool_tables > backup.sql
 ```

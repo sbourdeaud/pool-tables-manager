@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Beer, CircleDot, Users, BarChart3, Settings2, Wallet } from 'lucide-react'
+import { Beer, CircleDot, Database, Users, BarChart3, Settings2, Wallet } from 'lucide-react'
 import { useSettings } from '@/components/settings/settings-context'
 import { Card, CardContent } from '@/components/ui/card'
 
@@ -13,13 +13,14 @@ const TILES = [
 
 export function AdminHomePage() {
   const { settings } = useSettings()
-  const tiles = settings.pos_enabled === 'true'
-    ? [
-        ...TILES.slice(0, 3),
-        { to: '/admin/cash', icon: Wallet, title: 'Cash & Payments', desc: 'Cash-shift reconciliation and recorded payments' },
-        ...TILES.slice(3),
-      ]
-    : TILES
+  const tiles = [
+    ...TILES.slice(0, 3),
+    ...(settings.pos_enabled === 'true'
+      ? [{ to: '/admin/cash', icon: Wallet, title: 'Cash & Payments', desc: 'Cash-shift reconciliation and recorded payments' }]
+      : []),
+    ...TILES.slice(3),
+    { to: '/admin/backup', icon: Database, title: 'Database Backup', desc: 'Download a compressed backup or restore one' },
+  ]
 
   return (
     <div className="space-y-6">

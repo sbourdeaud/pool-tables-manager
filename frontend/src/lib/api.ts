@@ -604,6 +604,37 @@ export function apiCashShifts() {
   return apiGet<CashShift[]>('/api/cash-shifts')
 }
 
+// ---- Database backup ----
+export function backupExportUrl() {
+  return '/api/admin/backup/export'
+}
+
+export interface BackupImportResult {
+  ok?: boolean
+  error?: string
+  missing?: string[]
+  message?: string
+  sizeBytes?: number
+  migrations?: { code: number; output: string }
+  disconnected?: boolean
+}
+
+export async function apiImportBackup(file: File): Promise<{ ok: boolean; status: number; data?: BackupImportResult }> {
+  try {
+    const body = await file.arrayBuffer()
+    const res = await fetch('/api/admin/backup/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body,
+    })
+    const data = (await res.json().catch(() => undefined)) as BackupImportResult | undefined
+    if (res.status === 401) notifyUnauthorized()
+    return { ok: res.ok, status: res.status, data }
+  } catch (err) {
+    return { ok: false, status: 0, data: { error: 'network_error', message: err instanceof Error ? err.message : 'network error' } }
+  }
+}
+
 // ---- Public (player / status) ----
 export interface PublicTable {
   number: number

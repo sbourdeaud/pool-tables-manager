@@ -10,13 +10,14 @@ const bcrypt = require('bcryptjs');
 const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
 const { getCardProvider, getPublicConfig } = require('./src/payments/provider');
+const { createBackupService } = require('./src/backup');
 
 const app = express();
 app.use(cors());
 // The Stripe webhook needs the raw body for signature verification; every other
 // request gets the usual JSON parser.
 app.use((req, res, next) => {
-  if (req.path === '/api/webhooks/stripe') return next();
+  if (req.path === '/api/webhooks/stripe' || req.path === '/api/admin/backup/import') return next();
   return express.json()(req, res, next);
 });
 
