@@ -19,6 +19,7 @@ import { Suspense } from 'react'
 
 // Heavy chart/PDF/spreadsheet deps only load when the reports page is opened
 const ReportsPage = React.lazy(() => import('@/pages/reports').then((m) => ({ default: m.ReportsPage })))
+const HelpPage = React.lazy(() => import('@/pages/help').then((m) => ({ default: m.HelpPage })))
 import { SettingsPage } from '@/pages/settings'
 
 function Gate({ children }: { children: React.ReactNode }) {
@@ -51,6 +52,14 @@ function Shell() {
             element={
               <Suspense fallback={<div className="py-12 text-center text-sm text-muted-foreground">Loading reports…</div>}>
                 <ReportsPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/help"
+            element={
+              <Suspense fallback={<div className="py-12 text-center text-sm text-muted-foreground">Loading help…</div>}>
+                <HelpPage />
               </Suspense>
             }
           />

@@ -385,7 +385,7 @@ async function checkAndSendMaintenanceAlert(tableId, secondsAdded){
 }
 
 // Admin OIDC test endpoint
-app.get('/api/admin/oidc/test', async (req, res) => {
+app.get('/api/admin/oidc/test', requireAuth, async (req, res) => {
   try {
     const s = await getOidcSettings();
     if(!s || !s.oidc_issuer) return res.status(400).json({ error: 'oidc_not_configured' });
@@ -398,7 +398,7 @@ app.get('/api/admin/oidc/test', async (req, res) => {
 });
 
 // Admin: send a test email using the configured SMTP settings
-app.post('/api/admin/smtp/test', async (req, res) => {
+app.post('/api/admin/smtp/test', requireAuth, async (req, res) => {
   try {
     const to = String((req.body && req.body.to) || '').trim();
     if(!isValidEmail(to)) return res.status(400).json({ error: 'invalid_email' });
@@ -421,10 +421,25 @@ app.get('/api/i18n/:locale', (req, res) => {
 });
 
 // Settings
+// Settings that are safe to expose without an admin session (used by the public
+// player/status pages and the login screen). Everything else — OIDC/SMTP secrets,
+// the local admin hash, fiscal identity — requires authentication.
+const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order'];
+
 app.get('/api/settings', async (req, res) => {
   try {
     const rows = await prisma.setting.findMany();
     const obj = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    const authenticated = !!(req.session && req.session.user);
+
+    if(!authenticated){
+      const safe = {};
+      for(const key of PUBLIC_SETTING_KEYS){
+        if(Object.prototype.hasOwnProperty.call(obj, key)) safe[key] = obj[key];
+      }
+      return res.json(safe);
+    }
+
     // Never expose the SMTP password; expose only whether one is stored.
     if(Object.prototype.hasOwnProperty.call(obj, 'smtp_pass')){
       obj.smtp_pass_set = !!obj.smtp_pass;
@@ -450,7 +465,7 @@ app.patch('/api/settings', requireAuth, async (req, res) => {
 // Clear all session history (danger zone). Sessions that fall within a closed
 // accounting period are preserved (French law requires closed-period sales records
 // be retained, not deleted) - only unclosed/test data can be wiped from here.
-app.delete('/api/admin/clear-history', async (req, res) => {
+app.delete('/api/admin/clear-history', requireAuth, async (req, res) => {
   try {
     const closures = await prisma.closurePeriod.findMany({ select: { fromDate: true, toDate: true } });
     const protectedRanges = closures.map(c => `(ended_at >= '${c.fromDate.toISOString()}' AND ended_at <= '${c.toDate.toISOString()}')`);
@@ -2348,7 +2363,7 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 });
 
 // Session detail including tab items and totals
-app.get('/api/sessions/:id', async (req, res) => {
+app.get('/api/sessions/:id', requireAuth, async (req, res) => {
   try {
     const s = await prisma.session.findUnique({ where: { id: req.params.id } });
     if(!s) return res.status(404).json({ error: 'not_found' });
@@ -2482,7 +2497,7 @@ app.delete('/api/tab-items/:id', requireAuth, async (req, res) => {
 });
 
 // Switch table for an active session
-app.post('/api/sessions/:id/switch', async (req, res) => {
+app.post('/api/sessions/:id/switch', requireAuth, async (req, res) => {
   try{
     const { newTableId } = req.body;
     const sessionId = req.params.id;
@@ -2582,7 +2597,7 @@ app.delete('/api/subscriptions/:id', requireAuth, async (req, res) => {
 });
 
 // Patrons (users)
-app.post('/api/patrons', async (req, res) => {
+app.post('/api/patrons', requireAuth, async (req, res) => {
   try{
     const { name, email } = req.body;
     const p = await prisma.user.create({ data: { name, email, role: 'user' } });
@@ -2877,6 +2892,11 @@ app.post('/api/pending-orders/:id/cancel', requireAuth, async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }
+});
+
+// Swagger-style API explorer (spec at /openapi.json, static assets vendored).
+app.get('/api-docs', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'api-docs.html'));
 });
 
 // SPA fallback: serve the React app for client-side routes. API/auth paths and

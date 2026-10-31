@@ -275,6 +275,11 @@ See the **“Setting Up Card Payments”** section of [USER_GUIDE.md](USER_GUIDE
 dashboard steps, pilot checklist and troubleshooting (webhooks, stuck payments, settlement
 differences, key rotation, disabling payments).
 
+## API explorer
+
+Each installation serves an interactive Swagger UI at `/api-docs` (spec: `/openapi.json`). Log in
+through `POST /auth/local/login` inside it to try admin endpoints with the session cookie.
+
 ## Releases & container images
 
 Release tags publish a slim multi-arch container image to GHCR

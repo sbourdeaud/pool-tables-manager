@@ -417,6 +417,29 @@ On server startup, the system automatically creates:
 
 Only seeds if database is empty.
 
+## API documentation
+
+- Interactive **Swagger UI** at `/api-docs`, backed by the OpenAPI 3.0.3 spec
+  `backend/public/openapi.json` (vendored Swagger UI assets in `backend/public/vendor/swagger-ui/`).
+- **Auth model:** admin endpoints require the session cookie `connect.sid`; try `POST
+  /auth/local/login` in Swagger UI first so same-origin calls carry the cookie. Public endpoints:
+  `/health`, `/api/i18n/*`, `/api/auth/info`, `GET /api/drinks`, `/api/public/*`, Stripe webhooks.
+  `GET /api/settings` returns only a public-safe subset (`app_name`, `currency`, `public_base_url`,
+  `subscriber_discount`, `dashboard_layout`, `table_type_order`) unless authenticated.
+- `clear-history`, SMTP/OIDC tests, session detail/transfer and patron creation require auth.
+
+## In-app help
+
+The **Help** menu (`/help`) renders `USER_GUIDE.md` with a generated table of contents
+(react-markdown + rehype-slug). `frontend/scripts/copy-docs.mjs` copies the guide into
+`backend/public/help/` during `npm run build` (env: `DOCS_SOURCE_DIR`, `DOCS_OUT_DIR`).
+
+## Wiki
+
+`docs/wiki/` holds the wiki pages (`Home`, `API-Reference`); `scripts/sync-wiki.sh` pushes them plus
+the User Guide to the GitHub wiki. One-time prerequisite: enable the wiki and create its first page in
+the GitHub UI (the wiki git repository does not exist before that).
+
 ## Testing
 
 Backend API integration tests run with Jest + Supertest without a live database (stateful Prisma

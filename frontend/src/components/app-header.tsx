@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/admin', label: 'Admin', end: false },
+  { to: '/help', label: 'Help', end: false },
 ]
 
 export function AppHeader() {

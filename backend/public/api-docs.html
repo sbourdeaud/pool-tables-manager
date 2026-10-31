@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API Reference — Pool Tables Manager</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/vendor/swagger-ui/swagger-ui.css" />
+    <style>
+      body { margin: 0; background: #fafafa; }
+      .topbar { display: none; }
+      .swagger-ui .info { margin: 24px 0; }
+      .swagger-ui .info .title small pre { background: transparent; }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        withCredentials: true,
+        persistAuthorization: false,
+        tryItOutEnabled: true,
+        displayRequestDuration: true,
+        docExpansion: 'list',
+        defaultModelsExpandDepth: -1,
+        layout: 'BaseLayout',
+      });
+    </script>
+  </body>
+</html>

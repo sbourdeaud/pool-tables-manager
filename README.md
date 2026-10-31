@@ -6,6 +6,17 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 > [!NOTE]
 > **AI-generated code**: This application is coded using AI (built pair-programming style with [Kilo Code](https://github.com/Kilo-Org/kilocode), an agentic coding assistant). Review the code and test it in your own environment before using it in production.
 
+## Table of Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quick Start](#quick-start)
+- [Technology Stack](#technology-stack)
+- [Development](#development)
+- [Updating](#updating)
+- [Documentation](#documentation)
+- [Support](#support)
+
 ## Features
 
 - **Session Management**: Track active sessions, players and table usage with live timers
@@ -78,6 +89,12 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 ![Card terminal waiting for the customer](docs/screenshots/pos-card.png)
 
 ![Cash & Payments with day-close reconciliation](docs/screenshots/pos-cash.png)
+
+**In-app documentation** — Help menu renders the User Guide with a table of contents; `/api-docs` is an interactive Swagger UI:
+
+![In-app help](docs/screenshots/help.png)
+
+![API reference (Swagger UI)](docs/screenshots/api-docs.png)
 
 **Login** — full-page local admin login (OIDC deployments redirect to the identity provider):
 
@@ -163,6 +180,8 @@ Database migrations (if any) are applied automatically at container start — se
 - **[docs/POS-INTEGRATION-PLAN.md](docs/POS-INTEGRATION-PLAN.md)**: point-of-sale / card terminal integration plan
 - **[frontend/README.md](frontend/README.md)**: React app, shadcn CLI workflow and build notes
 - **[backend/tests/README.md](backend/tests/README.md)**: testing documentation and CI integration
+- **In-app help**: the user guide is available at `/help` in the app (Help menu) and in the [repository wiki](https://github.com/sbourdeaud/pool-tables-manager/wiki)
+- **API reference**: interactive Swagger UI at `/api-docs` (OpenAPI spec at [`openapi.json`](backend/public/openapi.json))
 
 ## Support
 

@@ -4,5 +4,7 @@ npm-debug.log
 .DS_Store
 tests
 **/*.md
+# In-app Help content is served from the image
+!public/help/*.md
 prisma/add_createdAt.sql
 .gitignore
