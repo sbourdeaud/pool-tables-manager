@@ -24,7 +24,7 @@ if git diff --cached --quiet; then
   exit 0
 fi
 git -c user.name="${GIT_AUTHOR_NAME:-docs-bot}" \
-    -c user.email="${GIT_AUTHOR_EMAIL:docs-bot@users.noreply.github.com}" \
+    -c user.email="${GIT_AUTHOR_EMAIL:-docs-bot@users.noreply.github.com}" \
     commit -m "Sync documentation from repository"
 git push
 echo "Wiki updated."

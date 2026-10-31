@@ -88,7 +88,9 @@ function createBackupService({ spawnFn = spawn, databaseUrl = process.env.DATABA
   async function importFrom(buffer) {
     if (!databaseUrl) return { failed: 'database_url_missing' };
     if (busy) return { busy: true };
-    if (!Buffer.isBuffer(buffer) || buffer.length === 0) return { invalid: 'empty_upload' };
+    if (typeof buffer !== 'object' || buffer === null || Array.isArray(buffer) || !Buffer.isBuffer(buffer) || buffer.byteLength === 0) {
+      return { invalid: 'empty_upload' };
+    }
     busy = true;
     const file = path.join(os.tmpdir(), `pool-tables-restore-${Date.now()}.dump`);
     try {
@@ -130,7 +132,7 @@ function createBackupService({ spawnFn = spawn, databaseUrl = process.env.DATABA
 
       return {
         ok: true,
-        sizeBytes: buffer.length,
+        sizeBytes: fs.statSync(file).size,
         migrations: { code: migrate.code, output: (migrate.stdout + migrate.stderr).slice(-1000) },
         disconnected
       };

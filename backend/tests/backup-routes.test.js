@@ -48,4 +48,13 @@ describe('Backup routes', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('empty_upload');
   });
+
+  test('POST /api/admin/backup/import rejects JSON array payloads', async () => {
+    const res = await agent
+      .post('/api/admin/backup/import')
+      .set('Content-Type', 'application/json')
+      .send(['archive-part-one', 'archive-part-two']);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('empty_upload');
+  });
 });
