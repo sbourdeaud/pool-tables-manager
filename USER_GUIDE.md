@@ -657,27 +657,35 @@ If issues persist:
 ## Frequently Asked Questions
 
 **Q: Can I edit a session after it's started?**
+
 A: Yes, you can add/remove items and adjust player count during the session.
 
 **Q: What happens if I accidentally end a session?**
+
 A: Ended sessions cannot be reopened. You would need to start a new session.
 
 **Q: Can players add items themselves?**
+
 A: No, only staff can add items. Players can only view their tab.
 
 **Q: How do I handle comp (free) sessions?**
+
 A: Start a session with 1 player, add items, then checkout and don't charge.
 
 **Q: Can I change the hourly rate mid-session?**
+
 A: No, rate changes only affect new sessions. Active sessions use the original rate.
 
 **Q: What if internet goes down?**
+
 A: The system requires network access. Active sessions remain, but updates pause until connection restored.
 
 **Q: Can I export report data?**
+
 A: Currently, reports are view-only. Use browser print/PDF for records.
 
 **Q: How far back can I view reports?**
+
 A: As long as session history is retained (until manually cleared via Settings).
 
 ---
@@ -685,36 +693,36 @@ A: As long as session history is retained (until manually cleared via Settings).
 ## Feature Summary
 
 ### Core Features
-✓ Real-time session monitoring
-✓ Automatic time-based charging
-✓ Multi-player support with settlements
-✓ PIN-protected player views
-✓ Drink and item management
-✓ Custom charge support
-✓ Table transfers
-✓ Receipt printing
-✓ Player self-service drink ordering with audio-notified Pending Orders queue
-✓ QR codes for one-tap table access from a player's phone
+- Real-time session monitoring
+- Automatic time-based charging
+- Multi-player support with settlements
+- PIN-protected player views
+- Drink and item management
+- Custom charge support
+- Table transfers
+- Receipt printing
+- Player self-service drink ordering with audio-notified Pending Orders queue
+- QR codes for one-tap table access from a player's phone
 
 ### Admin Features
-✓ Table type and inventory management
-✓ Bulk table creation
-✓ Drink menu configuration with VAT rates
-✓ Subscription management
-✓ Financial reporting (multiple periods)
-✓ VAT (TVA) reporting, CSV export, and period closures for French compliance
-✓ Multi-currency support
-✓ Subscriber discount system
-✓ Session history management
-✓ Configurable public base URL for QR codes
-✓ Fiscal/legal business information
+- Table type and inventory management
+- Bulk table creation
+- Drink menu configuration with VAT rates
+- Subscription management
+- Financial reporting (multiple periods)
+- VAT (TVA) reporting, CSV export, and period closures for French compliance
+- Multi-currency support
+- Subscriber discount system
+- Session history management
+- Configurable public base URL for QR codes
+- Fiscal/legal business information
 
 ### Player Features
-✓ Real-time tab viewing
-✓ Auto-refreshing display
-✓ Mobile-friendly interface
-✓ PIN-protected access
-✓ Self-service drink ordering via QR code
+- Real-time tab viewing
+- Auto-refreshing display
+- Mobile-friendly interface
+- PIN-protected access
+- Self-service drink ordering via QR code
 
 ---
 

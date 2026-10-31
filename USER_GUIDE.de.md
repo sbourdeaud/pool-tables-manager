@@ -590,27 +590,35 @@ Wenn das Problem weiterhin besteht:
 ## Häufig gestellte Fragen
 
 **F: Kann ich eine Sitzung bearbeiten, nachdem sie gestartet wurde?**
+
 A: Ja, während der Sitzung können Sie Artikel hinzufügen/entfernen und die Spielerzahl anpassen.
 
 **F: Was passiert, wenn ich eine Sitzung versehentlich beende?**
+
 A: Beendete Sitzungen können nicht wieder geöffnet werden. Sie müssen eine neue Sitzung starten.
 
 **F: Können Spieler selbst Artikel hinzufügen?**
+
 A: Nein, nur das Personal kann Artikel hinzufügen. Spieler können ihre Rechnung lediglich einsehen.
 
 **F: Wie gehe ich mit Freispielen um?**
+
 A: Starten Sie eine Sitzung mit 1 Spieler, fügen Sie Artikel hinzu, kassieren Sie anschließend ab und berechnen Sie nichts.
 
 **F: Kann ich den Stundensatz während einer Sitzung ändern?**
+
 A: Nein, Änderungen des Stundensatzes gelten nur für neue Sitzungen. Für laufende Sitzungen gilt der ursprüngliche Satz.
 
 **F: Was passiert, wenn das Internet ausfällt?**
+
 A: Das System benötigt Netzwerkzugriff. Laufende Sitzungen bleiben bestehen, aber Aktualisierungen pausieren, bis die Verbindung wiederhergestellt ist.
 
 **F: Kann ich Berichtsdaten exportieren?**
+
 A: Derzeit können Berichte nur angezeigt werden. Verwenden Sie zum Speichern den Browserdruck oder den PDF-Export.
 
 **F: Wie weit zurück kann ich Berichte anzeigen?**
+
 A: Solange der Sitzungsverlauf aufbewahrt wird (bis er manuell über die Einstellungen gelöscht wird).
 
 ---
@@ -618,36 +626,36 @@ A: Solange der Sitzungsverlauf aufbewahrt wird (bis er manuell über die Einstel
 ## Funktionsübersicht
 
 ### Kernfunktionen
-✓ Sitzungen in Echtzeit überwachen
-✓ Automatische zeitbasierte Abrechnung
-✓ Unterstützung mehrerer Spieler mit Einzelabrechnungen
-✓ PIN-geschützte Spieleransichten
-✓ Verwaltung von Getränken und Artikeln
-✓ Unterstützung benutzerdefinierter Gebühren
-✓ Tischwechsel
-✓ Belege drucken
-✓ Selbstbedienungsbestellung von Getränken durch Spieler mit akustisch signalisierten offenen Bestellungen
-✓ QR-Codes für den direkten Tischzugriff per Smartphone
+- Sitzungen in Echtzeit überwachen
+- Automatische zeitbasierte Abrechnung
+- Unterstützung mehrerer Spieler mit Einzelabrechnungen
+- PIN-geschützte Spieleransichten
+- Verwaltung von Getränken und Artikeln
+- Unterstützung benutzerdefinierter Gebühren
+- Tischwechsel
+- Belege drucken
+- Selbstbedienungsbestellung von Getränken durch Spieler mit akustisch signalisierten offenen Bestellungen
+- QR-Codes für den direkten Tischzugriff per Smartphone
 
 ### Admin-Funktionen
-✓ Verwaltung von Tischtypen und Inventar
-✓ Tische gesammelt anlegen
-✓ Getränkekarte mit MwSt.-Sätzen konfigurieren
-✓ Abonnements verwalten
-✓ Finanzberichte für verschiedene Zeiträume
-✓ MwSt.-Berichte (TVA), CSV-Export und Periodenabschlüsse für die französischen Vorschriften
-✓ Unterstützung mehrerer Währungen
-✓ Rabattsystem für Abonnenten
-✓ Sitzungsverlauf verwalten
-✓ Öffentliche Basis-URL für QR-Codes konfigurierbar
-✓ Steuer- und Rechtsangaben des Unternehmens
+- Verwaltung von Tischtypen und Inventar
+- Tische gesammelt anlegen
+- Getränkekarte mit MwSt.-Sätzen konfigurieren
+- Abonnements verwalten
+- Finanzberichte für verschiedene Zeiträume
+- MwSt.-Berichte (TVA), CSV-Export und Periodenabschlüsse für die französischen Vorschriften
+- Unterstützung mehrerer Währungen
+- Rabattsystem für Abonnenten
+- Sitzungsverlauf verwalten
+- Öffentliche Basis-URL für QR-Codes konfigurierbar
+- Steuer- und Rechtsangaben des Unternehmens
 
 ### Spielerfunktionen
-✓ Rechnungen in Echtzeit anzeigen
-✓ Automatische Aktualisierung der Anzeige
-✓ Für Mobilgeräte optimierte Oberfläche
-✓ PIN-geschützter Zugriff
-✓ Getränke per QR-Code selbst bestellen
+- Rechnungen in Echtzeit anzeigen
+- Automatische Aktualisierung der Anzeige
+- Für Mobilgeräte optimierte Oberfläche
+- PIN-geschützter Zugriff
+- Getränke per QR-Code selbst bestellen
 
 ---
 

@@ -590,27 +590,35 @@ Se il problema persiste:
 ## Domande frequenti
 
 **D: Posso modificare una sessione dopo averla avviata?**
+
 R: Sì, durante la sessione puoi aggiungere/rimuovere articoli e modificare il numero di giocatori.
 
 **D: Cosa succede se termino una sessione per errore?**
+
 R: Le sessioni terminate non possono essere riaperte. Dovrai avviarne una nuova.
 
 **D: I giocatori possono aggiungere articoli da soli?**
+
 R: No, solo il personale può aggiungere articoli. I giocatori possono soltanto visualizzare il conto.
 
 **D: Come gestisco le sessioni gratuite (offerte)?**
+
 R: Avvia una sessione con 1 giocatore, aggiungi gli articoli, poi procedi all’incasso senza addebitare il pagamento.
 
 **D: Posso modificare la tariffa oraria durante una sessione?**
+
 R: No, le modifiche alla tariffa si applicano solo alle nuove sessioni. Le sessioni attive mantengono la tariffa originaria.
 
 **D: Cosa succede se Internet non funziona?**
+
 R: Il sistema richiede l’accesso alla rete. Le sessioni attive rimangono in corso, ma gli aggiornamenti si interrompono finché la connessione non viene ripristinata.
 
 **D: Posso esportare i dati dei report?**
+
 R: Al momento i report sono solo consultabili. Per conservarli, usa la funzione di stampa/esportazione PDF del browser.
 
 **D: Quanto indietro posso consultare i report?**
+
 R: Finché lo storico delle sessioni viene conservato (fino a quando non viene cancellato manualmente da Impostazioni).
 
 ---
@@ -618,36 +626,36 @@ R: Finché lo storico delle sessioni viene conservato (fino a quando non viene c
 ## Riepilogo delle funzionalità
 
 ### Funzionalità principali
-✓ Monitoraggio delle sessioni in tempo reale
-✓ Addebito automatico in base al tempo
-✓ Supporto per più giocatori con saldi
-✓ Pagine dei giocatori protette da PIN
-✓ Gestione di bevande e articoli
-✓ Supporto per addebiti personalizzati
-✓ Trasferimento dei tavoli
-✓ Stampa delle ricevute
-✓ Ordini di bevande self-service per i giocatori, con coda degli ordini in sospeso e avvisi audio
-✓ Codici QR per accedere ai tavoli con un tocco dal telefono del giocatore
+- Monitoraggio delle sessioni in tempo reale
+- Addebito automatico in base al tempo
+- Supporto per più giocatori con saldi
+- Pagine dei giocatori protette da PIN
+- Gestione di bevande e articoli
+- Supporto per addebiti personalizzati
+- Trasferimento dei tavoli
+- Stampa delle ricevute
+- Ordini di bevande self-service per i giocatori, con coda degli ordini in sospeso e avvisi audio
+- Codici QR per accedere ai tavoli con un tocco dal telefono del giocatore
 
 ### Funzionalità Admin
-✓ Gestione dei tipi di tavolo e dell’inventario
-✓ Creazione di tavoli in blocco
-✓ Configurazione del menù delle bevande con aliquote IVA
-✓ Gestione degli abbonamenti
-✓ Report finanziari (più periodi)
-✓ Report IVA (TVA), esportazione CSV e chiusura dei periodi per la conformità francese
-✓ Supporto per più valute
-✓ Sistema di sconti per abbonati
-✓ Gestione dello storico delle sessioni
-✓ URL base pubblica configurabile per i codici QR
-✓ Informazioni fiscali/legali dell’attività
+- Gestione dei tipi di tavolo e dell’inventario
+- Creazione di tavoli in blocco
+- Configurazione del menù delle bevande con aliquote IVA
+- Gestione degli abbonamenti
+- Report finanziari (più periodi)
+- Report IVA (TVA), esportazione CSV e chiusura dei periodi per la conformità francese
+- Supporto per più valute
+- Sistema di sconti per abbonati
+- Gestione dello storico delle sessioni
+- URL base pubblica configurabile per i codici QR
+- Informazioni fiscali/legali dell’attività
 
 ### Funzionalità per i giocatori
-✓ Visualizzazione del conto in tempo reale
-✓ Schermata aggiornata automaticamente
-✓ Interfaccia adatta ai dispositivi mobili
-✓ Accesso protetto da PIN
-✓ Ordini self-service di bevande tramite codice QR
+- Visualizzazione del conto in tempo reale
+- Schermata aggiornata automaticamente
+- Interfaccia adatta ai dispositivi mobili
+- Accesso protetto da PIN
+- Ordini self-service di bevande tramite codice QR
 
 ---
 
