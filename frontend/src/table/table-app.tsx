@@ -220,6 +220,14 @@ function TableDetail({
     void apiDrinks(localStorage.getItem('lang') || 'en').then((r) => setDrinks(r.data || []))
   }, [])
 
+  // Order feedback ("Order sent!", errors) is transient: hide it after a few
+  // seconds so it does not linger across the automatic refreshes.
+  React.useEffect(() => {
+    if (!message) return
+    const timer = window.setTimeout(() => setMessage(null), 5000)
+    return () => window.clearTimeout(timer)
+  }, [message])
+
   const session = detail.session
   if (!session) {
     return (
