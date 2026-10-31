@@ -108,10 +108,10 @@ pool-tables-manager/
 - `DELETE /api/tables/:id` - Delete table
 
 **Sessions**
-- `GET /api/sessions` - List all sessions
+- `GET /api/sessions` - List all sessions (includes `subscriberCount`)
 - `GET /api/sessions/:id` - Get session details with tab items
 - `POST /api/sessions` - Start new session (generates PIN)
-- `PATCH /api/sessions/:id` - Update session (player count, etc.)
+- `PATCH /api/sessions/:id` - Update session (`numberOfPlayers`, `subscriberCount` — clamped to the player count and stored as the subscriber-count meta line item)
 - `PATCH /api/sessions/:id/end` - End session without generating a receipt (no VAT/table-time persistence; prefer `/checkout`)
 - `POST /api/sessions/:id/checkout` - End session, persist the table-time charge and any discount (VAT-tagged), issue a sequential receipt, and free the table
 - `POST /api/sessions/:id/settle` - Player settlement (reduce items/charges via soft-void + replacement row)

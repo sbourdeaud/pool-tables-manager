@@ -88,7 +88,7 @@ Each tile shows:
 - **Transfer** - Move the session to another table
 - **Checkout** - Apply a discount, print the tab estimate, complete payment and print the invoice
 - **−** next to the player count - Player settlement (one player pays their share and leaves)
-- **+** - Add a player
+- **+** - Add a player — asks whether they are a subscriber (affects the discount)
 - **QR thumbnail** - Enlarge the player QR code
 
 ---
@@ -145,10 +145,11 @@ When subscribers play with non-subscribers:
 
 ### Quick Add Drinks
 
-1. Click **🍺 Drink** on an active table tile
-2. Browse the drink menu
+1. Click **Drink** on an active table tile
+2. Browse the drink menu — use the **category pills** (Cold / Hot / Alcoholic) and the **search box**
+   to find items quickly
 3. Use **+** and **-** buttons to select quantities
-4. Click **Add to Tab**
+4. Click **Add to tab**
 
 ### Custom Charges
 
@@ -288,7 +289,7 @@ Example: `http://localhost:3000/table.html?number=5`
 - Running total
 - A drink menu they can order from directly (PIN required) — see [Pending Orders](#pending-orders-player-self-service)
 
-**Auto-Refresh:** View updates every 60 seconds automatically.
+**Auto-Refresh:** The view refreshes automatically (every ~10 seconds, and immediately when you return to the tab), so fulfilled orders and tab changes appear promptly.
 
 ### QR Codes
 
@@ -633,7 +634,7 @@ The application is fully responsive and works on:
 
 **Items not appearing on tab**
 - Confirm item was added (check for success message)
-- Wait 60 seconds for auto-refresh (public view)
+- Wait ~10 seconds for auto-refresh (public view), or return to the tab to refresh immediately
 - Refresh the dashboard manually
 
 **Wrong amounts showing**

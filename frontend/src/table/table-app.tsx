@@ -73,11 +73,20 @@ export function TableApp() {
   React.useEffect(() => {
     if (!pin) return
     void load()
-    const refresh = window.setInterval(() => void load(), 60000)
+    // Refresh frequently so staff actions (e.g. fulfilling an order) show up
+    // promptly, and immediately when the player returns to the tab.
+    const refresh = window.setInterval(() => void load(), 10000)
     const tick = window.setInterval(() => setNow(Date.now()), 1000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
     return () => {
       window.clearInterval(refresh)
       window.clearInterval(tick)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
   }, [load, pin])
 
