@@ -272,7 +272,8 @@ differences, key rotation, disabling payments).
 
 Release tags publish a slim multi-arch container image to GHCR
 (`ghcr.io/sbourdeaud/pool-tables-manager:<tag>` and `:latest`) — see
-[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
+[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md). Merging into `master` automatically creates the next patch
+release (minor for `feat:` commits, major for breaking ones) and publishes its image.
 
 ## Ports
 
