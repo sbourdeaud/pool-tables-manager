@@ -6,6 +6,7 @@ import { ToastProvider } from '@/components/toast'
 import { SettingsProvider } from '@/components/settings/settings-context'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { installClickSounds } from '@/lib/audio'
+import { I18nProvider } from '@/lib/i18n'
 import { AppHeader } from '@/components/app-header'
 import { LoginPage } from '@/pages/login'
 import { DashboardPage } from '@/pages/dashboard'
@@ -73,6 +74,7 @@ function Shell() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    <I18nProvider>
     <ToastProvider>
       <AuthProvider>
         <SettingsProvider>
@@ -84,5 +86,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         </SettingsProvider>
       </AuthProvider>
     </ToastProvider>
+    </I18nProvider>
   </React.StrictMode>,
 )

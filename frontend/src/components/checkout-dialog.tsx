@@ -4,6 +4,7 @@ import { apiCancelPayment, apiCheckoutSession, apiCreateCardPayment, apiEndSessi
 import { money } from '@/lib/format'
 import { printEstimateReceipt, printFinalReceipt } from '@/lib/receipts'
 import { useSettings } from '@/components/settings/settings-context'
+import { useI18n } from '@/lib/i18n'
 import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +23,7 @@ interface CheckoutDialogProps {
 
 export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDone }: CheckoutDialogProps) {
   const { settings } = useSettings()
+  const { t } = useI18n()
   const { toast } = useToast()
   const posEnabled = settings.pos_enabled === 'true'
   const currency = settings.currency || '$'
@@ -68,13 +70,13 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
       const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `card-${Date.now()}`
       const result = await apiCreateCardPayment(sessionId, remainingCents, idempotencyKey)
       if (result.ok && result.data) {
-        toast({ title: 'Present card on the terminal' })
+        toast({ title: t('Present card on the terminal…') })
         setCardPayment({ paymentId: result.data.paymentId, status: result.data.status })
       } else {
         toast({
           title: 'Card payment failed',
           description: result.error === 'card_not_configured'
-            ? 'No card terminal is configured on the server.'
+            ? t('No card terminal is configured on the server.')
             : result.error || `Error ${result.status}`,
           variant: 'error',
         })
@@ -89,7 +91,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
     try {
       const result = await apiCancelPayment(cardPayment.paymentId)
       if (result.ok && result.data) {
-        toast({ title: 'Card payment canceled' })
+        toast({ title: t('Card payment canceled') })
         setCardPayment({ paymentId: result.data.id, status: result.data.status })
       } else {
         toast({ title: 'Failed to cancel', variant: 'error' })
@@ -120,12 +122,12 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
           if (status === 'captured') {
             setCardPayment(null)
             setPayments((current) => [...current, { method: 'card', amountCents: res.data!.amountCents, paymentId: res.data!.id }])
-            toast({ title: 'Card payment captured' })
+            toast({ title: t('Card payment captured') })
           } else if (status !== 'presenting' && status !== 'pending') {
             window.clearInterval(timer)
             setCardPayment({ paymentId, status })
             toast({
-              title: status === 'canceled' ? 'Card payment canceled' : 'Card payment failed',
+              title: status === 'canceled' ? t('Card payment canceled') : t('Card payment failed'),
               description: `Status: ${status}`,
               variant: 'error',
             })
@@ -145,28 +147,28 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
     setBusy(false)
     if (result.ok && result.data?.receiptNumber != null) {
       setReceipt(result.data)
-      toast({ title: 'Invoice created', description: `#${result.data.receiptNumber}/${result.data.year}` })
+      toast({ title: t('Invoice created'), description: `#${result.data.receiptNumber}/${result.data.year}` })
       onDone()
       return
     }
     if (result.status === 409) {
       // Session already not active: fall back to ending it, mirroring the classic flow
       await apiEndSession(sessionId)
-      toast({ title: 'Session ended' })
+      toast({ title: t('Session ended') })
       onClose()
       onDone()
       return
     }
-    toast({ title: 'Checkout failed', description: result.error || `Error ${result.status}`, variant: 'error' })
+    toast({ title: t('Checkout failed'), description: result.error || `Error ${result.status}`, variant: 'error' })
   }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{receipt ? `Invoice #${receipt.receiptNumber}/${receipt.year}` : 'Checkout'}</DialogTitle>
+          <DialogTitle>{receipt ? `Invoice #${receipt.receiptNumber}/${receipt.year}` : t('Checkout')}</DialogTitle>
           <DialogDescription>
-            {receipt ? 'Payment complete. The session has ended.' : 'Review the tab, apply a discount if needed and complete payment.'}
+            {receipt ? 'Payment complete. The session has ended.' : t('Review the tab, apply a discount if needed and complete payment.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -181,20 +183,20 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                 <CheckCircle2 className="h-4 w-4" /> VAT {money(receipt.vatCents, currency)} · Total HT {money(receipt.totalTtcCents - receipt.vatCents, currency)}
               </div>
               <div className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
-                <span className="text-sm font-semibold">TOTAL (TTC)</span>
+                <span className="text-sm font-semibold">{t('TOTAL (TTC)')}</span>
                 <span className="text-xl font-extrabold">{money(receipt.totalTtcCents, currency)}</span>
               </div>
               {receipt.payments && receipt.payments.length > 0 && (
                 <div className="space-y-1 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
                   {receipt.payments.map((payment) => (
                     <div key={payment.id} className="flex items-center justify-between">
-                      <span className="capitalize">Paid ({payment.method})</span>
+                      <span className="capitalize">{t('Paid ({method})', { method: payment.method })}</span>
                       <span className="font-semibold">{money(payment.amountCents, currency)}</span>
                     </div>
                   ))}
                   {receipt.payments.some((p) => (p.details?.changeCents || 0) > 0) && (
                     <div className="flex items-center justify-between text-muted-foreground">
-                      <span>Change due</span>
+                      <span>{t('Change due')}</span>
                       <span>{money(receipt.payments.reduce((sum, p) => sum + (p.details?.changeCents || 0), 0), currency)}</span>
                     </div>
                   )}
@@ -206,7 +208,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
             </DialogBody>
             <DialogFooter>
               <Button variant="outline" onClick={() => void printFinalReceipt(receipt, currency, detail)}>
-                <Printer /> Print invoice
+                <Printer /> {t('Print invoice')}
               </Button>
               <Button
                 onClick={() => {
@@ -223,7 +225,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
             <DialogBody className="space-y-4">
               <div className="space-y-2">
                 {tableCharge > 0 && (
-                  <LineRow label="Table Time" sub={`${Math.ceil((detail?.session ? (Date.now() - new Date(detail.session.startedAt).getTime()) / 3600000 : 1))}h charged`} value={money(tableCharge, currency)} />
+                  <LineRow label={t('Table Time')} sub={t('{hours}h charged', { hours: Math.ceil((detail?.session ? (Date.now() - new Date(detail.session.startedAt).getTime()) / 3600000 : 1)) })} value={money(tableCharge, currency)} />
                 )}
                 {items.map((item) => (
                   <LineRow
@@ -233,38 +235,38 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                     value={money(item.totalCents, currency)}
                   />
                 ))}
-                {tableCharge === 0 && items.length === 0 && <p className="text-sm text-muted-foreground">This tab is empty.</p>}
+                {tableCharge === 0 && items.length === 0 && <p className="text-sm text-muted-foreground">{t('This tab is empty.')}</p>}
               </div>
 
               <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 sm:grid-cols-[140px_1fr]">
                 <div className="space-y-1.5">
-                  <Label>Discount type</Label>
+                  <Label>{t('Discount type')}</Label>
                   <Select value={discountType} onValueChange={(v) => setDiscountType(v as '%' | 'currency')} disabled={payments.length > 0}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="%">Percent (%)</SelectItem>
-                      <SelectItem value="currency">Fixed ({currency})</SelectItem>
+                      <SelectItem value="%">{t('Percent (%)')}</SelectItem>
+                      <SelectItem value="currency">{t('Fixed ({currency})', { currency })}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="discount-value">{discountType === '%' ? 'Discount %' : `Discount (${currency})`}</Label>
+                  <Label htmlFor="discount-value">{discountType === '%' ? t('Discount %') : t('Discount ({currency})', { currency })}</Label>
                   <Input id="discount-value" type="number" min="0" step="0.01" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
                 </div>
               </div>
 
               <div className="space-y-1 text-sm">
-                <SummaryRow label="Subtotal (TTC)" value={money(subtotal, currency)} />
-                <SummaryRow label="Discount" value={'-' + money(discountCents, currency)} accent />
+                <SummaryRow label={t('Subtotal (TTC)')} value={money(subtotal, currency)} />
+                <SummaryRow label={t('Discount')} value={'-' + money(discountCents, currency)} accent />
                 <div className="flex items-center justify-between border-t pt-2 text-base font-extrabold">
-                  <span>TOTAL (TTC)</span>
+                  <span>{t('TOTAL (TTC)')}</span>
                   <span>{money(total, currency)}</span>
                 </div>
                 {perPlayer != null && (
                   <p className="pt-1 text-center text-sm text-muted-foreground">
-                    {numberOfPlayers} players · {money(perPlayer, currency)} per person
+                    {t('{count} players · {amount} per person', { count: numberOfPlayers, amount: money(perPlayer, currency) })}
                   </p>
                 )}
               </div>
@@ -272,9 +274,9 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
               {posEnabled && (
                 <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
                   <div className="flex items-center justify-between text-sm font-semibold">
-                    <span>Payments (cash)</span>
+                    <span>{t('Payments (cash)')}</span>
                     <span className={remainingCents === 0 ? 'text-emerald-600' : ''}>
-                      {remainingCents === 0 ? 'Fully paid' : `Remaining ${money(remainingCents, currency)}`}
+                      {remainingCents === 0 ? t('Fully paid') : t('Remaining {amount}', { amount: money(remainingCents, currency) })}
                     </span>
                   </div>
 
@@ -308,10 +310,10 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                     <div className="flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
                       <span className="flex items-center gap-2">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Present card on the terminal…
+                        {t('Present card on the terminal…')}
                       </span>
                       <Button variant="outline" size="sm" aria-label="Cancel card payment" onClick={() => void cancelCardPayment()}>
-                        <Ban /> Cancel
+                        <Ban /> {t('Cancel')}
                       </Button>
                     </div>
                   )}
@@ -324,7 +326,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
 
                   {remainingCents > 0 && !cardPayment && cardConfig?.card_enabled && (
                     <Button variant="outline" onClick={() => void addCardTerminalPayment()}>
-                      <CreditCard /> Card (terminal) — {money(remainingCents, currency)}
+                      <CreditCard /> {t('Card (terminal)', { amount: money(remainingCents, currency) })} — {money(remainingCents, currency)}
                     </Button>
                   )}
 
@@ -334,7 +336,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                         type="number"
                         min="0"
                         step="0.01"
-                        placeholder={`Cash received (${currency})`}
+                        placeholder={t('Cash received ({currency})', { currency })}
                         value={tender}
                         onChange={(e) => setTender(e.target.value)}
                         onKeyDown={(e) => {
@@ -346,15 +348,15 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                       />
                       <div className="flex gap-2">
                         <Button variant="outline" onClick={() => addCashPayment()} disabled={!tender}>
-                          Add payment
+                          {t('Add payment')}
                         </Button>
                         <Button variant="secondary" onClick={() => addCashPayment(true)}>
-                          Exact {money(remainingCents, currency)}
+                          {t('Exact {amount}', { amount: money(remainingCents, currency) })}
                         </Button>
                       </div>
                     </div>
                   )}
-                  <p className="text-xs text-muted-foreground">Card terminal integration arrives in a later phase.</p>
+                  <p className="text-xs text-muted-foreground">{t('Card terminal integration arrives in a later phase.')}</p>
                 </div>
               )}
             </DialogBody>
@@ -372,7 +374,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                   )
                 }
               >
-                <Printer /> Print estimate
+                <Printer /> {t('Print estimate')}
               </Button>
               <Button variant="outline" onClick={onClose}>
                 Cancel
@@ -380,14 +382,14 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
               <ConfirmDialog
                 trigger={
                   <Button disabled={busy || (posEnabled && remainingCents > 0)}>
-                    {busy ? 'Processing…' : 'Complete checkout'}
+                    {busy ? t('Processing…') : t('Complete checkout')}
                   </Button>
                 }
-                title="Complete payment and end session?"
+                title={t('Complete payment and end session?')}
                 description={
                   posEnabled
-                    ? `Payments: ${payments.map((p) => money(p.amountCents, currency)).join(' + ') || money(total, currency)}. The session will end and an invoice will be issued.`
-                    : `Total due: ${money(total, currency)}. The session will end and an invoice will be issued.`
+                    ? `${t('Payments')}: ${payments.map((p) => money(p.amountCents, currency)).join(' + ') || money(total, currency)}. The session will end and an invoice will be issued.`
+                    : t('Total due: {amount}. The session will end and an invoice will be issued.', { amount: money(total, currency) })
                 }
                 confirmLabel="Complete payment"
                 variant="default"

@@ -417,6 +417,19 @@ On server startup, the system automatically creates:
 
 Only seeds if database is empty.
 
+## UI internationalization
+
+- `frontend/src/lib/i18n.tsx` provides `I18nProvider` (wraps all three entry points: staff SPA,
+  player app, status board), `useI18n()` and `t('English source text', {vars})`.
+- Dictionaries are **keyed by the English source string** (`en/fr/de/es/it`), so untranslated strings
+  fall back to English automatically — add entries to a dictionary to translate more.
+- The selected language is stored in `localStorage.lang` (shared with the legacy app) and set on
+  `document.documentElement.lang`. `LanguageSelect` is used in the header, Settings, the player page
+  and the status board.
+- Coverage: global chrome, login, dashboard + dialogs, checkout/settlement, the player table page,
+  the status board and admin home are translated. Other admin screens use the English fallback until
+  their strings are added to the dictionaries (help/documentation prose stays English).
+
 ## API documentation
 
 - Interactive **Swagger UI** at `/api-docs`, backed by the OpenAPI 3.0.3 spec

@@ -1,14 +1,9 @@
-import * as React from 'react'
 import { Globe2 } from 'lucide-react'
 import { SectionCard } from '@/components/settings/section-card'
 import { SettingField, Field } from '@/components/settings/field'
 import { useSettings } from '@/components/settings/settings-context'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-
-const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'fr', label: 'Français' },
-]
+import { LanguageSelect, useI18n } from '@/lib/i18n'
 
 const CURRENCIES = [
   { value: '$', label: '$ (USD)' },
@@ -18,13 +13,8 @@ const CURRENCIES = [
 
 export function LocalizationSection({ className }: { className?: string }) {
   const { settings, save } = useSettings()
-  const [language, setLanguage] = React.useState(localStorage.getItem('lang') || 'en')
+  const { t } = useI18n()
   const currency = settings.currency || '$'
-
-  const handleLanguage = (value: string) => {
-    setLanguage(value)
-    localStorage.setItem('lang', value)
-  }
 
   const handleCurrency = (value: string) => {
     void save('currency', value).then((ok) => {
@@ -36,22 +26,11 @@ export function LocalizationSection({ className }: { className?: string }) {
     <SectionCard
       className={className}
       icon={Globe2}
-      title="Localization & Pricing"
+      title={t('Localization & Pricing')}
       description="Language, currency and subscriber pricing"
     >
-      <Field label="Language" help="Stored on this device">
-        <Select value={language} onValueChange={handleLanguage}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {LANGUAGES.map((l) => (
-              <SelectItem key={l.value} value={l.value}>
-                {l.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <Field label={t('Language')} help={t('Stored on this device')}>
+        <LanguageSelect />
       </Field>
       <Field label="Currency">
         <Select value={currency} onValueChange={handleCurrency}>

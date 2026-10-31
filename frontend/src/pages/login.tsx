@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useAuth } from '@/lib/auth'
+import { useI18n } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,6 +23,7 @@ function Brand() {
 
 export function LoginPage() {
   const { info, login, setup } = useAuth()
+  const { t } = useI18n()
   const isSetup = info ? !info.local_admin_setup : false
   const [password, setPassword] = React.useState('')
   const [confirm, setConfirm] = React.useState('')
@@ -51,9 +53,9 @@ export function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
           <Brand />
-          <CardTitle className="pt-3 text-lg">{isSetup ? 'Initial Admin Setup' : 'Admin Login'}</CardTitle>
+          <CardTitle className="pt-3 text-lg">{isSetup ? t('Initial Admin Setup') : t('Admin Login')}</CardTitle>
           <CardDescription>
-            {isSetup ? 'Define a local admin password (username: admin). Keep it secure.' : 'Enter the local admin password to manage the venue.'}
+            {isSetup ? t('Define a local admin password (username: admin). Keep it secure.') : t('Enter the local admin password to manage the venue.')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -64,7 +66,7 @@ export function LoginPage() {
               </div>
             )}
             <div className="space-y-1.5">
-              <Label htmlFor="password">{isSetup ? 'New admin password' : 'Admin password'}</Label>
+              <Label htmlFor="password">{isSetup ? t('New admin password') : t('Admin password')}</Label>
               <Input
                 id="password"
                 type="password"
@@ -76,12 +78,12 @@ export function LoginPage() {
             </div>
             {isSetup && (
               <div className="space-y-1.5">
-                <Label htmlFor="confirm">Confirm password</Label>
+                <Label htmlFor="confirm">{t('Confirm password')}</Label>
                 <Input id="confirm" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
               </div>
             )}
             <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? 'Please wait…' : isSetup ? 'Save password & continue' : 'Log in'}
+              {busy ? t('Please wait…') : isSetup ? t('Save password & continue') : t('Log in')}
             </Button>
           </form>
           <p className="mt-4 text-center text-xs text-muted-foreground">

@@ -30,7 +30,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 - **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
-- **Multi-language**: English and French menu/locale support
+- **Multi-language UI**: English, French, German, Spanish and Italian for the staff app, player table view and public status board (menu item names support English/French translations)
 
 ## Screenshots
 
