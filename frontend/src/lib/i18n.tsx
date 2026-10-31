@@ -10,8 +10,14 @@ import { adminFr } from './i18n-admin-fr'
 import { adminDe } from './i18n-admin-de'
 import { adminEs } from './i18n-admin-es'
 import { adminIt } from './i18n-admin-it'
+import { langNl } from './i18n-lang-nl'
+import { langAr } from './i18n-lang-ar'
+import { langPt } from './i18n-lang-pt'
+import { langZh } from './i18n-lang-zh'
+import { langJa } from './i18n-lang-ja'
+import { langKo } from './i18n-lang-ko'
 
-export type Language = 'en' | 'fr' | 'de' | 'es' | 'it'
+export type Language = 'en' | 'fr' | 'de' | 'es' | 'it' | 'nl' | 'ar' | 'pt' | 'zh' | 'ja' | 'ko'
 
 export const LANGUAGES: { value: Language; label: string }[] = [
   { value: 'en', label: 'English' },
@@ -19,6 +25,12 @@ export const LANGUAGES: { value: Language; label: string }[] = [
   { value: 'de', label: 'Deutsch' },
   { value: 'es', label: 'Español' },
   { value: 'it', label: 'Italiano' },
+  { value: 'nl', label: 'Nederlands' },
+  { value: 'ar', label: 'العربية' },
+  { value: 'pt', label: 'Português' },
+  { value: 'zh', label: '中文' },
+  { value: 'ja', label: '日本語' },
+  { value: 'ko', label: '한국어' },
 ]
 
 // Dictionaries are keyed by the English source string, so missing entries fall
@@ -356,7 +368,7 @@ const it: Dict = {
   'Stored on this device': 'Salvato su questo dispositivo', 'Localization & Pricing': 'Lingua e prezzi',
 }
 
-const extra: Record<Language, Dict> = {
+const extra: Partial<Record<Language, Dict>> = {
   en: {},
   fr: {
     'Cold drinks': 'Boissons fraîches', 'Hot drinks': 'Boissons chaudes', 'Alcoholic drinks': 'Boissons alcoolisées',
@@ -402,6 +414,12 @@ const dictionaries: Record<Language, Dict> = {
   de: { ...de, ...extra.de, ...settingsDe, ...adminDe },
   es: { ...es, ...extra.es, ...settingsEs, ...adminEs },
   it: { ...it, ...extra.it, ...settingsIt, ...adminIt },
+  nl: { ...langNl },
+  ar: { ...langAr },
+  pt: { ...langPt },
+  zh: { ...langZh },
+  ja: { ...langJa },
+  ko: { ...langKo },
 }
 
 function interpolate(template: string, vars?: Record<string, string | number>): string {
@@ -427,6 +445,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     document.documentElement.lang = language
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
   }, [language])
 
   const setLanguage = React.useCallback((next: Language) => {
