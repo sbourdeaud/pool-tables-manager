@@ -41,6 +41,7 @@ The header has three entries plus the theme toggle and a logout button:
 - **Admin** - Menu, table inventory, subscriptions, reports and settings
 - **Public Status** - Opens the customer-facing availability board in a new tab (no login needed)
 - **Help** - In-app user guide (this document) with a table of contents; includes a link to the API reference
+- **Language selector** - Available in the header (desktop), Settings → Localization & Pricing, the player table page and the public status board. The choice is remembered on the device; drink names follow the menu translations (English/French today)
 - **Log out** (top-right) - Ends the admin session. With OIDC enabled the identity-provider
   session is ended too when supported; you are returned to the login page
 
@@ -382,7 +383,7 @@ Access via menu (☰) → **Settings**
 - **Application Name:** Header display name (e.g., "Joe's Pool Hall")
 - **Public Base URL:** Hostname/IP or FQDN used when generating table QR codes (see [QR Codes](#qr-codes)); leave blank to use the address you're currently browsing from
 - **Dashboard layout:** Sections (collapsible groups + flag navigator) or Tabs (one type per tab)
-- **Language:** English or Français
+- **Language:** English, Français, Deutsch, Español or Italiano — changes the interface on this device (also selectable from the header, the player table page and the public status board)
 - **Currency:** $ (USD), € (EUR), or £ (GBP)
 - **Subscriber Discount:** Percentage discount (0-100%)
 - **Audio Cues:** Toggle UI click sounds and the new-order chime
