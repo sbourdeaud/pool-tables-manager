@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
-import { Beer, CircleDot, Users, BarChart3, Settings2 } from 'lucide-react'
+import { Beer, CircleDot, Users, BarChart3, Settings2, Wallet } from 'lucide-react'
+import { useSettings } from '@/components/settings/settings-context'
 import { Card, CardContent } from '@/components/ui/card'
 
 const TILES = [
@@ -11,6 +12,15 @@ const TILES = [
 ]
 
 export function AdminHomePage() {
+  const { settings } = useSettings()
+  const tiles = settings.pos_enabled === 'true'
+    ? [
+        ...TILES.slice(0, 3),
+        { to: '/admin/cash', icon: Wallet, title: 'Cash & Payments', desc: 'Cash-shift reconciliation and recorded payments' },
+        ...TILES.slice(3),
+      ]
+    : TILES
+
   return (
     <div className="space-y-6">
       <div>
@@ -18,7 +28,7 @@ export function AdminHomePage() {
         <p className="mt-1 text-sm text-muted-foreground">Manage the venue configuration and inventory.</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {TILES.map(({ to, icon: Icon, title, desc }) => (
+        {tiles.map(({ to, icon: Icon, title, desc }) => (
           <Link key={to} to={to} className="group">
             <Card className="h-full transition-all group-hover:-translate-y-0.5 group-hover:shadow-md">
               <CardContent className="flex h-full flex-col gap-2 p-5">

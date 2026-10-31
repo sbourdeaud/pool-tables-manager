@@ -23,13 +23,13 @@ docker compose logs -f app
 
 Images are published on every release tag to
 `ghcr.io/sbourdeaud/pool-tables-manager` (`linux/amd64` and `linux/arm64`), tagged with the release
-(e.g. `v1.0.1`) and `latest`. `docker-compose.yml` references that image and still supports local
+(e.g. `v1.1.0`) and `latest`. `docker-compose.yml` references that image and still supports local
 builds:
 
 ```bash
 # Run a specific published version
-IMAGE_TAG=v1.0.1 docker compose pull app
-IMAGE_TAG=v1.0.1 docker compose up -d
+IMAGE_TAG=v1.1.0 docker compose pull app
+IMAGE_TAG=v1.1.0 docker compose up -d
 
 # Or the latest published image
 docker compose pull && docker compose up -d
@@ -254,6 +254,25 @@ Configure in `docker-compose.yml`:
 - `DATABASE_URL`: PostgreSQL connection string
 - `SESSION_SECRET`: Secret for session encryption
 - `NODE_ENV`: Set to `production` for production deployments
+
+**Optional card terminal (POS Phase 2)** — enable after enabling “Payments (POS)” in Settings:
+
+- `PAYMENT_PROVIDER=fake`: deterministic provider for testing (no hardware).
+- `STRIPE_SECRET_KEY`: Stripe secret key (test or live) — enables card payments.
+- `STRIPE_TERMINAL_READER_ID`: reader (`tmr_…`) registered in the Stripe Dashboard.
+- `STRIPE_WEBHOOK_SECRET`: signing secret for `https://<your-domain>/api/webhooks/stripe`
+  (the endpoint needs to be reachable by Stripe — public HTTPS or a tunnel during testing).
+- `COOKIE_SECURE=true`: set when serving the app over HTTPS.
+
+See the **“Setting Up Card Payments”** section of [USER_GUIDE.md](USER_GUIDE.md) for the Stripe
+dashboard steps, pilot checklist and troubleshooting (webhooks, stuck payments, settlement
+differences, key rotation, disabling payments).
+
+## Releases & container images
+
+Release tags publish a slim multi-arch container image to GHCR
+(`ghcr.io/sbourdeaud/pool-tables-manager:<tag>` and `:latest`) — see
+[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md).
 
 ## Ports
 

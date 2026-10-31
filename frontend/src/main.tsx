@@ -13,6 +13,7 @@ import { AdminHomePage } from '@/pages/admin-home'
 import { DrinksPage } from '@/pages/drinks'
 import { TablesPage } from '@/pages/tables'
 import { SubscriptionsPage } from '@/pages/subscriptions'
+import { CashPage } from '@/pages/cash'
 import { Suspense } from 'react'
 
 // Heavy chart/PDF/spreadsheet deps only load when the reports page is opened
@@ -42,6 +43,7 @@ function Shell() {
           <Route path="/admin/drinks" element={<DrinksPage />} />
           <Route path="/admin/tables" element={<TablesPage />} />
           <Route path="/admin/subscriptions" element={<SubscriptionsPage />} />
+          <Route path="/admin/cash" element={<CashPage />} />
           <Route
             path="/admin/reports"
             element={

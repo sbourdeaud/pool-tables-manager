@@ -15,6 +15,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 - **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
 - **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
 - **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
+- **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
 - **Multi-language**: English and French menu/locale support
@@ -29,7 +30,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![Dashboard in tabs layout](docs/screenshots/dashboard-tabs.png)
 
-**Dashboard (dark theme)** — theme is shared across the staff app and player pages:
+**Dashboard (dark theme)** — the default look; the theme toggle also provides a light theme across the staff app and player pages:
 
 ![Dashboard in dark theme](docs/screenshots/dashboard-dark.png)
 
@@ -65,6 +66,14 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![Player table view](docs/screenshots/table-view.png)
 
+**Payments (POS, optional)** — split cash/card payments at checkout, card-terminal flow and cash-shift reconciliation:
+
+![Checkout with split cash/card payments](docs/screenshots/pos-checkout.png)
+
+![Card terminal waiting for the customer](docs/screenshots/pos-card.png)
+
+![Cash & Payments with day-close reconciliation](docs/screenshots/pos-cash.png)
+
 **Login** — full-page local admin login (OIDC deployments redirect to the identity provider):
 
 ![Login page](docs/screenshots/login.png)
@@ -82,7 +91,7 @@ cd pool-tables-manager
 docker compose pull && docker compose up -d
 ```
 
-Pin a version with `IMAGE_TAG`, e.g. `IMAGE_TAG=v1.0.1 docker compose pull && IMAGE_TAG=v1.0.1 docker compose up -d`.
+Pin a version with `IMAGE_TAG`, e.g. `IMAGE_TAG=v1.1.0 docker compose pull && IMAGE_TAG=v1.1.0 docker compose up -d`.
 
 **Option B — build from source:**
 
@@ -146,6 +155,7 @@ Database migrations (if any) are applied automatically at container start — se
 - **[USER_GUIDE.md](USER_GUIDE.md)**: staff and player documentation
 - **[VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)**: French VAT/anti-fraud conformity notes
 - **[UPGRADE-GUIDE.md](UPGRADE-GUIDE.md)**: version history and upgrade checklists
+- **[docs/POS-INTEGRATION-PLAN.md](docs/POS-INTEGRATION-PLAN.md)**: point-of-sale / card terminal integration plan
 - **[frontend/README.md](frontend/README.md)**: React app, shadcn CLI workflow and build notes
 - **[backend/tests/README.md](backend/tests/README.md)**: testing documentation and CI integration
 

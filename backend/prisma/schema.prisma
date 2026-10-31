@@ -111,6 +111,57 @@ model Setting {
 // Sequentially numbered receipt issued when a table session is paid out (checkout).
 // Required for French anti-fraud compliance (CGI art. 286-I-3 bis / ISCA principles):
 // once created a receipt is never modified or deleted.
+model Payment {
+  id             String   @id @default(uuid())
+  sessionId      String   @map("session_id")
+  receiptId      String?  @map("receipt_id")
+  // 'cash' for Phase 1; terminal providers (e.g. 'stripe') arrive in Phase 2.
+  provider       String   @default("cash")
+  // Display method recorded on receipts/reports: cash | card
+  method         String   @default("cash")
+  amountCents    Int      @map("amount_cents")
+  currency       String   @default("EUR")
+  // pending | captured | partially_refunded | refunded | voided
+  status         String   @default("captured")
+  providerRef    String?  @unique @map("provider_ref")
+  detailsJson    String?  @map("details_json")
+  idempotencyKey String?  @unique @map("idempotency_key")
+  refundedCents  Int      @default(0) @map("refunded_cents")
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([receiptId])
+  @@index([createdAt])
+}
+
+model PaymentEvent {
+  id          String   @id @default(uuid())
+  provider    String
+  eventId     String   @unique @map("event_id")
+  type        String
+  payloadJson String   @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([provider, createdAt])
+}
+
+model CashShift {
+  id                String    @id @default(uuid())
+  openingFloatCents Int       @default(0) @map("opening_float_cents")
+  openedBy          String?   @map("opened_by")
+  openedAt          DateTime  @default(now()) @map("opened_at")
+  countedCents      Int?      @map("counted_cents")
+  expectedCents     Int?      @map("expected_cents")
+  varianceCents     Int?      @map("variance_cents")
+  closedBy          String?   @map("closed_by")
+  closedAt          DateTime? @map("closed_at")
+  notes             String?
+
+  @@index([openedAt])
+}
+
 model Receipt {
   id               String   @id @default(uuid())
   number           Int
@@ -129,6 +180,26 @@ model Receipt {
 
 // A locked accounting period (day/month/year). Once closed, the totals snapshot is
 // immutable and sales within the period can no longer be voided or corrected.
+model CreditNote {
+  id              String   @id @default(uuid())
+  number          Int
+  year            Int
+  receiptId       String   @map("receipt_id")
+  sessionId       String   @map("session_id")
+  paymentId       String?  @map("payment_id")
+  itemsJson       String   @map("items_json")
+  subtotalHtCents Int      @map("subtotal_ht_cents")
+  vatCents        Int      @map("vat_cents")
+  totalTtcCents   Int      @map("total_ttc_cents")
+  reason          String?
+  createdBy       String?  @map("created_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([year, number])
+  @@index([receiptId])
+  @@index([createdAt])
+}
+
 model ClosurePeriod {
   id           String   @id @default(uuid())
   periodType   String   @map("period_type")

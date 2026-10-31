@@ -223,6 +223,30 @@ export function apiTransferSession(sessionId: string, newTableId: string) {
   return apiSend('/api/sessions/' + sessionId + '/switch', 'POST', { newTableId })
 }
 
+export interface ReceiptPayment {
+  id: string
+  method: 'cash' | 'card' | string
+  provider?: string
+  amountCents: number
+  currency: string
+  status: string
+  details?: { tenderedCents?: number; changeCents?: number } | null
+}
+
+export interface PaymentInput {
+  method: 'cash' | 'card'
+  amountCents: number
+  tenderedCents?: number
+  /** Captured card payments are referenced (not re-created) at checkout. */
+  paymentId?: string
+}
+
+export interface PaymentConfig {
+  pos_enabled: boolean
+  card_enabled: boolean
+  provider: string | null
+}
+
 export interface CheckoutReceipt {
   receiptNumber: number
   year: number
@@ -231,10 +255,34 @@ export interface CheckoutReceipt {
   vatCents: number
   discountCents: number
   items: { description: string; quantity: number; unitPrice: number; totalCents: number; vatRatePercent?: number | null }[]
+  payments?: ReceiptPayment[]
 }
 
-export function apiCheckoutSession(sessionId: string, discountCents: number) {
-  return apiSend<CheckoutReceipt>('/api/sessions/' + sessionId + '/checkout', 'POST', { discountCents })
+export function apiCheckoutSession(sessionId: string, discountCents: number, payments?: PaymentInput[]) {
+  return apiSend<CheckoutReceipt>('/api/sessions/' + sessionId + '/checkout', 'POST', {
+    discountCents,
+    ...(payments ? { payments } : {}),
+  })
+}
+
+export function apiPaymentConfig() {
+  return apiGet<PaymentConfig>('/api/payments/config')
+}
+
+export function apiCreateCardPayment(sessionId: string, amountCents: number, idempotencyKey?: string) {
+  return apiSend<{ paymentId: string; status: string; provider: string; duplicate?: boolean }>('/api/payments/card', 'POST', {
+    sessionId,
+    amountCents,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+  })
+}
+
+export function apiGetPayment(id: string) {
+  return apiGet<ReceiptPayment>('/api/payments/' + id)
+}
+
+export function apiCancelPayment(id: string) {
+  return apiSend<ReceiptPayment>('/api/payments/' + id + '/cancel', 'POST')
 }
 
 export function apiSessionSettle(
@@ -331,6 +379,8 @@ export interface FinancialReport {
   byTableType: Record<string, number>
   drinksTotal: number
   subscriptionsTotal: number
+  refundsTotal?: number
+  byPaymentMethod?: Record<string, number>
   timeSeries?: FinancialReportTimePoint[]
   dayOfWeekAnalysis?: { dayOfWeek: string; total: number }[]
   error?: string
@@ -396,6 +446,158 @@ export function apiClosures() {
 
 export function apiCreateClosure(body: Record<string, string>) {
   return apiSend<ClosurePeriod>('/api/closures', 'POST', body)
+}
+
+// ---- Payments & cash shifts (optional POS feature) ----
+export interface PaymentRecord {
+  id: string
+  sessionId: string
+  receiptId?: string | null
+  method: string
+  provider?: string
+  amountCents: number
+  refundedCents: number
+  currency: string
+  status: string
+  createdAt: string
+  tableNumber?: number | null
+  details?: { tenderedCents?: number; changeCents?: number } | null
+}
+
+export interface CashShift {
+  id: string
+  openingFloatCents: number
+  openedBy?: string | null
+  openedAt: string
+  countedCents?: number | null
+  expectedCents?: number | null
+  varianceCents?: number | null
+  closedBy?: string | null
+  closedAt?: string | null
+  notes?: string | null
+}
+
+export interface CurrentCashShift {
+  shift: CashShift | null
+  totals?: { capturedCents: number; refundedCents: number; netCents: number; count: number; expectedCents: number }
+}
+
+export function apiPayments(limit = 100) {
+  return apiGet<PaymentRecord[]>('/api/payments?limit=' + limit)
+}
+
+export interface RefundResult extends PaymentRecord {
+  creditNote?: { id: string; number: number; year: number; totalTtcCents: number; vatCents: number } | null
+}
+
+export function apiRefundPayment(id: string, amountCents?: number, reason?: string) {
+  return apiSend<RefundResult>('/api/payments/' + id + '/refund', 'POST', {
+    ...(amountCents == null ? {} : { amountCents }),
+    ...(reason ? { reason } : {}),
+  })
+}
+
+export interface ReconciliationMethod {
+  capturedCents: number
+  refundedCents: number
+  netCents: number
+  count: number
+}
+
+export interface Reconciliation {
+  date: string
+  from: string
+  to: string
+  payments: {
+    count: number
+    capturedCents: number
+    refundedCents: number
+    netCents: number
+    byMethod: Record<string, ReconciliationMethod>
+  }
+  creditNotes: { count: number; totalTtcCents: number }
+  terminal?: {
+    available: boolean
+    grossCents?: number
+    refundedCents?: number
+    netCents?: number
+    feeCents?: number
+    error?: string
+  }
+  cashShifts: {
+    count: number
+    openShifts: number
+    countedCents: number
+    expectedCents: number
+    varianceCents: number
+    shifts: {
+      id: string
+      openedAt: string
+      closedAt?: string | null
+      openingFloatCents: number
+      countedCents?: number | null
+      expectedCents?: number | null
+      varianceCents?: number | null
+    }[]
+  }
+  closure: { periodKey: string; closedAt: string; closedBy?: string | null } | null
+}
+
+export interface CreditNoteRecord {
+  id: string
+  number: number
+  year: number
+  receiptId: string
+  receiptNumber?: number | null
+  receiptYear?: number | null
+  sessionId: string
+  tableNumber?: number | null
+  items: {
+    description: string
+    quantity: number
+    unitPrice: number
+    totalCents: number
+    vatRatePercent?: number | null
+    vatAmountCents?: number | null
+  }[]
+  subtotalHtCents: number
+  vatCents: number
+  totalTtcCents: number
+  reason?: string | null
+  createdBy?: string | null
+  createdAt: string
+}
+
+export function apiCreditNotes(limit = 50) {
+  return apiGet<CreditNoteRecord[]>('/api/credit-notes?limit=' + limit)
+}
+
+export function apiReconciliation(date: string) {
+  return apiGet<Reconciliation>('/api/reports/reconciliation?date=' + encodeURIComponent(date))
+}
+
+export function apiDayClose(date: string) {
+  return apiSend<{ periodKey: string }>('/api/reports/day-close', 'POST', { date })
+}
+
+export function paymentsExportUrl(from: string, to: string) {
+  return '/api/reports/payments/export?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)
+}
+
+export function apiCurrentCashShift() {
+  return apiGet<CurrentCashShift>('/api/cash-shifts/current')
+}
+
+export function apiOpenCashShift(openingFloatCents: number) {
+  return apiSend<CashShift>('/api/cash-shifts/open', 'POST', { openingFloatCents })
+}
+
+export function apiCloseCashShift(id: string, body: { countedCents: number; notes?: string }) {
+  return apiSend<CashShift>('/api/cash-shifts/' + id + '/close', 'POST', body)
+}
+
+export function apiCashShifts() {
+  return apiGet<CashShift[]>('/api/cash-shifts')
 }
 
 // ---- Public (player / status) ----

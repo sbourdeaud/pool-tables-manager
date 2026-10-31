@@ -17,6 +17,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   table: 'Table time',
   drinks: 'Drinks',
   discount: 'Discounts',
+  refund: 'Refunds (credit notes)',
   other: 'Other',
 }
 
