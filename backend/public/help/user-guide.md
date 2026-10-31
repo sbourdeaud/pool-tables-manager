@@ -40,6 +40,7 @@ The header has three entries plus the theme toggle and a logout button:
 - **Dashboard** - Live tables, sessions and pending orders
 - **Admin** - Menu, table inventory, subscriptions, reports and settings
 - **Public Status** - Opens the customer-facing availability board in a new tab (no login needed)
+- **Help** - In-app user guide (this document) with a table of contents; includes a link to the API reference
 - **Log out** (top-right) - Ends the admin session. With OIDC enabled the identity-provider
   session is ended too when supported; you are returned to the login page
 

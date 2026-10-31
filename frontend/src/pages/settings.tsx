@@ -8,19 +8,21 @@ import { SecuritySection } from '@/components/settings/security-section'
 import { DangerSection } from '@/components/settings/danger-section'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { useI18n } from '@/lib/i18n'
 
 export function SettingsPage() {
   const { loading, loadError, refresh } = useSettings()
+  const { t } = useI18n()
 
   return (
     <div className="space-y-6">
       <div>
         <a href="/admin" className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Back to Admin
+          <ArrowLeft className="h-4 w-4" /> {t('Back to Admin')}
         </a>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight">Settings</h1>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">{t('Settings')}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Configure branding, localization, fiscal, email and security.
+          {t('Configure branding, localization, fiscal, email and security.')}
         </p>
       </div>
 
@@ -35,7 +37,7 @@ export function SettingsPage() {
           <CardContent className="flex flex-col items-start gap-3 p-6">
             <p className="text-sm text-destructive">{loadError}</p>
             <Button variant="outline" onClick={() => void refresh()}>
-              <RefreshCw /> Retry
+              <RefreshCw /> {t('Retry')}
             </Button>
           </CardContent>
         </Card>

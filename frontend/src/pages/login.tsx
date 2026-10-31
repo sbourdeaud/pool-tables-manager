@@ -88,7 +88,7 @@ export function LoginPage() {
           </form>
           <p className="mt-4 text-center text-xs text-muted-foreground">
             <a href="/status" className="underline-offset-4 hover:underline">
-              Public status board
+              {t('Public status board')}
             </a>
           </p>
         </CardContent>

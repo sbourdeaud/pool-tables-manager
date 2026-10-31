@@ -2,6 +2,10 @@ import * as React from 'react'
 import { Languages } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { settingsFr } from './i18n-settings-fr'
+import { settingsDe } from './i18n-settings-de'
+import { settingsEs } from './i18n-settings-es'
+import { settingsIt } from './i18n-settings-it'
 
 export type Language = 'en' | 'fr' | 'de' | 'es' | 'it'
 
@@ -15,7 +19,7 @@ export const LANGUAGES: { value: Language; label: string }[] = [
 
 // Dictionaries are keyed by the English source string, so missing entries fall
 // back to English automatically as screens are translated incrementally.
-type Dict = Record<string, string>
+export type Dict = Record<string, string>
 
 const fr: Dict = {
   Dashboard: 'Tableau de bord', Admin: 'Admin', Help: 'Aide', 'Public Status': 'Statut public',
@@ -390,10 +394,10 @@ const extra: Record<Language, Dict> = {
 
 const dictionaries: Record<Language, Dict> = {
   en: {},
-  fr: { ...fr, ...extra.fr },
-  de: { ...de, ...extra.de },
-  es: { ...es, ...extra.es },
-  it: { ...it, ...extra.it },
+  fr: { ...fr, ...extra.fr, ...settingsFr },
+  de: { ...de, ...extra.de, ...settingsDe },
+  es: { ...es, ...extra.es, ...settingsEs },
+  it: { ...it, ...extra.it, ...settingsIt },
 }
 
 function interpolate(template: string, vars?: Record<string, string | number>): string {

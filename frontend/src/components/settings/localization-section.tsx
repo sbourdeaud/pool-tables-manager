@@ -27,12 +27,12 @@ export function LocalizationSection({ className }: { className?: string }) {
       className={className}
       icon={Globe2}
       title={t('Localization & Pricing')}
-      description="Language, currency and subscriber pricing"
+      description={t('Language, currency and subscriber pricing')}
     >
       <Field label={t('Language')} help={t('Stored on this device')}>
         <LanguageSelect />
       </Field>
-      <Field label="Currency">
+      <Field label={t('Currency')}>
         <Select value={currency} onValueChange={handleCurrency}>
           <SelectTrigger>
             <SelectValue />
