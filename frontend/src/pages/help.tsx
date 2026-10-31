@@ -5,6 +5,7 @@ import rehypeSlug from 'rehype-slug'
 import GithubSlugger from 'github-slugger'
 import { BookOpen, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/lib/i18n'
 
 interface TocItem {
   depth: number
@@ -47,6 +48,7 @@ const components: Components = {
 }
 
 export function HelpPage() {
+  const { t } = useI18n()
   const [markdown, setMarkdown] = React.useState('')
   const [error, setError] = React.useState<string | null>(null)
 
@@ -58,12 +60,12 @@ export function HelpPage() {
         if (active) setMarkdown(text)
       })
       .catch(() => {
-        if (active) setError('The user guide could not be loaded.')
+        if (active) setError(t('The user guide could not be loaded.'))
       })
     return () => {
       active = false
     }
-  }, [])
+  }, [t])
 
   const toc = React.useMemo<TocItem[]>(() => {
     const slugger = new GithubSlugger()
@@ -82,16 +84,16 @@ export function HelpPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-            <BookOpen className="h-6 w-6" /> Help
+            <BookOpen className="h-6 w-6" /> {t('Help')}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            How to use Pool Tables Manager — the same guide is published in the repository wiki.
+            {t('How to use Pool Tables Manager — the same guide is published in the repository wiki.')}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" asChild>
             <a href="/api-docs" target="_blank" rel="noopener noreferrer">
-              <ExternalLink /> API reference
+              <ExternalLink /> {t('API reference')}
             </a>
           </Button>
         </div>
@@ -100,11 +102,11 @@ export function HelpPage() {
       {error ? (
         <p className="text-sm text-destructive">{error}</p>
       ) : !markdown ? (
-        <p className="text-sm text-muted-foreground">Loading the guide…</p>
+        <p className="text-sm text-muted-foreground">{t('Loading the guide…')}</p>
       ) : (
         <div className="grid gap-8 lg:grid-cols-[260px_minmax(0,1fr)]">
           <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Contents</p>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">{t('Contents')}</p>
             <nav className="space-y-1 text-sm">
               {toc.map((item) => (
                 <a
