@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { User, Plus, Minus, ArrowLeftRight, Beer, Play, Wrench, Trash2, Bell, Check, X, CheckCircle2, GripVertical, ChevronDown } from 'lucide-react'
+import { User, Plus, Minus, ArrowLeftRight, Beer, Play, Wrench, Trash2, Bell, Check, X, CheckCircle2, GripVertical, ChevronDown, Search } from 'lucide-react'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -14,12 +14,12 @@ import {
   apiRemoveTabItem,
   apiSessionDetail,
   apiSessions,
-  apiSetPlayerCount,
   apiSetTableStatus,
   apiStartSession,
   apiTableTypes,
   apiTables,
   apiTransferSession,
+  apiUpdateSession,
   type Drink,
   type PendingOrder,
   type SessionRow,
@@ -29,7 +29,7 @@ import {
 import { buildQrSvg, tableSessionUrl } from '@/lib/qr'
 import { CheckoutDialog } from '@/components/checkout-dialog'
 import { typeFlag } from '@/components/type-flag'
-import { groupDrinks } from '@/lib/menu'
+import { DRINK_CATEGORIES, groupDrinks, type DrinkCategory } from '@/lib/menu'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
 import { SettlementDialog } from '@/components/settlement-dialog'
@@ -40,6 +40,7 @@ import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +62,7 @@ type DialogState =
   | { kind: 'transfer'; session: SessionRow }
   | { kind: 'checkout'; session: SessionRow }
   | { kind: 'settle'; session: SessionRow }
+  | { kind: 'add-player'; session: SessionRow }
   | { kind: 'qr'; tableNumber: number; pin?: string }
   | null
 
@@ -148,12 +150,7 @@ export function DashboardPage() {
         onQr={(pin) => setDialog({ kind: 'qr', tableNumber: tb.number, pin })}
         onCheckout={(s) => setDialog({ kind: 'checkout', session: s })}
         onSettle={(s) => setDialog({ kind: 'settle', session: s })}
-        onAddPlayer={async (s) => {
-          const next = Math.max(1, (s.numberOfPlayers || 1) + 1)
-          const result = await apiSetPlayerCount(s.id, next)
-          if (!result.ok) toast({ title: 'Failed to update players', variant: 'error' })
-          await load()
-        }}
+        onAddPlayer={(s) => setDialog({ kind: 'add-player', session: s })}
         onMaintenance={async () => {
           const result = await apiSetTableStatus(tb.id, 'maintenance')
           if (!result.ok) toast({ title: 'Failed to update table', variant: 'error' })
@@ -380,6 +377,11 @@ export function DashboardPage() {
         onClose={() => setDialog(null)}
         onDone={() => void load()}
       />
+      <AddPlayerDialog
+        state={dialog}
+        onClose={() => setDialog(null)}
+        onDone={() => { setDialog(null); void load() }}
+      />
       <SettlementDialog
         open={dialog?.kind === 'settle'}
         sessionId={dialog?.kind === 'settle' ? dialog.session.id : null}
@@ -511,7 +513,7 @@ interface TableTileProps {
   onCheckout: (session: SessionRow) => void
   onSettle: (session: SessionRow) => void
   onQr: (pin?: string) => void
-  onAddPlayer: (session: SessionRow) => Promise<void>
+  onAddPlayer: (session: SessionRow) => void
   onMaintenance: () => Promise<void>
   onDelete: () => Promise<void>
 }
@@ -559,7 +561,7 @@ function TableTile(props: TableTileProps) {
               <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onSettle(session)} aria-label="Settle player">
                 <Minus />
               </Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => void props.onAddPlayer(session)} aria-label="Add player">
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onAddPlayer(session)} aria-label="Add player">
                 <Plus />
               </Button>
             </div>
@@ -611,6 +613,53 @@ function TableTile(props: TableTileProps) {
         </>
       )}
     </Card>
+  )
+}
+
+function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast()
+  const open = state?.kind === 'add-player'
+  const session = state?.kind === 'add-player' ? state.session : null
+  const [busy, setBusy] = React.useState(false)
+
+  const add = async (isSubscriber: boolean) => {
+    if (!session) return
+    setBusy(true)
+    const numberOfPlayers = (session.numberOfPlayers || 1) + 1
+    const subscriberCount = (session.subscriberCount || 0) + (isSubscriber ? 1 : 0)
+    const result = await apiUpdateSession(session.id, { numberOfPlayers, subscriberCount })
+    setBusy(false)
+    if (!result.ok) {
+      return toast({ title: 'Failed to add player', description: result.error || `Error ${result.status}`, variant: 'error' })
+    }
+    toast({ title: isSubscriber ? 'Subscriber added' : 'Non-subscriber added' })
+    onDone()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add player</DialogTitle>
+          <DialogDescription>
+            {session
+              ? `The session now has ${(session.numberOfPlayers || 1)} player${(session.numberOfPlayers || 1) === 1 ? '' : 's'}. Is the new player a subscriber?`
+              : 'Is the new player a subscriber?'}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-2">
+          <Button className="w-full justify-start" disabled={busy} onClick={() => void add(true)}>
+            <User /> Subscriber — free table time
+          </Button>
+          <Button variant="outline" className="w-full justify-start" disabled={busy} onClick={() => void add(false)}>
+            <User /> Non-subscriber — pays their share
+          </Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -692,10 +741,22 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
   const [items, setItems] = React.useState<{ id: string; description: string; quantity: number; unitPrice: number }[]>([])
   const [basket, setBasket] = React.useState<Record<string, number>>({})
   const [busy, setBusy] = React.useState(false)
+  const [activeCategory, setActiveCategory] = React.useState<'all' | DrinkCategory>('all')
+  const [search, setSearch] = React.useState('')
+  const menuGroups = React.useMemo(() => groupDrinks(drinks), [drinks])
+  const visibleGroups = React.useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return menuGroups
+      .filter((group) => activeCategory === 'all' || group.value === activeCategory)
+      .map((group) => ({ ...group, drinks: group.drinks.filter((d) => d.name.toLowerCase().includes(term)) }))
+      .filter((group) => group.drinks.length > 0)
+  }, [menuGroups, activeCategory, search])
 
   React.useEffect(() => {
     if (!open || !session) return
     setBasket({})
+    setSearch('')
+    setActiveCategory('all')
     void apiDrinks(localStorage.getItem('lang') || 'en').then((r) => setDrinks(r.data || []))
     void apiSessionDetail(session.id).then((r) => setItems((r.data?.items || []).map((i) => ({ id: i.id, description: i.description, quantity: i.quantity, unitPrice: i.unitPrice }))))
   }, [open, session])
@@ -763,7 +824,36 @@ function AddDrinkDialog({ state, currency, onClose, onDone }: { state: DialogSta
           <div className="space-y-2">
             <Label className="block">Menu</Label>
             {drinks.length === 0 && <p className="text-sm text-muted-foreground">No drinks configured.</p>}
-            {groupDrinks(drinks).map((group) => (
+            {drinks.length > 0 && (
+              <>
+                <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+                  {(['all', ...DRINK_CATEGORIES.map((c) => c.value)] as const).map((value) => {
+                    const group = menuGroups.find((g) => g.value === value)
+                    if (value !== 'all' && !group) return null
+                    const active = activeCategory === value
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setActiveCategory(value)}
+                        className={cn(
+                          'shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
+                          active ? 'border-primary bg-primary text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {value === 'all' ? 'All' : DRINK_CATEGORIES.find((c) => c.value === value)?.short}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input className="pl-8" placeholder="Search the menu…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                </div>
+              </>
+            )}
+            {drinks.length > 0 && visibleGroups.length === 0 && <p className="py-2 text-center text-sm text-muted-foreground">Nothing matches that search.</p>}
+            {visibleGroups.map((group) => (
               <div key={group.value} className="space-y-2">
                 <p className="flex items-center gap-1.5 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                   <group.icon className="h-3.5 w-3.5" /> {group.label}

@@ -2189,15 +2189,47 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
 // Update session (e.g., player count)
 app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
   try {
-    const { numberOfPlayers } = req.body;
+    const { numberOfPlayers, subscriberCount } = req.body;
+    if (typeof numberOfPlayers === 'undefined' && typeof subscriberCount === 'undefined') {
+      return res.status(400).json({ error: 'no_updates' });
+    }
+
     if (typeof numberOfPlayers !== 'undefined') {
-      const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players`, numberOfPlayers, req.params.id);
+      const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
       const row = Array.isArray(out) ? out[0] : out;
       if (!row) return res.status(404).json({ error: 'not_found' });
-      res.json({ id: row.id, tableId: row.table_id, patronId: row.patron_id, startedAt: row.started_at, endedAt: row.ended_at, status: row.status, createdAt: row.created_at, numberOfPlayers: row.number_of_players });
-    } else {
-      res.status(400).json({ error: 'no_updates' });
     }
+
+    // Subscriber count is stored as a meta tab line item; clamp to the player count.
+    if (typeof subscriberCount !== 'undefined') {
+      const playerRows = await prisma.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+      const playerRow = Array.isArray(playerRows) ? playerRows[0] : playerRows;
+      if (!playerRow) return res.status(404).json({ error: 'not_found' });
+      const players = Number(playerRow.number_of_players) || 0;
+      const desired = Math.max(0, Math.min(Math.round(Number(subscriberCount) || 0), players));
+      const existing = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+      if (existing) {
+        await prisma.tabLineItem.update({ where: { id: existing.id }, data: { quantity: desired } });
+      } else if (desired > 0) {
+        await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count', quantity: desired, unitPrice: 0, totalCents: 0 } });
+      }
+    }
+
+    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    const meta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    res.json({
+      id: row.id,
+      tableId: row.table_id,
+      patronId: row.patron_id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      status: row.status,
+      createdAt: row.created_at,
+      numberOfPlayers: row.number_of_players,
+      subscriberCount: meta ? Number(meta.quantity) || 0 : 0
+    });
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -2485,8 +2517,18 @@ app.post('/api/sessions/:id/switch', async (req, res) => {
 
 app.get('/api/sessions', requireAuth, async (req, res) => {
   try {
-    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, pin FROM "Session" WHERE status <> 'cancelled' ORDER BY started_at DESC`);
-    const mapped = rows.map(r => ({ id: r.id, tableId: r.table_id, patronId: r.patron_id, startedAt: r.started_at, endedAt: r.ended_at, status: r.status, createdAt: r.created_at, numberOfPlayers: r.number_of_players, pin: r.pin }));
+    const rows = await prisma.$queryRawUnsafe(`
+      SELECT s.id, s.table_id, s.patron_id, s.started_at, s.ended_at, s.status, s.created_at, s.number_of_players, s.pin,
+             COALESCE((
+               SELECT quantity FROM "TabLineItem"
+               WHERE session_id = s.id AND type = 'meta' AND description = 'subscriber_count'
+               LIMIT 1
+             ), 0) AS subscriber_count
+      FROM "Session" s
+      WHERE s.status <> 'cancelled'
+      ORDER BY s.started_at DESC
+    `);
+    const mapped = rows.map(r => ({ id: r.id, tableId: r.table_id, patronId: r.patron_id, startedAt: r.started_at, endedAt: r.ended_at, status: r.status, createdAt: r.created_at, numberOfPlayers: r.number_of_players, subscriberCount: Number(r.subscriber_count) || 0, pin: r.pin }));
     res.json(mapped);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });

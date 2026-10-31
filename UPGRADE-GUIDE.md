@@ -31,6 +31,21 @@ The runtime image is Alpine-based and built in a multi-stage Dockerfile (product
 dependencies, npm cache excluded, dependency source maps stripped). Compose picks the published
 image automatically (`docker compose pull`); `--build` still builds locally from source.
 
+**Automated releases:** merging a branch into `master` (any push to `master`) runs
+`.github/workflows/release-on-merge.yml`, which:
+
+1. computes the next semver from the latest `v*` tag — `patch` by default, `minor` when commits use
+   `feat:`/`feature:`, `major` on `feat!:`/`BREAKING CHANGE` (skip if HEAD is already tagged);
+2. creates and pushes the annotated tag;
+3. creates the GitHub release with auto-generated notes (plus a container-image pull snippet) and
+   marks it latest;
+4. dispatches `publish-image.yml` to build/push the multi-arch image for the new tag and move
+   `:latest`.
+
+Tag pushes made by `GITHUB_TOKEN` do not trigger other workflows, hence the explicit dispatch. Manual
+tags/releases still work as before; the image workflow can also be dispatched with
+`update_latest=false` to publish a pinned image without moving `:latest`.
+
 ## Database impact of the 2026 upgrade
 
 **No manual database work is required.** The only schema change is migration

@@ -211,6 +211,10 @@ export function apiSetPlayerCount(sessionId: string, numberOfPlayers: number) {
   return apiSend('/api/sessions/' + sessionId, 'PATCH', { numberOfPlayers })
 }
 
+export function apiUpdateSession(sessionId: string, patch: { numberOfPlayers?: number; subscriberCount?: number }) {
+  return apiSend('/api/sessions/' + sessionId, 'PATCH', patch)
+}
+
 export function apiAddTabItem(sessionId: string, item: { description: string; quantity: number; unitPrice: number; vatRatePercent?: number | null }) {
   return apiSend('/api/sessions/' + sessionId + '/items', 'POST', { type: 'menu_item', ...item })
 }

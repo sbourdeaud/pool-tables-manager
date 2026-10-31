@@ -39,6 +39,36 @@ describe('Sessions API', () => {
     expect(res.body.id).toBe('s1');
   });
 
+  test('List sessions includes the subscriber count', async () => {
+    prisma.$queryRawUnsafe.mockResolvedValue([
+      { id: 's1', table_id: 't1', patron_id: null, started_at: new Date().toISOString(), ended_at: null, status: 'active', created_at: new Date().toISOString(), number_of_players: 2, pin: '1234', subscriber_count: 1 }
+    ]);
+    const res = await agent.get('/api/sessions');
+    expect(res.status).toBe(200);
+    expect(res.body[0].subscriberCount).toBe(1);
+  });
+
+  test('PATCH /api/sessions/:id updates player and subscriber counts (clamped)', async () => {
+    prisma.$queryRawUnsafe.mockImplementation(async (sql) => {
+      if (String(sql).includes('UPDATE')) return [{ id: 's1' }];
+      if (String(sql).includes('SELECT number_of_players')) return [{ number_of_players: 2 }];
+      return [{ id: 's1', table_id: 't1', patron_id: null, started_at: new Date().toISOString(), ended_at: null, status: 'active', created_at: new Date().toISOString(), number_of_players: 2 }];
+    });
+    let metaLookups = 0;
+    prisma.tabLineItem.findFirst.mockImplementation(async () => {
+      metaLookups++;
+      return metaLookups === 1 ? null : { id: 'm1', quantity: 2 };
+    });
+
+    const res = await agent.patch('/api/sessions/s1').send({ numberOfPlayers: 2, subscriberCount: 5 });
+    expect(res.status).toBe(200);
+    expect(res.body.numberOfPlayers).toBe(2);
+    expect(res.body.subscriberCount).toBe(2);
+    expect(prisma.tabLineItem.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ type: 'meta', description: 'subscriber_count', quantity: 2 })
+    });
+  });
+
   test('Get session detail (GET /api/sessions/:id)', async () => {
     const startedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', numberOfPlayers: 1, startedAt, status: 'active' });
