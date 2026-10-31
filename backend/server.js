@@ -620,7 +620,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
       const table = Array.isArray(tableData) ? tableData[0] : tableData;
       
       if(table && sess.started_at && sess.ended_at){
-        const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+        const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+        const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Check for subscriber discount
@@ -743,7 +745,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
           const table = Array.isArray(tableData) ? tableData[0] : tableData;
           
           if(table && sess.started_at && sess.ended_at){
-            const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+            const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+            const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+            const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
             const hoursCharged = Math.ceil(elapsedMs / 3600000);
             
             const subscriberMeta = await prisma.tabLineItem.findFirst({
@@ -836,7 +840,9 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
           where: { sessionId: sess.id, type: { notIn: ['meta', 'settlement', 'table_settlement'] }, voidedAt: null }
         });
         
-        const elapsedMs = new Date(sess.ended_at).getTime() - new Date(sess.started_at).getTime();
+        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: sess.id, type: 'meta', description: 'non_subscriber_started_at' } });
+        const chargeStart = getNonSubscriberChargeStart(sess.started_at, nonSubscriberStartMeta);
+        const elapsedMs = new Date(sess.ended_at).getTime() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Calculate table charge for this session
@@ -1567,6 +1573,12 @@ app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+function getNonSubscriberChargeStart(startedAt, startMeta){
+  const sessionStart = new Date(startedAt).getTime();
+  const recordedStart = startMeta && startMeta.createdAt ? new Date(startMeta.createdAt).getTime() : NaN;
+  return Number.isFinite(recordedStart) && recordedStart > sessionStart ? recordedStart : sessionStart;
+}
+
 // Compute the live table-time charge (and the table type's VAT rate) for an active session
 async function getTableChargeForSession(session){
   const tableRows = await prisma.$queryRawUnsafe(`
@@ -1579,11 +1591,13 @@ async function getTableChargeForSession(session){
 
   const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
   const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
+  const nonSubscriberStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
   const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
   const nonSubscriberCount = (session.numberOfPlayers || 1) - subscriberCount;
   const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
 
-  const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+  const chargeStart = getNonSubscriberChargeStart(session.startedAt, nonSubscriberStartMeta);
+  const elapsedMs = Date.now() - chargeStart;
   const hoursCharged = Math.ceil(elapsedMs / 3600000);
   let tableCharge = 0;
   if(nonSubscriberCount > 0){
@@ -2241,6 +2255,12 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'no_updates' });
     }
 
+    const previousSessionRows = await prisma.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+    const previousSession = Array.isArray(previousSessionRows) ? previousSessionRows[0] : previousSessionRows;
+    if (!previousSession) return res.status(404).json({ error: 'not_found' });
+    const previousSubscriberMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    const previousNonSubscriberCount = (Number(previousSession.number_of_players) || 1) - (Number(previousSubscriberMeta?.quantity) || 0);
+
     if (typeof numberOfPlayers !== 'undefined') {
       const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
       const row = Array.isArray(out) ? out[0] : out;
@@ -2266,6 +2286,14 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
     const row = Array.isArray(rows) ? rows[0] : rows;
     if (!row) return res.status(404).json({ error: 'not_found' });
     const meta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    const nextNonSubscriberCount = (Number(row.number_of_players) || 1) - (Number(meta?.quantity) || 0);
+    const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at' } });
+    if (nextNonSubscriberCount <= 0 || previousNonSubscriberCount <= 0) {
+      if (nonSubscriberStartMeta) await prisma.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+      if (previousNonSubscriberCount <= 0 && nextNonSubscriberCount > 0) {
+        await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at', quantity: 1, unitPrice: 0, totalCents: 0 } });
+      }
+    }
     res.json({
       id: row.id,
       tableId: row.table_id,
@@ -2423,7 +2451,9 @@ app.get('/api/sessions/:id', requireAuth, async (req, res) => {
       `, s.tableId);
       const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
       if(table && table.base_hourly_cents){
-        const elapsedMs = Date.now() - new Date(s.startedAt).getTime();
+        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
+        const chargeStart = getNonSubscriberChargeStart(s.startedAt, chargeStartMeta);
+        const elapsedMs = Date.now() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Get subscriber discount setting
@@ -2725,7 +2755,9 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     let tableCharge = 0;
     if(session.startedAt && session.status === 'active'){
       if(tableType && tableType.base_hourly_cents){
-        const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
+        const chargeStart = getNonSubscriberChargeStart(session.startedAt, chargeStartMeta);
+        const elapsedMs = Date.now() - chargeStart;
         const hoursCharged = Math.ceil(elapsedMs / 3600000);
         
         // Get subscriber discount setting
