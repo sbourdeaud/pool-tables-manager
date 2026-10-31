@@ -91,7 +91,7 @@ cd pool-tables-manager
 docker compose pull && docker compose up -d
 ```
 
-Pin a version with `IMAGE_TAG`, e.g. `IMAGE_TAG=v1.0.1 docker compose pull && IMAGE_TAG=v1.0.1 docker compose up -d`.
+Pin a version with `IMAGE_TAG`, e.g. `IMAGE_TAG=v1.1.0 docker compose pull && IMAGE_TAG=v1.1.0 docker compose up -d`.
 
 **Option B — build from source:**
 

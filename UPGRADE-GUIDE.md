@@ -23,7 +23,7 @@ Release tags (`v*`) publish multi-arch images (`linux/amd64`, `linux/arm64`) to 
 `.github/workflows/publish-image.yml`:
 
 ```bash
-docker pull ghcr.io/sbourdeaud/pool-tables-manager:v1.0.1
+docker pull ghcr.io/sbourdeaud/pool-tables-manager:v1.1.0
 docker pull ghcr.io/sbourdeaud/pool-tables-manager:latest
 ```
 

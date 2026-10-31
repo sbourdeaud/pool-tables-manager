@@ -23,13 +23,13 @@ docker compose logs -f app
 
 Images are published on every release tag to
 `ghcr.io/sbourdeaud/pool-tables-manager` (`linux/amd64` and `linux/arm64`), tagged with the release
-(e.g. `v1.0.1`) and `latest`. `docker-compose.yml` references that image and still supports local
+(e.g. `v1.1.0`) and `latest`. `docker-compose.yml` references that image and still supports local
 builds:
 
 ```bash
 # Run a specific published version
-IMAGE_TAG=v1.0.1 docker compose pull app
-IMAGE_TAG=v1.0.1 docker compose up -d
+IMAGE_TAG=v1.1.0 docker compose pull app
+IMAGE_TAG=v1.1.0 docker compose up -d
 
 # Or the latest published image
 docker compose pull && docker compose up -d
