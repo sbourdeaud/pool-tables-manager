@@ -506,7 +506,7 @@ app.get('/api/admin/backup/export', requireAuth, async (req, res) => {
 
 app.post('/api/admin/backup/import', requireAuth, express.raw({ type: 'application/octet-stream', limit: '256mb' }), async (req, res) => {
   try {
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body) || !Buffer.isBuffer(req.body) || req.body.byteLength === 0) {
       return res.status(400).json({ error: 'empty_upload' });
     }
     const result = await backupService.importFrom(req.body);

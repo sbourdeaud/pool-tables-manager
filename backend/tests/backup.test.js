@@ -118,4 +118,15 @@ describe('Database backup service', () => {
     const service = createBackupService({ spawnFn: () => fakeChild({}), databaseUrl: 'postgres://x' });
     expect((await service.importFrom(Buffer.alloc(0))).invalid).toBe('empty_upload');
   });
+
+  test.each(['DUMP', ['..', 'secret'], { length: 4 }, null])('rejects non-Buffer archive input: %p', async (input) => {
+    const spawnFn = jest.fn(() => fakeChild({}));
+    const service = createBackupService({ spawnFn, databaseUrl: 'postgres://x' });
+
+    const result = await service.importFrom(input);
+
+    expect(result.invalid).toBe('empty_upload');
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(service.isBusy()).toBe(false);
+  });
 });
