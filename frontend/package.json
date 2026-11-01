@@ -55,6 +55,9 @@
     "typescript": "~7.0.2",
     "vite": "^8.3.5"
   },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  },
   "imports": {
     "#components/*": "./src/components/*.tsx",
     "#lib/*": "./src/lib/*.ts",
