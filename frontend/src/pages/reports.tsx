@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { VatReportSection } from '@/pages/vat-report-section'
+import { InvoicesSection } from '@/pages/invoices-section'
 import { cn } from '@/lib/utils'
 import { useI18n } from '@/lib/i18n'
 
@@ -35,6 +36,11 @@ ChartJS.register(ArcElement, CategoryScale, LinearScale, PointElement, LineEleme
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const CHART_COLORS = ['#10b981', '#2563eb', '#f59e0b', '#7c3aed', '#e11d48', '#06b6d4', '#84cc16']
+
+function dateInputValue(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000)
+  return local.toISOString().split('T')[0]
+}
 
 function mondayOfWeek(date: Date): string {
   const d = new Date(date)
@@ -60,14 +66,14 @@ export function ReportsPage() {
   const today = new Date()
   const [form, setForm] = React.useState<Record<string, string>>({
     periodType: 'day',
-    date: today.toISOString().split('T')[0],
+    date: dateInputValue(today),
     weekDate: mondayOfWeek(today),
     year: String(today.getFullYear()),
     month: String(today.getMonth() + 1),
     quarter: String(Math.floor(today.getMonth() / 3) + 1),
   })
   const [report, setReport] = React.useState<FinancialReport | null>(null)
-  const [tab, setTab] = React.useState<'financial' | 'vat'>('financial')
+  const [tab, setTab] = React.useState<'financial' | 'vat' | 'invoices'>('financial')
   const [loading, setLoading] = React.useState(false)
   const [emailOpen, setEmailOpen] = React.useState(false)
   const [emailTo, setEmailTo] = React.useState('')
@@ -75,7 +81,7 @@ export function ReportsPage() {
   const pieRef = React.useRef<Chart<'pie', number[], string> | null | undefined>(undefined)
   const lineRef = React.useRef<Chart<'line', number[], string> | null | undefined>(undefined)
 
-  const generate = async () => {
+  const generate = React.useCallback(async () => {
     setLoading(true)
     const params: Record<string, string> = { periodType: form.periodType }
     if (form.periodType === 'day') params.date = form.date
@@ -96,7 +102,14 @@ export function ReportsPage() {
       return
     }
     setReport(result.data)
-  }
+  }, [form, t, toast])
+
+  const initialReportLoaded = React.useRef(false)
+  React.useEffect(() => {
+    if (initialReportLoaded.current) return
+    initialReportLoaded.current = true
+    void generate()
+  }, [generate])
 
   const pieData = React.useMemo(() => {
     if (!report) return null
@@ -254,7 +267,11 @@ export function ReportsPage() {
       </div>
 
       <div className="inline-flex rounded-lg border bg-muted/40 p-1">
-        {(['financial', 'vat'] as const).map((tabKey) => (
+        {([
+          ['financial', t('Financial')],
+          ['vat', t('VAT / TVA')],
+          ['invoices', t('Invoices')],
+        ] as const).map(([tabKey, label]) => (
           <button
             key={tabKey}
             type="button"
@@ -264,12 +281,13 @@ export function ReportsPage() {
               tab === tabKey ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            {tabKey === 'financial' ? t('Financial') : t('VAT / TVA')}
+            {label}
           </button>
         ))}
       </div>
 
       {tab === 'vat' && <VatReportSection />}
+      {tab === 'invoices' && <InvoicesSection />}
 
       {tab === 'financial' && (
       <>

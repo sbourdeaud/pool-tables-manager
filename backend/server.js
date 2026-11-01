@@ -919,6 +919,80 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/reports/invoices', requireAuth, async (req, res) => {
+  try {
+    const parseDate = (value, endOfDay = false) => {
+      if (typeof value === 'undefined') return null;
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(year, month - 1, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return false;
+      return date;
+    };
+    const from = parseDate(req.query.from);
+    const to = parseDate(req.query.to, true);
+    if (from === false || to === false || (from && to && from > to)) {
+      return res.status(400).json({ error: 'invalid_date_range' });
+    }
+
+    const createdAt = {};
+    if (from) createdAt.gte = from;
+    if (to) createdAt.lte = to;
+    const receipts = (await prisma.receipt.findMany({
+      where: Object.keys(createdAt).length ? { createdAt } : {},
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    })) || [];
+    const sessionIds = [...new Set(receipts.map((receipt) => receipt.sessionId))];
+    const sessions = sessionIds.length ? (await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || [] : [];
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    const tableIds = [...new Set(sessions.map((session) => session.tableId))];
+    const tables = tableIds.length ? (await prisma.poolTable.findMany({ where: { id: { in: tableIds } } })) || [] : [];
+    const tableById = new Map(tables.map((table) => [table.id, table]));
+    const payments = receipts.length
+      ? (await prisma.payment.findMany({ where: { receiptId: { in: receipts.map((receipt) => receipt.id) } }, orderBy: { createdAt: 'asc' } })) || []
+      : [];
+    const paymentsByReceipt = new Map();
+    for (const payment of payments) {
+      if (!paymentsByReceipt.has(payment.receiptId)) paymentsByReceipt.set(payment.receiptId, []);
+      paymentsByReceipt.get(payment.receiptId).push({
+        id: payment.id,
+        method: payment.method,
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+        status: payment.status
+      });
+    }
+
+    res.json(receipts.map((receipt) => {
+      let items = [];
+      try {
+        const parsed = JSON.parse(receipt.itemsJson || '[]');
+        if (Array.isArray(parsed)) items = parsed;
+      } catch {}
+      const session = sessionById.get(receipt.sessionId);
+      const table = session ? tableById.get(session.tableId) : null;
+      return {
+        id: receipt.id,
+        receiptNumber: receipt.number,
+        year: receipt.year,
+        sessionId: receipt.sessionId,
+        createdAt: receipt.createdAt,
+        tableNumber: table ? table.number : null,
+        subtotalHtCents: receipt.subtotalHtCents,
+        vatCents: receipt.vatCents,
+        totalTtcCents: receipt.totalTtcCents,
+        discountCents: receipt.discountCents || 0,
+        items,
+        payments: paymentsByReceipt.get(receipt.id) || []
+      };
+    }));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
 // Resolve a periodType ('day'|'month'|'quarter'|'year') + query params into a date range,
 // along with a stable periodKey used for period-closure locking.
 function resolveVatPeriod(query){

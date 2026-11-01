@@ -262,6 +262,21 @@ export interface CheckoutReceipt {
   payments?: ReceiptPayment[]
 }
 
+export interface InvoiceRecord extends CheckoutReceipt {
+  id: string
+  sessionId: string
+  createdAt: string
+  tableNumber: number | null
+}
+
+export function apiInvoices(params: { from?: string; to?: string } = {}) {
+  const query = new URLSearchParams()
+  if (params.from) query.set('from', params.from)
+  if (params.to) query.set('to', params.to)
+  const suffix = query.size ? `?${query.toString()}` : ''
+  return apiGet<InvoiceRecord[]>(`/api/reports/invoices${suffix}`)
+}
+
 export function apiCheckoutSession(sessionId: string, discountCents: number, payments?: PaymentInput[]) {
   return apiSend<CheckoutReceipt>('/api/sessions/' + sessionId + '/checkout', 'POST', {
     discountCents,
