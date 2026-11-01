@@ -63,6 +63,21 @@ export function InvoicesSection() {
   return (
     <div className="space-y-4">
       <Card>
+        <CardContent className="p-5">
+          <form onSubmit={submit} className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-[9.25rem_9.25rem_auto]">
+            <div className="grid grid-rows-[1rem_2.25rem] gap-1.5">
+              <Label className="h-4 leading-4" htmlFor="invoices-from">{t('From')}</Label>
+              <Input id="invoices-from" type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} />
+            </div>
+            <div className="grid grid-rows-[1rem_2.25rem] gap-1.5">
+              <Label className="h-4 leading-4" htmlFor="invoices-to">{t('To')}</Label>
+              <Input id="invoices-to" type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} />
+            </div>
+            <Button className="w-fit self-end" type="submit" disabled={loading}>{loading ? t('Loading…') : t('Apply')}</Button>
+          </form>
+        </CardContent>
+      </Card>
+      <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <FileText className="h-4 w-4" /> {t('Invoices')}
@@ -70,17 +85,6 @@ export function InvoicesSection() {
           <CardDescription>{t('Browse invoices issued at checkout.')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="invoices-from">{t('From')}</Label>
-              <Input id="invoices-from" type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="invoices-to">{t('To')}</Label>
-              <Input id="invoices-to" type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} />
-            </div>
-            <Button type="submit" disabled={loading}>{loading ? t('Loading…') : t('Apply')}</Button>
-          </form>
           <p className="text-xs text-muted-foreground">{t('Showing {count} invoices', { count: invoices.length })}</p>
           {loading ? (
             <p className="py-6 text-center text-sm text-muted-foreground">{t('Loading…')}</p>
