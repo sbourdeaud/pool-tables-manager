@@ -64,6 +64,11 @@ describe('Table usage / maintenance tracking', () => {
     expect(res.body.subtotalHtCents).toBe(2083);
     expect(Array.isArray(res.body.items)).toBe(true);
     expect(res.body.items[0].vatRatePercent).toBe(20);
+    const sessionEndUpdate = tx.$executeRawUnsafe.mock.calls.find((call) => String(call[0]).includes('UPDATE "Session" SET ended_at'));
+    const receiptData = tx.receipt.create.mock.calls[0][0].data;
+    expect(sessionEndUpdate[2]).toEqual(expect.any(Date));
+    expect(receiptData.sessionStartedAt).toEqual(startedAt);
+    expect(receiptData.sessionEndedAt).toEqual(sessionEndUpdate[2]);
   });
 
   test('leaving maintenance resets the since-maintenance counter but not lifetime', async () => {

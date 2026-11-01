@@ -39,6 +39,8 @@ describe('Reports', () => {
       totalTtcCents: 1200,
       discountCents: 0,
       createdAt: new Date('2026-05-14T12:00:00Z'),
+      sessionStartedAt: new Date('2026-05-14T10:00:00Z'),
+      sessionEndedAt: new Date('2026-05-14T12:00:00Z'),
     };
     const receiptFindMany = jest.spyOn(prisma.receipt, 'findMany').mockResolvedValue([receipt]);
     const paymentFindMany = jest.spyOn(prisma.payment, 'findMany').mockResolvedValue([
@@ -55,6 +57,8 @@ describe('Reports', () => {
       receiptNumber: 7,
       year: 2026,
       tableNumber: 4,
+      sessionStartedAt: '2026-05-14T10:00:00.000Z',
+      sessionEndedAt: '2026-05-14T12:00:00.000Z',
       totalTtcCents: 1200,
       items: [{ description: 'Table Time', totalCents: 1200 }],
       payments: [{ method: 'cash', amountCents: 1200 }],
