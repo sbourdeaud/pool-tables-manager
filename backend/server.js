@@ -978,6 +978,8 @@ app.get('/api/reports/invoices', requireAuth, async (req, res) => {
         year: receipt.year,
         sessionId: receipt.sessionId,
         createdAt: receipt.createdAt,
+        sessionStartedAt: receipt.sessionStartedAt || (session ? session.startedAt : null),
+        sessionEndedAt: receipt.sessionEndedAt || (session ? session.endedAt : null),
         tableNumber: table ? table.number : null,
         subtotalHtCents: receipt.subtotalHtCents,
         vatCents: receipt.vatCents,
@@ -1831,7 +1833,8 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     const receiptItems = saleItems.map(i => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, totalCents: i.totalCents, vatRatePercent: i.vatRatePercent }));
     if(tableCharge > 0) receiptItems.unshift({ description: 'Table Time', quantity: 1, unitPrice: tableCharge, totalCents: tableCharge, vatRatePercent: tableVatRate });
 
-    const elapsedSeconds = session.startedAt ? (Date.now() - new Date(session.startedAt).getTime()) / 1000 : 0;
+    const sessionEndedAt = new Date();
+    const elapsedSeconds = session.startedAt ? (sessionEndedAt.getTime() - new Date(session.startedAt).getTime()) / 1000 : 0;
 
     const result = await prisma.$transaction(async (tx) => {
       // Persist the table-time charge as a durable, VAT-tagged sale record
@@ -1879,6 +1882,8 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
 
       const receipt = await tx.receipt.create({ data: {
         number: nextNumber, year, sessionId: session.id,
+        sessionStartedAt: session.startedAt,
+        sessionEndedAt,
         itemsJson: JSON.stringify(receiptItems),
         subtotalHtCents, vatCents, totalTtcCents, discountCents
       }});
@@ -1907,7 +1912,7 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
         }
       }
 
-      await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1`, session.id);
+      await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = $2, status = 'ended' WHERE id::text = $1`, session.id, sessionEndedAt);
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
 
       // Record this session's duration against the table's usage counters

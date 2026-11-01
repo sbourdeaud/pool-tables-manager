@@ -167,6 +167,8 @@ model Receipt {
   number           Int
   year             Int
   sessionId        String   @map("session_id")
+  sessionStartedAt DateTime? @map("session_started_at") @db.Timestamptz(3)
+  sessionEndedAt   DateTime? @map("session_ended_at") @db.Timestamptz(3)
   itemsJson        String   @map("items_json")
   subtotalHtCents  Int      @map("subtotal_ht_cents")
   vatCents         Int      @map("vat_cents")

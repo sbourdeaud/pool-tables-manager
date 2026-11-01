@@ -127,6 +127,16 @@ export function InvoicesSection() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="grid gap-3 rounded-lg bg-muted/30 p-3 text-sm sm:grid-cols-2">
+              <div>
+                <p className="text-xs text-muted-foreground">{t('Session started')}</p>
+                <p className="font-medium">{selected.sessionStartedAt ? new Date(selected.sessionStartedAt).toLocaleString() : '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">{t('Session ended')}</p>
+                <p className="font-medium">{selected.sessionEndedAt ? new Date(selected.sessionEndedAt).toLocaleString() : '—'}</p>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[32rem] border-collapse text-sm">
                 <thead>

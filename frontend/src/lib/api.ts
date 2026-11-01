@@ -266,6 +266,8 @@ export interface InvoiceRecord extends CheckoutReceipt {
   id: string
   sessionId: string
   createdAt: string
+  sessionStartedAt: string | null
+  sessionEndedAt: string | null
   tableNumber: number | null
 }
 
