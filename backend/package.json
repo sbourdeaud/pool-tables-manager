@@ -25,7 +25,8 @@
     "stripe": "^23.1.0"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.0"
+    "deepmerge-ts": "^8.0.0",
+    "minimatch": "^11.0.1"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",
