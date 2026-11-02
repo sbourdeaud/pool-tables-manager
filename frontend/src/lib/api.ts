@@ -129,6 +129,7 @@ export interface TableRow {
   number: number
   status: string
   tableTypeId: string
+  totalUsedSeconds?: number
   usedSinceMaintenanceSeconds?: number
 }
 

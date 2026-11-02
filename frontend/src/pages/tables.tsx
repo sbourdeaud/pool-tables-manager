@@ -40,7 +40,7 @@ const EMPTY_FORM: TypeForm = { name: '', hourly: '', vat: '20', maxHours: '' }
 export function TablesPage() {
   const { settings, save: saveSetting } = useSettings()
   const { toast } = useToast()
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const currency = settings.currency || '$'
   const [types, setTypes] = React.useState<TableType[]>([])
   const [tables, setTables] = React.useState<TableRow[]>([])
@@ -365,6 +365,9 @@ export function TablesPage() {
                       )}
                     >
                       {tb.status === 'maintenance' ? t('Maintenance') : tb.status === 'occupied' ? t('Occupied') : t('Available')}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {t('Total used')}: {((tb.totalUsedSeconds ?? 0) / 3600).toLocaleString(language, { maximumFractionDigits: 1 })} h
                     </span>
                     <div className="ml-auto flex gap-1">
                       {tb.status !== 'maintenance' && (
