@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Clock3 } from 'lucide-react'
 import { SectionCard } from '@/components/settings/section-card'
+import { SettingField } from '@/components/settings/field'
 import { useSettings } from '@/components/settings/settings-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -73,6 +74,13 @@ export function OpeningHoursSection({ className }: { className?: string }) {
             </div>
           )
         })}
+      </div>
+      <div className="space-y-3 border-t pt-4">
+        <h3 className="text-sm font-semibold">{t('Contact details')}</h3>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SettingField name="venue_address" label={t('Venue address')} help={t('Saved automatically when you leave the field.')} />
+          <SettingField name="venue_phone" label={t('Phone number')} inputMode="tel" help={t('Saved automatically when you leave the field.')} />
+        </div>
       </div>
       {!valid && <p className="text-xs text-destructive">{t('Opening and closing times must be different.')}</p>}
       <Button type="button" onClick={() => void handleSave()} disabled={saving || !valid}>

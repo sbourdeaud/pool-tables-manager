@@ -35,6 +35,8 @@ export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { s
   }, [language, open, tab])
 
   const hours = parseWeeklyOpeningHours(settings?.venue_opening_hours)
+  const venueAddress = settings?.venue_address?.trim()
+  const venuePhone = settings?.venue_phone?.trim()
   const groups = React.useMemo(() => groupDrinks(drinks), [drinks])
 
   return (
@@ -60,18 +62,38 @@ export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { s
                 <p className="py-4 text-center text-sm text-muted-foreground">{t('Loading…')}</p>
               ) : settingsError ? (
                 <p className="py-4 text-center text-sm text-destructive">{t('Unable to load opening hours.')}</p>
-              ) : !hours ? (
-                <p className="py-4 text-center text-sm text-muted-foreground">{t('Opening hours are not configured.')}</p>
               ) : (
-                <div className="space-y-2">
-                  {hours.map((day, index) => (
-                    <div key={index} className="flex items-center justify-between gap-4 border-b pb-2 last:border-0">
-                      <span className="font-medium">{localizedWeekday(index, language)}</span>
-                      <span className={day.isOpen ? 'tabular-nums' : 'text-muted-foreground'}>
-                        {day.isOpen ? `${day.opensAt} – ${day.closesAt}` : t('Closed')}
-                      </span>
+                <div className="space-y-4">
+                  {(venueAddress || venuePhone) && (
+                    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                      {venueAddress && (
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground">{t('Venue address')}</p>
+                          <p className="text-sm">{venueAddress}</p>
+                        </div>
+                      )}
+                      {venuePhone && (
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground">{t('Phone number')}</p>
+                          <a className="text-sm underline underline-offset-4" href={`tel:${encodeURIComponent(venuePhone)}`}>{venuePhone}</a>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
+                  {hours ? (
+                    <div className="space-y-2">
+                      {hours.map((day, index) => (
+                        <div key={index} className="flex items-center justify-between gap-4 border-b pb-2 last:border-0">
+                          <span className="font-medium">{localizedWeekday(index, language)}</span>
+                          <span className={day.isOpen ? 'tabular-nums' : 'text-muted-foreground'}>
+                            {day.isOpen ? `${day.opensAt} – ${day.closesAt}` : t('Closed')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="py-4 text-center text-sm text-muted-foreground">{t('Opening hours are not configured.')}</p>
+                  )}
                 </div>
               )}
             </TabsContent>

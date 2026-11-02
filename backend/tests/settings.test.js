@@ -21,16 +21,20 @@ describe('Settings endpoints', () => {
     expect(res.body.currency).toBe('$');
   });
 
-  test('GET /api/settings exposes opening hours and message of the day to public callers', async () => {
+  test('GET /api/settings exposes opening hours, venue contact details, and message of the day to public callers', async () => {
     const hours = JSON.stringify([{ isOpen: true, opensAt: '09:00', closesAt: '17:00' }]);
     const message = 'Welcome to the club';
     prisma.state.mockSettings['venue_opening_hours'] = hours;
     prisma.state.mockSettings['venue_motd'] = message;
+    prisma.state.mockSettings['venue_address'] = '1 Main Street, Brussels';
+    prisma.state.mockSettings['venue_phone'] = '+32 2 123 45 67';
 
     const res = await agent.get('/api/settings');
     expect(res.status).toBe(200);
     expect(res.body.venue_opening_hours).toBe(hours);
     expect(res.body.venue_motd).toBe(message);
+    expect(res.body.venue_address).toBe('1 Main Street, Brussels');
+    expect(res.body.venue_phone).toBe('+32 2 123 45 67');
   });
 
   test('GET /api/settings never exposes secrets to unauthenticated callers', async () => {

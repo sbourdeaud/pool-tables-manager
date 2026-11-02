@@ -425,7 +425,7 @@ app.get('/api/i18n/:locale', (req, res) => {
 // Settings that are safe to expose without an admin session (used by the public
 // player/status pages and the login screen). Everything else — OIDC/SMTP secrets,
 // the local admin hash, fiscal identity — requires authentication.
-const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order', 'venue_opening_hours', 'venue_motd'];
+const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order', 'venue_opening_hours', 'venue_motd', 'venue_address', 'venue_phone'];
 
 app.get('/api/settings', async (req, res) => {
   try {
