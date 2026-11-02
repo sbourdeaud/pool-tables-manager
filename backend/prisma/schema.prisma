@@ -242,3 +242,18 @@ model PendingOrder {
   @@index([sessionId])
   @@index([status])
 }
+
+model VenueEvent {
+  id                 String   @id @default(uuid())
+  title              String
+  description        String?
+  eventDate          DateTime @map("event_date") @db.Date
+  allDay             Boolean  @default(false) @map("all_day")
+  startTime          String?  @map("start_time")
+  endTime            String?  @map("end_time")
+  tableTypeIdsJson   String   @map("table_type_ids_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([eventDate])
+}

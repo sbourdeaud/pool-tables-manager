@@ -170,6 +170,28 @@ export interface WaitlistEntry {
   expectedWaitMinutes?: number | null
 }
 
+export interface VenueEvent {
+  id: string
+  title: string
+  description: string | null
+  eventDate: string
+  allDay: boolean
+  startTime: string | null
+  endTime: string | null
+  tableTypeIds: string[]
+  tableTypes: { id: string; name: string }[]
+}
+
+export interface VenueEventInput {
+  title: string
+  description: string
+  eventDate: string
+  allDay: boolean
+  startTime: string | null
+  endTime: string | null
+  tableTypeIds: string[]
+}
+
 export interface WaitlistResponse {
   entries: WaitlistEntry[]
   queueDepth: number
@@ -414,6 +436,26 @@ export function apiRenewSubscription(id: string) {
 
 export function apiDeleteSubscription(id: string) {
   return apiSend('/api/subscriptions/' + id, 'DELETE')
+}
+
+export function apiVenueEvents(month: string) {
+  return apiGet<VenueEvent[]>('/api/events?' + new URLSearchParams({ month }).toString())
+}
+
+export function apiCreateVenueEvent(body: VenueEventInput) {
+  return apiSend<VenueEvent>('/api/events', 'POST', body)
+}
+
+export function apiUpdateVenueEvent(id: string, body: VenueEventInput) {
+  return apiSend<VenueEvent>('/api/events/' + id, 'PUT', body)
+}
+
+export function apiDeleteVenueEvent(id: string) {
+  return apiSend('/api/events/' + id, 'DELETE')
+}
+
+export function apiPublicVenueEvents(month: string, lang = 'en') {
+  return apiGet<VenueEvent[]>('/api/public/events?' + new URLSearchParams({ month, lang }).toString())
 }
 
 export function apiWaitlist() {

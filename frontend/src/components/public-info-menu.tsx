@@ -3,19 +3,28 @@ import { Menu as MenuIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { apiDrinks, type Drink, type SettingsMap } from '@/lib/api'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { MonthCalendar } from '@/components/month-calendar'
+import { apiDrinks, apiPublicVenueEvents, type Drink, type SettingsMap, type VenueEvent } from '@/lib/api'
 import { groupDrinks } from '@/lib/menu'
 import { money } from '@/lib/format'
+import { calendarDateValue, calendarMonthValue, formatCalendarDate } from '@/lib/venue-calendar'
 import { localizedWeekday, parseWeeklyOpeningHours } from '@/lib/opening-hours'
 import { useI18n } from '@/lib/i18n'
 
 export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { settings: SettingsMap | null; settingsLoading: boolean; settingsError: boolean }) {
   const { language, t } = useI18n()
   const [open, setOpen] = React.useState(false)
-  const [tab, setTab] = React.useState<'hours' | 'drinks'>('hours')
+  const [tab, setTab] = React.useState<'hours' | 'drinks' | 'events'>('hours')
   const [drinks, setDrinks] = React.useState<Drink[]>([])
   const [drinksLoading, setDrinksLoading] = React.useState(false)
   const [drinksError, setDrinksError] = React.useState(false)
+  const [calendarMonth, setCalendarMonth] = React.useState(calendarMonthValue())
+  const [selectedDate, setSelectedDate] = React.useState(calendarDateValue(new Date()))
+  const [events, setEvents] = React.useState<VenueEvent[]>([])
+  const [eventsLoading, setEventsLoading] = React.useState(false)
+  const [eventsError, setEventsError] = React.useState(false)
 
   React.useEffect(() => {
     if (!open || tab !== 'drinks') return
@@ -34,6 +43,28 @@ export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { s
     return () => { active = false }
   }, [language, open, tab])
 
+  React.useEffect(() => {
+    if (!open || tab !== 'events') return
+    let active = true
+    setEventsLoading(true)
+    setEventsError(false)
+    void apiPublicVenueEvents(calendarMonth, language)
+      .then((result) => {
+        if (!active) return
+        if (result.ok && result.data) setEvents(result.data)
+        else setEventsError(true)
+      })
+      .finally(() => {
+        if (active) setEventsLoading(false)
+      })
+    return () => { active = false }
+  }, [calendarMonth, language, open, tab])
+
+  const eventCounts = React.useMemo(() => events.reduce<Record<string, number>>((counts, event) => {
+    counts[event.eventDate] = (counts[event.eventDate] || 0) + 1
+    return counts
+  }, {}), [events])
+  const selectedEvents = React.useMemo(() => events.filter((event) => event.eventDate === selectedDate), [events, selectedDate])
   const hours = parseWeeklyOpeningHours(settings?.venue_opening_hours)
   const venueAddress = settings?.venue_address?.trim()
   const venuePhone = settings?.venue_phone?.trim()
@@ -52,10 +83,11 @@ export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { s
           <DialogDescription>{t('Public venue information and available drinks.')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <Tabs value={tab} onValueChange={(value) => setTab(value as 'hours' | 'drinks')}>
-            <TabsList className="w-full">
+          <Tabs value={tab} onValueChange={(value) => setTab(value as 'hours' | 'drinks' | 'events')}>
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="hours">{t('Opening Hours')}</TabsTrigger>
               <TabsTrigger value="drinks">{t('Drinks Menu')}</TabsTrigger>
+              <TabsTrigger value="events">{t('Events')}</TabsTrigger>
             </TabsList>
             <TabsContent value="hours" className="pt-4">
               {settingsLoading ? (
@@ -124,6 +156,51 @@ export function PublicInfoMenu({ settings, settingsLoading, settingsError }: { s
                       </section>
                     )
                   })}
+                </div>
+              )}
+            </TabsContent>
+            <TabsContent value="events" className="space-y-3 pt-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="public-events-month">{t('Month')}</Label>
+                <Input
+                  id="public-events-month"
+                  type="month"
+                  value={calendarMonth}
+                  onChange={(event) => {
+                    const month = event.target.value
+                    if (month.length !== 7 || month[4] !== '-') return
+                    setCalendarMonth(month)
+                    setSelectedDate(`${month}-01`)
+                  }}
+                />
+              </div>
+              <MonthCalendar
+                month={calendarMonth}
+                selectedDate={selectedDate}
+                eventCounts={eventCounts}
+                language={language}
+                onSelect={(date) => {
+                  setCalendarMonth(date.slice(0, 7))
+                  setSelectedDate(date)
+                }}
+              />
+              {eventsLoading ? (
+                <p className="py-3 text-center text-sm text-muted-foreground">{t('Loading events…')}</p>
+              ) : eventsError ? (
+                <p className="py-3 text-center text-sm text-destructive">{t('Unable to load events.')}</p>
+              ) : selectedEvents.length === 0 ? (
+                <p className="py-3 text-center text-sm text-muted-foreground">{t('No events scheduled for this date.')}</p>
+              ) : (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold">{formatCalendarDate(selectedDate, language)}</h3>
+                  {selectedEvents.map((event) => (
+                    <article key={event.id} className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                      <h4 className="text-sm font-semibold">{event.title}</h4>
+                      <p className="text-xs text-muted-foreground">{event.allDay ? t('All day (during opening hours)') : `${event.startTime}–${event.endTime}`}</p>
+                      {event.description && <p className="whitespace-pre-wrap text-sm">{event.description}</p>}
+                      <p className="text-xs text-muted-foreground">{event.tableTypes.map((type) => type.name).join(', ')}</p>
+                    </article>
+                  ))}
                 </div>
               )}
             </TabsContent>

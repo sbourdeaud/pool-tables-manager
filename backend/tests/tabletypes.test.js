@@ -34,11 +34,20 @@ describe('TableType CRUD', () => {
     expect(res.body.base_hourly_cents).toBe(3200);
   });
 
-  test('DELETE /api/table-types/:id when no tables exist', async () => {
+  test('DELETE /api/table-types/:id when no tables or events exist', async () => {
     prisma.poolTable.count.mockResolvedValue(0);
+    prisma.venueEvent.findMany.mockResolvedValue([]);
     prisma.tableType.delete.mockResolvedValue({});
     const res = await agent.delete('/api/table-types/tt2');
     expect([200,204]).toContain(res.status);
+  });
+
+  test('DELETE /api/table-types/:id when events use the type returns 409', async () => {
+    prisma.poolTable.count.mockResolvedValue(0);
+    prisma.venueEvent.findMany.mockResolvedValue([{ tableTypeIdsJson: '["tt2"]' }]);
+    const res = await agent.delete('/api/table-types/tt2');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('has_events');
   });
 
   test('DELETE /api/table-types/:id when tables exist returns 409', async () => {

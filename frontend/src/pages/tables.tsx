@@ -120,7 +120,7 @@ export function TablesPage() {
   const removeType = async (id: string) => {
     const result = await apiDeleteTableType(id)
     if (!result.ok) {
-      return toast({ title: t('Cannot delete table type'), description: result.status === 409 ? t('Tables exist for this type.') : result.error, variant: 'error' })
+      return toast({ title: t('Cannot delete table type'), description: result.status === 409 ? t(result.error === 'has_events' ? 'Events use this type.' : 'Tables exist for this type.') : result.error, variant: 'error' })
     }
     toast({ title: t('Table type deleted') })
     await load()
@@ -266,7 +266,7 @@ export function TablesPage() {
                       </Button>
                     }
                     title={t('Delete table type?')}
-                    description={t('This only works if no tables exist for this type.')}
+                    description={t('This only works if no tables or events use this type.')}
                     confirmLabel={t('Delete type')}
                     onConfirm={() => void removeType(type.id)}
                   />

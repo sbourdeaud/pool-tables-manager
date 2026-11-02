@@ -211,6 +211,7 @@ module.exports = {
   tableType: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
   waitlistEntry: { findMany: mk(), create: mk(), deleteMany: mk() },
+  venueEvent: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
   tabLineItem: { findMany: mk(), findFirst: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   user,
   subscription,

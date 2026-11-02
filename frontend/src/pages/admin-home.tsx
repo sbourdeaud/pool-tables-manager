@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { Beer, CircleDot, Database, Users, BarChart3, Settings2, Wallet, ListOrdered } from 'lucide-react'
+import { Beer, CircleDot, Database, Users, BarChart3, Settings2, Wallet, ListOrdered, CalendarDays } from 'lucide-react'
 import { useSettings } from '@/components/settings/settings-context'
 import { useI18n } from '@/lib/i18n'
 import { Card, CardContent } from '@/components/ui/card'
@@ -10,6 +10,7 @@ const TILES = [
   { to: '/admin/subscriptions', icon: Users, title: 'Subscriptions', desc: 'Create and remove subscriptions' },
   { to: '/admin/waitlist', icon: ListOrdered, title: 'Waiting List', desc: 'Manage guests waiting for a table' },
   { to: '/admin/reports', icon: BarChart3, title: 'Reports', desc: 'Generate financial reports' },
+  { to: '/admin/calendar', icon: CalendarDays, title: 'Venue Calendar', desc: 'Schedule and manage venue events' },
   { to: '/settings', icon: Settings2, title: 'Settings', desc: 'Configure app, fiscal, email and security settings' },
 ]
 
