@@ -920,6 +920,100 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/reports/operations', requireAuth, async (req, res) => {
+  try {
+    const { weekDate } = req.query;
+    if (typeof weekDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(weekDate)) {
+      return res.status(400).json({ error: 'invalid_week_date' });
+    }
+
+    const [year, month, day] = weekDate.split('-').map(Number);
+    const requestedDate = new Date(year, month - 1, day);
+    if (requestedDate.getFullYear() !== year || requestedDate.getMonth() !== month - 1 || requestedDate.getDate() !== day) {
+      return res.status(400).json({ error: 'invalid_week_date' });
+    }
+
+    const startDate = new Date(requestedDate);
+    startDate.setDate(startDate.getDate() - ((startDate.getDay() + 6) % 7));
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 7);
+    const now = new Date();
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(startDate);
+      date.setDate(date.getDate() + index);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    });
+
+    const [sessions, tables, tableTypes, orders] = await Promise.all([
+      prisma.session.findMany({
+        where: { startedAt: { lt: endDate }, OR: [{ endedAt: null }, { endedAt: { gt: startDate } }] },
+        select: { id: true, tableId: true, startedAt: true, endedAt: true }
+      }),
+      prisma.poolTable.findMany({ select: { id: true, tableTypeId: true } }),
+      prisma.tableType.findMany({ select: { id: true, name_en: true } }),
+      prisma.pendingOrder.findMany({
+        where: { createdAt: { gte: startDate, lt: endDate }, status: { not: 'cancelled' } },
+        select: { tableId: true, itemsJson: true, createdAt: true }
+      })
+    ]);
+
+    const tableById = Object.fromEntries(tables.map((table) => [table.id, table]));
+    const emptyMatrix = () => Array.from({ length: 7 }, () => Array(24).fill(0));
+    const utilizationByTableType = {};
+    const drinksByTableType = {};
+    const dayIndexFor = (date) => Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())) / 86400000);
+
+    for (const session of sessions) {
+      const table = tableById[session.tableId];
+      if (!table || !session.startedAt) continue;
+      const typeId = table.tableTypeId;
+      const matrix = utilizationByTableType[typeId] || (utilizationByTableType[typeId] = emptyMatrix());
+      let cursor = new Date(Math.max(new Date(session.startedAt).getTime(), startDate.getTime()));
+      const sessionEnd = session.endedAt ? new Date(session.endedAt).getTime() : now.getTime();
+      const finish = Math.min(sessionEnd, endDate.getTime(), now.getTime());
+      while (cursor.getTime() < finish) {
+        const next = new Date(cursor);
+        next.setMinutes(0, 0, 0);
+        next.setHours(next.getHours() + 1);
+        const segmentEnd = Math.min(next.getTime(), finish);
+        const dayIndex = dayIndexFor(cursor);
+        if (dayIndex >= 0 && dayIndex < 7) matrix[dayIndex][cursor.getHours()] += (segmentEnd - cursor.getTime()) / 60000;
+        cursor = new Date(segmentEnd);
+      }
+    }
+
+    for (const order of orders) {
+      const table = tableById[order.tableId];
+      if (!table) continue;
+      let items;
+      try {
+        items = JSON.parse(order.itemsJson);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(items)) continue;
+      const placedAt = new Date(order.createdAt);
+      const dayIndex = dayIndexFor(placedAt);
+      if (dayIndex < 0 || dayIndex >= 7) continue;
+      const typeId = table.tableTypeId;
+      const matrix = drinksByTableType[typeId] || (drinksByTableType[typeId] = emptyMatrix());
+      matrix[dayIndex][placedAt.getHours()] += items.reduce((sum, item) => sum + (Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : 0), 0);
+    }
+
+    res.json({
+      weekStart: days[0],
+      days,
+      tableTypes: tableTypes.map(({ id, name_en }) => ({ id, name: name_en })),
+      utilizationByTableType,
+      drinksByTableType
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
 app.get('/api/reports/invoices', requireAuth, async (req, res) => {
   try {
     const parseDate = (value, endOfDay = false) => {

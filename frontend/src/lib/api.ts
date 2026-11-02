@@ -458,6 +458,19 @@ export function apiFinancialReport(params: Record<string, string>) {
   return apiGet<FinancialReport>('/api/reports/financial?' + new URLSearchParams(params).toString())
 }
 
+export interface OperationsReport {
+  weekStart: string
+  days: string[]
+  tableTypes: { id: string; name: string }[]
+  utilizationByTableType: Record<string, number[][]>
+  drinksByTableType: Record<string, number[][]>
+  error?: string
+}
+
+export function apiOperationsReport(weekDate: string) {
+  return apiGet<OperationsReport>('/api/reports/operations?' + new URLSearchParams({ weekDate }).toString())
+}
+
 export function apiEmailReport(body: {
   to: string
   format: 'html' | 'pdf'

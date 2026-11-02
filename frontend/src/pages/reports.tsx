@@ -15,7 +15,7 @@ import { Line, Pie } from 'react-chartjs-2'
 import { jsPDF } from 'jspdf'
 import * as XLSX from 'xlsx'
 import { ArrowLeft, BarChart3, FileDown, Loader2, Mail, Sheet } from 'lucide-react'
-import { apiEmailReport, apiFinancialReport, type FinancialReport } from '@/lib/api'
+import { apiEmailReport, apiFinancialReport, apiOperationsReport, type FinancialReport, type OperationsReport } from '@/lib/api'
 import { money } from '@/lib/format'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
@@ -49,6 +49,36 @@ function mondayOfWeek(date: Date): string {
   return d.toISOString().split('T')[0]
 }
 
+function isoWeekValue(date: Date): string {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
+}
+
+function weekStartFromValue(value: string): string {
+  const match = /^(\d{4})-W(\d{2})$/.exec(value)
+  if (!match) return ''
+  const year = Number(match[1])
+  const week = Number(match[2])
+  const jan4 = new Date(year, 0, 4)
+  const monday = new Date(jan4)
+  monday.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7) + (week - 1) * 7)
+  return dateInputValue(monday)
+}
+
+function matrixForType(matrices: Record<string, number[][]>, selectedType: string): number[][] {
+  const result = Array.from({ length: 7 }, () => Array(24).fill(0))
+  const entries = selectedType === 'all' ? Object.values(matrices) : [matrices[selectedType] || []]
+  for (const matrix of entries) {
+    for (let day = 0; day < 7; day += 1) {
+      for (let hour = 0; hour < 24; hour += 1) result[day][hour] += matrix[day]?.[hour] || 0
+    }
+  }
+  return result
+}
+
 function periodLabel(form: Record<string, string>, t: Translate): string {
   const { periodType, year, month, quarter, date, weekDate } = form
   if (periodType === 'day') return new Date(date).toLocaleDateString()
@@ -73,8 +103,12 @@ export function ReportsPage() {
     quarter: String(Math.floor(today.getMonth() / 3) + 1),
   })
   const [report, setReport] = React.useState<FinancialReport | null>(null)
-  const [tab, setTab] = React.useState<'financial' | 'vat' | 'invoices'>('financial')
+  const [operationsReport, setOperationsReport] = React.useState<OperationsReport | null>(null)
+  const [analyticsWeek, setAnalyticsWeek] = React.useState(isoWeekValue(today))
+  const [analyticsTableType, setAnalyticsTableType] = React.useState('all')
+  const [tab, setTab] = React.useState<'financial' | 'vat' | 'invoices' | 'analytics'>('financial')
   const [loading, setLoading] = React.useState(false)
+  const [analyticsLoading, setAnalyticsLoading] = React.useState(false)
   const [emailOpen, setEmailOpen] = React.useState(false)
   const [emailTo, setEmailTo] = React.useState('')
   const [sending, setSending] = React.useState(false)
@@ -103,6 +137,41 @@ export function ReportsPage() {
     }
     setReport(result.data)
   }, [form, t, toast])
+
+  const generateOperations = React.useCallback(async () => {
+    const weekDate = weekStartFromValue(analyticsWeek)
+    if (!weekDate) return
+    setAnalyticsLoading(true)
+    const result = await apiOperationsReport(weekDate)
+    setAnalyticsLoading(false)
+    if (!result.ok || !result.data || result.data.error) {
+      toast({ title: t('Failed to generate report'), description: result.data?.error || result.error || `Error ${result.status}`, variant: 'error' })
+      setOperationsReport(null)
+      return
+    }
+    setOperationsReport(result.data)
+  }, [analyticsWeek, t, toast])
+
+  const utilizationMatrix = React.useMemo(
+    () => operationsReport ? matrixForType(operationsReport.utilizationByTableType, analyticsTableType) : null,
+    [operationsReport, analyticsTableType],
+  )
+  const drinksMatrix = React.useMemo(
+    () => operationsReport ? matrixForType(operationsReport.drinksByTableType, analyticsTableType) : null,
+    [operationsReport, analyticsTableType],
+  )
+  const drinksChartData = React.useMemo(() => {
+    if (!drinksMatrix || !operationsReport) return null
+    return {
+      labels: Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, '0')}:00`),
+      datasets: operationsReport.days.map((date, day) => ({
+        label: new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }),
+        data: drinksMatrix[day],
+        borderColor: CHART_COLORS[day % CHART_COLORS.length],
+        backgroundColor: CHART_COLORS[day % CHART_COLORS.length],
+      })),
+    }
+  }, [drinksMatrix, operationsReport])
 
   const initialReportLoaded = React.useRef(false)
   React.useEffect(() => {
@@ -271,6 +340,7 @@ export function ReportsPage() {
           ['financial', t('Financial')],
           ['vat', t('VAT / TVA')],
           ['invoices', t('Invoices')],
+          ['analytics', t('Utilization & Drinks')],
         ] as const).map(([tabKey, label]) => (
           <button
             key={tabKey}
@@ -481,6 +551,110 @@ export function ReportsPage() {
         </>
       )}
       </>
+      )}
+
+      {tab === 'analytics' && (
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
+                <div className="space-y-1.5">
+                  <Label htmlFor="analytics-week">{t('Week')}</Label>
+                  <Input id="analytics-week" type="week" value={analyticsWeek} onChange={(event) => setAnalyticsWeek(event.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t('Table type')}</Label>
+                  <Select value={analyticsTableType} onValueChange={setAnalyticsTableType}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('All table types')}</SelectItem>
+                      {operationsReport?.tableTypes.map((tableType) => (
+                        <SelectItem key={tableType.id} value={tableType.id}>{tableType.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button onClick={() => void generateOperations()} disabled={analyticsLoading || !analyticsWeek}>
+                  {analyticsLoading ? <Loader2 className="animate-spin" /> : <BarChart3 />} {t('Generate Report')}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {operationsReport && utilizationMatrix && drinksMatrix && (
+            <>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{t('Table utilization by day and hour')}</CardTitle>
+                  <CardDescription>{t('Occupied table-hours in each hourly slot')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[850px] w-full border-collapse text-center text-xs">
+                      <thead>
+                        <tr>
+                          <th className="sticky left-0 bg-background px-2 py-2 text-left">{t('Hour')}</th>
+                          {operationsReport.days.map((date) => (
+                            <th key={date} className="px-2 py-2 font-medium">
+                              {new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' })}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.from({ length: 24 }, (_, hour) => {
+                          const maximum = Math.max(0, ...utilizationMatrix.flat())
+                          return (
+                            <tr key={hour}>
+                              <th className="sticky left-0 bg-background px-2 py-1 text-left font-medium">{String(hour).padStart(2, '0')}:00</th>
+                              {operationsReport.days.map((date, day) => {
+                                const minutes = utilizationMatrix[day][hour]
+                                const value = minutes / 60
+                                const intensity = maximum ? minutes / maximum : 0
+                                return (
+                                  <td
+                                    key={`${date}-${hour}`}
+                                    title={`${date} ${String(hour).padStart(2, '0')}:00 — ${value.toFixed(1)} table-hours`}
+                                    className={cn('border border-background/70 px-1 py-1 tabular-nums', intensity > 0.55 && 'text-white')}
+                                    style={{ backgroundColor: intensity ? `rgba(16, 185, 129, ${0.12 + intensity * 0.78})` : undefined }}
+                                  >
+                                    {value.toFixed(1)}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{t('Drinks ordered by day and hour')}</CardTitle>
+                  <CardDescription>{t('Quantity of drinks ordered; cancelled orders are excluded')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {drinksChartData && (
+                    <div className="h-[340px]">
+                      <Line
+                        data={drinksChartData}
+                        options={{
+                          responsive: true,
+                          maintainAspectRatio: false,
+                          plugins: { legend: { position: 'bottom' } },
+                          scales: { y: { beginAtZero: true, title: { display: true, text: t('Drinks ordered') } } },
+                        }}
+                      />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
       )}
 
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>

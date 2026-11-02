@@ -12,6 +12,40 @@ describe('Reports', () => {
     setupAuthBypass(prisma);
   });
 
+  test('GET /api/reports/operations rejects missing or invalid weeks', async () => {
+    const missing = await agent.get('/api/reports/operations');
+    const invalid = await agent.get('/api/reports/operations').query({ weekDate: '2026-02-31' });
+    expect(missing.status).toBe(400);
+    expect(invalid.status).toBe(400);
+  });
+
+  test('GET /api/reports/operations buckets overlapping sessions and ordered drink quantities by type', async () => {
+    prisma.session.findMany.mockResolvedValue([
+      { id: 'session-before', tableId: 'table1', startedAt: new Date('2026-05-31T23:30:00'), endedAt: new Date('2026-06-01T00:30:00') },
+      { id: 'session-inside', tableId: 'table1', startedAt: new Date('2026-06-01T00:30:00'), endedAt: new Date('2026-06-01T02:00:00') },
+    ]);
+    prisma.poolTable.findMany.mockResolvedValue([{ id: 'table1', tableTypeId: 'type1' }]);
+    prisma.tableType.findMany.mockResolvedValue([{ id: 'type1', name_en: 'English Pool' }]);
+    const orderFindMany = jest.spyOn(prisma.pendingOrder, 'findMany').mockResolvedValue([
+      { tableId: 'table1', createdAt: new Date('2026-06-02T13:45:00'), itemsJson: JSON.stringify([{ quantity: 2 }, { quantity: 1 }]) },
+    ]);
+
+    const res = await agent.get('/api/reports/operations').query({ weekDate: '2026-06-03' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.weekStart).toBe('2026-06-01');
+    expect(res.body.tableTypes).toEqual([{ id: 'type1', name: 'English Pool' }]);
+    expect(res.body.utilizationByTableType.type1[0].slice(0, 2)).toEqual([60, 60]);
+    expect(res.body.drinksByTableType.type1[1][13]).toBe(3);
+    expect(prisma.session.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ startedAt: { lt: expect.any(Date) }, OR: expect.any(Array) }),
+    }));
+    expect(orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { not: 'cancelled' } }),
+    }));
+    orderFindMany.mockRestore();
+  });
+
   test('GET /api/reports/financial returns error when weekDate missing for week', async () => {
     const res = await agent.get('/api/reports/financial').query({ periodType: 'week' });
     expect(res.status).toBe(400);
