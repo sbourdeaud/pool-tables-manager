@@ -158,6 +158,37 @@ export interface PendingOrder {
   createdAt: string
 }
 
+export interface WaitlistEntry {
+  id: string
+  patronName: string
+  partySize: number
+  tableTypeId: string
+  tableTypeName: string
+  createdAt: string
+  position?: number
+  elapsedMinutes?: number
+  expectedWaitMinutes?: number | null
+}
+
+export interface WaitlistResponse {
+  entries: WaitlistEntry[]
+  queueDepth: number
+  averageWaitMinutes: number | null
+}
+
+export interface PublicWaitlistTypeSummary {
+  tableTypeId: string
+  tableTypeName: string
+  queueDepth: number
+  averageWaitMinutes: number | null
+}
+
+export interface PublicWaitlistSummary {
+  queueDepth: number
+  averageWaitMinutes: number | null
+  byTableType: PublicWaitlistTypeSummary[]
+}
+
 export interface Subscription {
   id: string
   patronName?: string
@@ -383,6 +414,22 @@ export function apiRenewSubscription(id: string) {
 
 export function apiDeleteSubscription(id: string) {
   return apiSend('/api/subscriptions/' + id, 'DELETE')
+}
+
+export function apiWaitlist() {
+  return apiGet<WaitlistResponse>('/api/waitlist')
+}
+
+export function apiCreateWaitlistEntry(body: { patronName: string; partySize: number; tableTypeId: string }) {
+  return apiSend<WaitlistEntry>('/api/waitlist', 'POST', body)
+}
+
+export function apiSeatWaitlistEntry(id: string) {
+  return apiSend('/api/waitlist/' + id + '/seat', 'POST')
+}
+
+export function apiCancelWaitlistEntry(id: string) {
+  return apiSend('/api/waitlist/' + id, 'DELETE')
 }
 
 // ---- Reports ----
@@ -672,6 +719,10 @@ export interface PublicTableDetail {
 
 export function apiPublicTables() {
   return apiGet<PublicTable[]>('/api/public/tables')
+}
+
+export function apiPublicWaitlistSummary() {
+  return apiGet<PublicWaitlistSummary>('/api/public/waitlist')
 }
 
 export function apiPublicTable(number: string, pin: string) {

@@ -11,6 +11,7 @@ const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
 const { getCardProvider, getPublicConfig } = require('./src/payments/provider');
 const { createBackupService } = require('./src/backup');
+const { estimateWaitlistEntries } = require('./src/waitlist-estimates');
 
 const app = express();
 app.use(cors());
@@ -424,7 +425,7 @@ app.get('/api/i18n/:locale', (req, res) => {
 // Settings that are safe to expose without an admin session (used by the public
 // player/status pages and the login screen). Everything else — OIDC/SMTP secrets,
 // the local admin hash, fiscal identity — requires authentication.
-const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order'];
+const PUBLIC_SETTING_KEYS = ['app_name', 'currency', 'public_base_url', 'subscriber_discount', 'dashboard_layout', 'table_type_order', 'venue_opening_hours', 'venue_motd'];
 
 app.get('/api/settings', async (req, res) => {
   try {
@@ -2689,6 +2690,105 @@ app.get('/api/sessions', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+async function buildWaitlistSnapshot() {
+  const entries = await prisma.waitlistEntry.findMany({ orderBy: { createdAt: 'asc' } });
+  if (!entries.length) {
+    const tableTypes = await prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true } });
+    return {
+      entries: [],
+      queueDepth: 0,
+      averageWaitMinutes: null,
+      byTableType: tableTypes.map(type => ({
+        tableTypeId: type.id,
+        tableTypeName: type.name_en || type.name_fr || 'Pool',
+        queueDepth: 0,
+        averageWaitMinutes: null,
+      })),
+    };
+  }
+
+  const [tables, tableTypes, activeSessions, sessionHistory] = await Promise.all([
+    prisma.poolTable.findMany({ select: { id: true, tableTypeId: true, status: true } }),
+    prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true } }),
+    prisma.session.findMany({ where: { status: 'active' }, select: { tableId: true, startedAt: true } }),
+    prisma.session.findMany({
+      where: { status: 'ended', endedAt: { not: null } },
+      orderBy: { endedAt: 'desc' },
+      take: 500,
+      select: { tableId: true, startedAt: true, endedAt: true },
+    }),
+  ]);
+
+  const result = estimateWaitlistEntries({ entries, tables, activeSessions, sessionHistory });
+  const typeNames = new Map((tableTypes || []).map(type => [type.id, type.name_en || type.name_fr || 'Pool']));
+  const enrichedEntries = result.entries.map(entry => ({ ...entry, tableTypeName: typeNames.get(entry.tableTypeId) || entry.tableTypeName }));
+  const typeStats = new Map((tableTypes || []).map(type => [type.id, {
+    tableTypeId: type.id,
+    tableTypeName: type.name_en || type.name_fr || 'Pool',
+    queueDepth: 0,
+    waitTimes: [],
+  }]));
+  for (const entry of enrichedEntries) {
+    const stat = typeStats.get(entry.tableTypeId);
+    if (!stat) continue;
+    stat.queueDepth += 1;
+    if (entry.expectedWaitMinutes !== null) stat.waitTimes.push(entry.expectedWaitMinutes);
+  }
+  const byTableType = [...typeStats.values()].map(stat => ({
+    tableTypeId: stat.tableTypeId,
+    tableTypeName: stat.tableTypeName,
+    queueDepth: stat.queueDepth,
+    averageWaitMinutes: stat.waitTimes.length
+      ? Math.round(stat.waitTimes.reduce((sum, value) => sum + value, 0) / stat.waitTimes.length)
+      : null,
+  }));
+  return { ...result, entries: enrichedEntries, byTableType };
+}
+
+app.get('/api/waitlist', requireAuth, async (req, res) => {
+  try {
+    res.json(await buildWaitlistSnapshot());
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/waitlist', requireAuth, async (req, res) => {
+  try {
+    const patronName = String(req.body?.patronName || '').trim();
+    const partySize = Number(req.body?.partySize);
+    const tableTypeId = String(req.body?.tableTypeId || '').trim();
+    if (!patronName || patronName.length > 100 || !Number.isInteger(partySize) || partySize < 1 || partySize > 50 || !tableTypeId) {
+      return res.status(400).json({ error: 'invalid_waitlist_entry' });
+    }
+    const tableType = await prisma.tableType.findUnique({ where: { id: tableTypeId } });
+    if (!tableType) return res.status(404).json({ error: 'table_type_not_found' });
+    const entry = await prisma.waitlistEntry.create({
+      data: {
+        patronName,
+        partySize,
+        tableTypeId: tableType.id,
+        tableTypeName: tableType.name_en || tableType.name_fr || 'Pool',
+      },
+    });
+    res.status(201).json(entry);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/waitlist/:id/seat', requireAuth, async (req, res) => {
+  try {
+    const result = await prisma.waitlistEntry.deleteMany({ where: { id: req.params.id } });
+    if (!result.count) return res.status(404).json({ error: 'waitlist_entry_not_found' });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.delete('/api/waitlist/:id', requireAuth, async (req, res) => {
+  try {
+    const result = await prisma.waitlistEntry.deleteMany({ where: { id: req.params.id } });
+    if (!result.count) return res.status(404).json({ error: 'waitlist_entry_not_found' });
+    res.status(204).end();
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
 // Subscriptions CRUD
 app.get('/api/subscriptions', requireAuth, async (req, res) => { 
   try { 
@@ -2771,6 +2871,14 @@ app.get('/api/public/tables', async (req, res) => {
       return entry;
     });
     res.json(out);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.get('/api/public/waitlist', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const { queueDepth, averageWaitMinutes, byTableType } = await buildWaitlistSnapshot();
+    res.json({ queueDepth, averageWaitMinutes, byTableType });
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 

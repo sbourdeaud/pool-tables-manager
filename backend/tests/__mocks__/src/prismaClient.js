@@ -1,4 +1,4 @@
-const state = { mockSettings: {}, users: [], subscriptions: [], payments: [], cashShifts: [], receipts: [], paymentEvents: [], creditNotes: [], closures: [] };
+const state = { mockSettings: {}, users: [], subscriptions: [], payments: [], cashShifts: [], receipts: [], paymentEvents: [], creditNotes: [], closures: [], waitlistEntries: [] };
 
 const mk = () => jest.fn();
 
@@ -208,8 +208,9 @@ module.exports = {
   paymentEvent,
   __makeTx: makeTx,
   poolTable: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), count: mk() },
-  tableType: { findMany: mk(), create: mk(), update: mk(), delete: mk() },
+  tableType: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
+  waitlistEntry: { findMany: mk(), create: mk(), deleteMany: mk() },
   tabLineItem: { findMany: mk(), findFirst: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   user,
   subscription,

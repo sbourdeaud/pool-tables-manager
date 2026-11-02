@@ -1,11 +1,12 @@
 import * as React from 'react'
-import { ChevronDown, ChevronUp, FileText } from 'lucide-react'
+import { ChevronDown, ChevronUp, FileText, Printer } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { apiInvoices, type InvoiceRecord } from '@/lib/api'
 import { money } from '@/lib/format'
+import { printInvoiceRecord } from '@/lib/receipts'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
 import { useI18n } from '@/lib/i18n'
@@ -124,11 +125,18 @@ export function InvoicesSection() {
       {selected && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">{t('Invoice details')} — {t('Invoice #{number}/{year}', { number: selected.receiptNumber, year: selected.year })}</CardTitle>
-            <CardDescription>
-              {new Date(selected.createdAt).toLocaleString()}
-              {selected.tableNumber != null ? ` · ${t('Table #{number}', { number: selected.tableNumber })}` : ''}
-            </CardDescription>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1.5">
+                <CardTitle className="text-base">{t('Invoice details')} — {t('Invoice #{number}/{year}', { number: selected.receiptNumber, year: selected.year })}</CardTitle>
+                <CardDescription>
+                  {new Date(selected.createdAt).toLocaleString()}
+                  {selected.tableNumber != null ? ` · ${t('Table #{number}', { number: selected.tableNumber })}` : ''}
+                </CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void printInvoiceRecord(selected, currency)}>
+                <Printer /> {t('Print invoice')}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 rounded-lg bg-muted/30 p-3 text-sm sm:grid-cols-2">

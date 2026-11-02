@@ -1,17 +1,20 @@
 import * as React from 'react'
-import { User, Plus, Minus, ArrowLeftRight, Beer, Play, Wrench, Trash2, Bell, Check, X, CheckCircle2, GripVertical, ChevronDown, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { User, Plus, Minus, ArrowLeftRight, Beer, Play, Wrench, Trash2, Bell, Check, X, CheckCircle2, GripVertical, ChevronDown, Search, UserPlus } from 'lucide-react'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import {
   apiAddTabItem,
+  apiCancelWaitlistEntry,
   apiDeleteTable,
   apiDrinks,
   apiFulfillOrder,
   apiCancelOrder,
   apiPendingOrders,
   apiRemoveTabItem,
+  apiSeatWaitlistEntry,
   apiSessionDetail,
   apiSessions,
   apiSetTableStatus,
@@ -20,11 +23,13 @@ import {
   apiTables,
   apiTransferSession,
   apiUpdateSession,
+  apiWaitlist,
   type Drink,
   type PendingOrder,
   type SessionRow,
   type TableRow,
   type TableType,
+  type WaitlistEntry,
 } from '@/lib/api'
 import { buildQrSvg, tableSessionUrl } from '@/lib/qr'
 import { CheckoutDialog } from '@/components/checkout-dialog'
@@ -36,6 +41,7 @@ import { SettlementDialog } from '@/components/settlement-dialog'
 import { playNewOrderChime, playPoolBallSound } from '@/lib/audio'
 import { useI18n } from '@/lib/i18n'
 import { chargedHours, elapsedDuration, money, minutesAgo } from '@/lib/format'
+import { formatWaitTime } from '@/lib/waitlist-format'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
@@ -58,7 +64,7 @@ function hashColor(str: string) {
 
 
 type DialogState =
-  | { kind: 'start'; table: TableRow }
+  | { kind: 'start'; table: TableRow; waitlistEntry?: WaitlistEntry }
   | { kind: 'drink'; session: SessionRow }
   | { kind: 'transfer'; session: SessionRow }
   | { kind: 'checkout'; session: SessionRow }
@@ -77,6 +83,7 @@ export function DashboardPage() {
   const [sessions, setSessions] = React.useState<SessionRow[]>([])
   const [totals, setTotals] = React.useState<Record<string, number>>({})
   const [orders, setOrders] = React.useState<PendingOrder[]>([])
+  const [waitlistEntries, setWaitlistEntries] = React.useState<WaitlistEntry[]>([])
   const [now, setNow] = React.useState(Date.now())
   const [loading, setLoading] = React.useState(true)
   const [dialog, setDialog] = React.useState<DialogState>(null)
@@ -111,21 +118,39 @@ export function DashboardPage() {
     setOrders(result.data)
   }, [])
 
+  const loadWaitlist = React.useCallback(async () => {
+    const result = await apiWaitlist()
+    if (result.ok && Array.isArray(result.data?.entries)) setWaitlistEntries(result.data.entries)
+  }, [])
+
+  const removeWaitlistEntry = async (entry: WaitlistEntry) => {
+    const result = await apiCancelWaitlistEntry(entry.id)
+    if (!result.ok) {
+      toast({ title: t('Failed to remove party'), variant: 'error' })
+      return
+    }
+    toast({ title: t('Party removed from waitlist') })
+    await loadWaitlist()
+  }
+
   React.useEffect(() => {
     void load()
     void loadOrders()
-  }, [load, loadOrders])
+    void loadWaitlist()
+  }, [load, loadOrders, loadWaitlist])
 
   React.useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 1000)
     const refresh = window.setInterval(() => void load(), 15000)
     const pollOrders = window.setInterval(() => void loadOrders(), 10000)
+    const pollWaitlist = window.setInterval(() => void loadWaitlist(), 30000)
     return () => {
       window.clearInterval(tick)
       window.clearInterval(refresh)
       window.clearInterval(pollOrders)
+      window.clearInterval(pollWaitlist)
     }
-  }, [load, loadOrders])
+  }, [load, loadOrders, loadWaitlist])
 
   const activeSessionFor = (tableId: string) => sessions.find((s) => s.tableId === tableId && s.status === 'active')
 
@@ -188,7 +213,6 @@ export function DashboardPage() {
           .filter((tb) => tb.tableTypeId === type.id && tb.status !== 'maintenance')
           .sort((a, b) => a.number - b.number),
       }))
-      .filter((g) => g.tables.length > 0)
       .sort((a, b) => rank(a.type.name_en) - rank(b.type.name_en))
   }, [types, tables, typeOrder])
 
@@ -281,7 +305,15 @@ export function DashboardPage() {
                 ))}
               </TabsList>
               {groups.map(({ type, tables: groupTables }) => (
-                <TabsContent key={type.id} value={type.name_en} className="mt-3">
+                <TabsContent key={type.id} value={type.name_en} className="mt-3 space-y-3">
+                  <TableTypeWaitlist
+                    type={type}
+                    entries={waitlistEntries.filter((entry) => entry.tableTypeId === type.id)}
+                    availableTables={groupTables.filter((table) => table.status === 'available' && !activeSessionFor(table.id))}
+                    now={now}
+                    onSeat={(entry, table) => setDialog({ kind: 'start', table, waitlistEntry: entry })}
+                    onRemove={(entry) => void removeWaitlistEntry(entry)}
+                  />
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{groupTables.map((tb) => renderTile(tb, type))}</div>
                 </TabsContent>
               ))}
@@ -339,7 +371,15 @@ export function DashboardPage() {
                           </Button>
                         </div>
                         <Collapsible open={!collapsed}>
-                          <CollapsibleContent>
+                          <CollapsibleContent className="space-y-3">
+                            <TableTypeWaitlist
+                              type={type}
+                              entries={waitlistEntries.filter((entry) => entry.tableTypeId === type.id)}
+                              availableTables={groupTables.filter((table) => table.status === 'available' && !activeSessionFor(table.id))}
+                              now={now}
+                              onSeat={(entry, table) => setDialog({ kind: 'start', table, waitlistEntry: entry })}
+                              onRemove={(entry) => void removeWaitlistEntry(entry)}
+                            />
                             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{groupTables.map((tb) => renderTile(tb, type))}</div>
                           </CollapsibleContent>
                         </Collapsible>
@@ -356,6 +396,7 @@ export function DashboardPage() {
       <StartSessionDialog
         state={dialog}
         onClose={() => setDialog(null)}
+        onWaitlistUpdated={loadWaitlist}
         onStarted={() => void finishAction(t('Session started'))}
       />
       <AddDrinkDialog
@@ -392,6 +433,56 @@ export function DashboardPage() {
         onDone={() => void load()}
       />
     </div>
+  )
+}
+
+function TableTypeWaitlist({ type, entries, availableTables, now, onSeat, onRemove }: { type: TableType; entries: WaitlistEntry[]; availableTables: TableRow[]; now: number; onSeat: (entry: WaitlistEntry, table: TableRow) => void; onRemove: (entry: WaitlistEntry) => void }) {
+  const { t } = useI18n()
+  if (entries.length === 0 && availableTables.length > 0) return null
+  return (
+    <section className="space-y-2 rounded-lg border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">{t('Waiting list')} — {type.name_en}</h3>
+          <p className="text-xs text-muted-foreground">{t('{count} parties waiting', { count: entries.length })}</p>
+        </div>
+        {availableTables.length === 0 && (
+          <Button asChild size="sm" variant="outline">
+            <Link to={`/admin/waitlist?type=${encodeURIComponent(type.id)}`}>
+              <UserPlus /> {t('Add to waiting list')}
+            </Link>
+          </Button>
+        )}
+      </div>
+      {entries.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('No parties are waiting for this type.')}</p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {entries.map((entry) => (
+            <div key={entry.id} className="flex items-center justify-between gap-3 rounded-md bg-background px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{entry.patronName} · {t('Party of {count}', { count: entry.partySize })}</p>
+                <p className="text-xs text-muted-foreground">{t('Queue #{position}', { position: entry.position || 1 })} · {t('Waiting {time}', { time: elapsedDuration(entry.createdAt, now) })}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <div className="text-right">
+                  <p className="text-[11px] text-muted-foreground">{t('Expected wait')}</p>
+                  <p className="text-sm font-semibold tabular-nums">{formatWaitTime(entry.expectedWaitMinutes ?? null, t)}</p>
+                </div>
+                {availableTables.length > 0 && (
+                  <Button size="sm" onClick={() => onSeat(entry, availableTables[0])}>
+                    <Play /> {t('Seat party')}
+                  </Button>
+                )}
+                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => onRemove(entry)} aria-label={t('Remove from waiting list')}>
+                  <X />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -670,26 +761,33 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
   )
 }
 
-function StartSessionDialog({ state, onClose, onStarted }: { state: DialogState; onClose: () => void; onStarted: () => void }) {
+function StartSessionDialog({ state, onClose, onStarted, onWaitlistUpdated }: { state: DialogState; onClose: () => void; onStarted: () => void; onWaitlistUpdated: () => Promise<void> }) {
   const { t } = useI18n()
+  const { toast } = useToast()
   const [subs, setSubs] = React.useState(0)
   const [nonsubs, setNonsubs] = React.useState(1)
   const [busy, setBusy] = React.useState(false)
   const open = state?.kind === 'start'
   const table = state?.kind === 'start' ? state.table : null
+  const waitlistEntry = state?.kind === 'start' ? state.waitlistEntry : undefined
 
   React.useEffect(() => {
     if (open) {
       setSubs(0)
-      setNonsubs(1)
+      setNonsubs(Math.max(1, waitlistEntry?.partySize ?? 1))
     }
-  }, [open])
+  }, [open, waitlistEntry?.id])
 
   const start = async () => {
     if (!table) return
     if (subs + nonsubs < 1) return
     setBusy(true)
     const result = await apiStartSession(table.id, subs + nonsubs, subs)
+    if (result.ok && waitlistEntry) {
+      const removed = await apiSeatWaitlistEntry(waitlistEntry.id)
+      if (!removed.ok) toast({ title: t('Failed to remove party from the waiting list'), variant: 'error' })
+      await onWaitlistUpdated()
+    }
     setBusy(false)
     if (result.ok) {
       playPoolBallSound()

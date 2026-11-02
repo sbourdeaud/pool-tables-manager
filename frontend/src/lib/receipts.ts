@@ -1,4 +1,4 @@
-import { apiGet, apiSessionDetail, apiTableTypes, apiTables, type CheckoutReceipt, type CreditNoteRecord, type SessionDetail } from '@/lib/api'
+import { apiGet, apiSessionDetail, apiTableTypes, apiTables, type CheckoutReceipt, type CreditNoteRecord, type InvoiceRecord, type SessionDetail } from '@/lib/api'
 import { money } from '@/lib/format'
 
 interface ReceiptLine {
@@ -124,6 +124,49 @@ export async function printFinalReceipt(receipt: CheckoutReceipt, currency: stri
             ${receipt.payments.some(p => (p.details?.changeCents || 0) > 0)
               ? `<tr><td>Change:</td><td style="text-align:right">${money(receipt.payments.reduce((sum, p) => sum + (p.details?.changeCents || 0), 0), currency)}</td></tr>`
               : ''}
+          </table>`
+       : ''}
+     <div style="text-align:center;margin-top:20px">Thank you!</div>`,
+  )
+}
+
+/** Re-print an archived invoice from the reports history. */
+export async function printInvoiceRecord(invoice: InvoiceRecord, currency: string) {
+  const w = openPrintWindow()
+  if (!w) return
+  const name = await appName()
+  const lines = invoice.items || []
+  const grossTtc = lines.reduce((sum, line) => sum + (line.totalCents || 0), 0)
+  const { rows } = vatRowsForLines(lines, currency)
+  const startStr = invoice.sessionStartedAt ? new Date(invoice.sessionStartedAt).toLocaleString() : 'N/A'
+  const endStr = invoice.sessionEndedAt ? new Date(invoice.sessionEndedAt).toLocaleString() : 'N/A'
+  const tableStr = invoice.tableNumber != null ? `Table #${invoice.tableNumber}` : 'N/A'
+
+  writeReceipt(
+    w,
+    `Invoice #${invoice.receiptNumber}/${invoice.year}`,
+    `<h2>${name}</h2>
+     <h3>RECEIPT / INVOICE #${invoice.receiptNumber}/${invoice.year}</h3>
+     <div class="info">
+       <div>Table: ${tableStr}</div>
+       <div>Start: ${startStr}</div>
+       <div>End: ${endStr}</div>
+       <div>Issued: ${new Date(invoice.createdAt).toLocaleString()}</div>
+     </div>
+     ${linesTable(lines, currency)}
+     <table class="totals">
+       <tr><td>Subtotal (TTC):</td><td style="text-align:right">${money(grossTtc, currency)}</td></tr>
+       ${invoice.discountCents > 0 ? `<tr><td>Discount:</td><td style="text-align:right">-${money(invoice.discountCents, currency)}</td></tr>` : ''}
+       <tr><td>TOTAL (TTC):</td><td style="text-align:right">${money(invoice.totalTtcCents, currency)}</td></tr>
+       <tr><td>Total HT:</td><td style="text-align:right">${money(invoice.totalTtcCents - invoice.vatCents, currency)}</td></tr>
+     </table>
+     <table>
+       <tr><td>of which VAT (TVA):</td><td style="text-align:right">${money(invoice.vatCents, currency)}</td></tr>
+       ${rows}
+     </table>
+     ${invoice.payments && invoice.payments.length > 0
+       ? `<table class="totals">
+            ${invoice.payments.map(p => `<tr><td>Paid (${p.method}):</td><td style="text-align:right">${money(p.amountCents, p.currency || currency)}</td></tr>`).join('')}
           </table>`
        : ''}
      <div style="text-align:center;margin-top:20px">Thank you!</div>`,

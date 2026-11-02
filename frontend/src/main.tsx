@@ -14,6 +14,7 @@ import { AdminHomePage } from '@/pages/admin-home'
 import { DrinksPage } from '@/pages/drinks'
 import { TablesPage } from '@/pages/tables'
 import { SubscriptionsPage } from '@/pages/subscriptions'
+import { WaitlistPage } from '@/pages/waitlist'
 import { CashPage } from '@/pages/cash'
 import { BackupPage } from '@/pages/backup'
 import { Suspense } from 'react'
@@ -46,6 +47,7 @@ function Shell() {
           <Route path="/admin/drinks" element={<DrinksPage />} />
           <Route path="/admin/tables" element={<TablesPage />} />
           <Route path="/admin/subscriptions" element={<SubscriptionsPage />} />
+          <Route path="/admin/waitlist" element={<WaitlistPage />} />
           <Route path="/admin/cash" element={<CashPage />} />
           <Route path="/admin/backup" element={<BackupPage />} />
           <Route

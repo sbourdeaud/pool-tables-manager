@@ -1,6 +1,6 @@
 import * as React from 'react'
-import { Minus, Plus, Moon, Sun, Loader2, Search } from 'lucide-react'
-import { apiDrinks, apiPlaceOrder, apiPublicTable, type Drink, type PublicTableDetail } from '@/lib/api'
+import { Minus, Plus, Moon, Sun, Loader2, Search, BookOpen } from 'lucide-react'
+import { apiDrinks, apiPlaceOrder, apiPublicTable, apiPublicTables, type Drink, type PublicTableDetail } from '@/lib/api'
 import { DRINK_CATEGORIES, groupDrinks, type DrinkCategory } from '@/lib/menu'
 import { formatSeconds, money } from '@/lib/format'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
@@ -9,6 +9,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
+import { TableRulesDialog } from '@/components/table-rules-dialog'
+import { rulesForTableType } from '@/lib/table-rules'
 
 function useTableNumber(): string | null {
   const params = new URLSearchParams(window.location.search)
@@ -38,6 +40,9 @@ export function TableApp() {
   const [loadError, setLoadError] = React.useState<'notfound' | 'error' | null>(null)
   const [currency, setCurrency] = React.useState(localStorage.getItem('currency') || '$')
   const [now, setNow] = React.useState(Date.now())
+  const [tableTypeName, setTableTypeName] = React.useState<string | null>(null)
+  const [rulesOpen, setRulesOpen] = React.useState(false)
+  const rules = tableTypeName ? rulesForTableType(tableTypeName) : null
 
   React.useEffect(() => {
     void fetch('/api/settings')
@@ -47,6 +52,17 @@ export function TableApp() {
       })
       .catch(() => {})
   }, [])
+
+  React.useEffect(() => {
+    if (!tableNumber) return
+    let active = true
+    void apiPublicTables().then((result) => {
+      if (!active || !result.ok || !result.data) return
+      const table = result.data.find((candidate) => candidate.number === Number(tableNumber))
+      setTableTypeName(table?.typeName || null)
+    })
+    return () => { active = false }
+  }, [tableNumber])
 
   React.useEffect(() => {
     if (!tableNumber) return
@@ -120,6 +136,18 @@ export function TableApp() {
   return (
     <div className="min-h-screen px-4 py-6">
       <div className="fixed right-3 top-3 z-20 flex items-center gap-2">
+        {tableTypeName && rules && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-10 w-10"
+            onClick={() => setRulesOpen(true)}
+            aria-label={t('Show rules for {type}', { type: t(rules[0].label) })}
+            title={t('Rules')}
+          >
+            <BookOpen className="h-4 w-4" />
+          </Button>
+        )}
         <div className="rounded-lg border bg-card px-1 shadow-sm">
           <LanguageSelect className="h-9" />
         </div>
@@ -134,6 +162,7 @@ export function TableApp() {
         </button>
       </div>
       <div className="mx-auto w-full max-w-xl">{body}</div>
+      <TableRulesDialog open={rulesOpen} tableType={tableTypeName} onClose={() => setRulesOpen(false)} />
     </div>
   )
 }

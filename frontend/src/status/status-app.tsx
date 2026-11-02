@@ -1,10 +1,12 @@
 import * as React from 'react'
-import { Moon, Sun } from 'lucide-react'
-import { apiPublicTables, type PublicTable } from '@/lib/api'
+import { Megaphone, Moon, Sun } from 'lucide-react'
+import { apiGetSettings, apiPublicTables, apiPublicWaitlistSummary, type PublicTable, type PublicWaitlistSummary, type SettingsMap } from '@/lib/api'
 import { elapsedDuration } from '@/lib/format'
+import { formatWaitTime } from '@/lib/waitlist-format'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
+import { PublicInfoMenu } from '@/components/public-info-menu'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#e11d48', '#06b6d4']
 
@@ -26,6 +28,10 @@ export function StatusApp() {
   const [now, setNow] = React.useState(Date.now())
   const [theme, setTheme] = React.useState(getStoredTheme())
   const [typeOrder, setTypeOrder] = React.useState<string[]>([])
+  const [publicSettings, setPublicSettings] = React.useState<SettingsMap | null>(null)
+  const [settingsLoading, setSettingsLoading] = React.useState(true)
+  const [settingsError, setSettingsError] = React.useState(false)
+  const [waitlistSummary, setWaitlistSummary] = React.useState<PublicWaitlistSummary | null>(null)
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -43,26 +49,35 @@ export function StatusApp() {
     }
   }, [])
 
+  const loadWaitlistSummary = React.useCallback(async () => {
+    const result = await apiPublicWaitlistSummary()
+    if (result.ok && result.data && typeof result.data.queueDepth === 'number') setWaitlistSummary(result.data)
+  }, [])
+
   React.useEffect(() => {
-    void fetch('/api/settings')
-      .then((r) => (r.ok ? r.json() : null))
+    void apiGetSettings()
       .then((settings) => {
+        setPublicSettings(settings)
         try {
-          const value = JSON.parse(settings?.table_type_order || '[]')
-          if (Array.isArray(value)) setTypeOrder(value.filter((v: unknown): v is string => typeof v === 'string'))
+          const value = JSON.parse(settings.table_type_order || '[]')
+          if (Array.isArray(value)) setTypeOrder(value.filter((v): v is string => typeof v === 'string'))
         } catch {
           /* ignore malformed order */
         }
       })
-      .catch(() => {})
+      .catch(() => setSettingsError(true))
+      .finally(() => setSettingsLoading(false))
     void load()
+    void loadWaitlistSummary()
     const poll = window.setInterval(() => void load(), POLL_MS)
+    const waitlistPoll = window.setInterval(() => void loadWaitlistSummary(), 30000)
     const tick = window.setInterval(() => setNow(Date.now()), 1000)
     return () => {
       window.clearInterval(poll)
+      window.clearInterval(waitlistPoll)
       window.clearInterval(tick)
     }
-  }, [load])
+  }, [load, loadWaitlistSummary])
 
   const groups = React.useMemo(() => {
     const map = new Map<string, PublicTable[]>()
@@ -77,6 +92,17 @@ export function StatusApp() {
     }
     return [...map.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
   }, [tables, typeOrder])
+  const motd = publicSettings?.venue_motd?.trim()
+  const waitlistByType = React.useMemo(() => {
+    if (!waitlistSummary || !Array.isArray(waitlistSummary.byTableType)) return []
+    const order = new Map(typeOrder.map((name, index) => [name, index]))
+    return waitlistSummary.byTableType
+      .slice()
+      .sort((a, b) => {
+        const rank = (name: string) => order.has(name) ? order.get(name)! : Number.MAX_SAFE_INTEGER
+        return rank(a.tableTypeName) - rank(b.tableTypeName) || a.tableTypeName.localeCompare(b.tableTypeName)
+      })
+  }, [waitlistSummary, typeOrder])
 
   return (
     <div className="min-h-screen px-4 py-6 sm:px-6">
@@ -87,6 +113,7 @@ export function StatusApp() {
             <p className="text-sm text-muted-foreground">{t('Live availability — updates automatically')}</p>
           </div>
           <div className="flex items-center gap-2">
+            <PublicInfoMenu settings={publicSettings} settingsLoading={settingsLoading} settingsError={settingsError} />
             <LanguageSelect className="rounded-lg border bg-card shadow-sm" />
             <span
               className={cn(
@@ -106,6 +133,46 @@ export function StatusApp() {
             </button>
           </div>
         </div>
+
+        {motd && (
+          <section aria-label={t('Message of the Day')} role="status" aria-live="polite" className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <Megaphone className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold">{t('Message of the Day')}</h2>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm">{motd}</p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {waitlistByType.length > 0 && (
+          <section aria-label={t('Waiting List')} className="space-y-3 rounded-xl border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold">{t('Waiting List')}</h2>
+              <p className="text-xs text-muted-foreground">{t('{count} parties waiting', { count: waitlistSummary?.queueDepth ?? 0 })}</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {waitlistByType.map((type) => (
+                <div key={type.tableTypeId} className="rounded-lg border bg-muted/20 p-3">
+                  <p className="truncate text-sm font-semibold">{type.tableTypeName}</p>
+                  <div className="mt-2 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] text-muted-foreground">{t('Waiting parties')}</p>
+                      <p className="text-lg font-bold tabular-nums">{type.queueDepth}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[11px] text-muted-foreground">{t('Average estimated wait')}</p>
+                      <p className="text-sm font-bold tabular-nums">
+                        {type.queueDepth === 0 ? t('No current wait') : formatWaitTime(type.averageWaitMinutes, t)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {tables === null ? (
           <p className="py-12 text-center text-sm text-muted-foreground">{t('Loading…')}</p>

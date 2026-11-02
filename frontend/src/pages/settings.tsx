@@ -6,6 +6,8 @@ import { SmtpSection } from '@/components/settings/smtp-section'
 import { FiscalSection } from '@/components/settings/fiscal-section'
 import { SecuritySection } from '@/components/settings/security-section'
 import { DangerSection } from '@/components/settings/danger-section'
+import { OpeningHoursSection } from '@/components/settings/opening-hours-section'
+import { MessageOfTheDaySection } from '@/components/settings/message-of-the-day-section'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { useI18n } from '@/lib/i18n'
@@ -28,7 +30,7 @@ export function SettingsPage() {
 
       {loading ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
+          {Array.from({ length: 8 }).map((_, i) => (
             <Card key={i} className="h-64 animate-pulse bg-muted/40" />
           ))}
         </div>
@@ -43,11 +45,13 @@ export function SettingsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 xl:grid-cols-2 [&>*]:min-w-0">
+          <MessageOfTheDaySection className="xl:col-span-2" />
           <GeneralSection />
+          <OpeningHoursSection />
           <LocalizationSection />
-          <SmtpSection />
           <FiscalSection />
-          <SecuritySection className="xl:col-span-2" />
+          <SmtpSection />
+          <SecuritySection />
           <DangerSection className="xl:col-span-2" />
         </div>
       )}
