@@ -7,9 +7,11 @@ import { CSS } from '@dnd-kit/utilities'
 import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import {
   apiAddTabItem,
+  apiCancelSessionPlayerSearch,
   apiCancelWaitlistEntry,
   apiDeleteTable,
   apiDrinks,
+  apiFulfillSessionPlayerSearch,
   apiFulfillOrder,
   apiCancelOrder,
   apiPendingOrders,
@@ -42,6 +44,7 @@ import { playNewOrderChime, playPoolBallSound } from '@/lib/audio'
 import { useI18n } from '@/lib/i18n'
 import { chargedHours, elapsedDuration, money, minutesAgo } from '@/lib/format'
 import { formatWaitTime } from '@/lib/waitlist-format'
+import { lookingForPlayersLabel } from '@/lib/player-search'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
@@ -70,6 +73,7 @@ type DialogState =
   | { kind: 'checkout'; session: SessionRow }
   | { kind: 'settle'; session: SessionRow }
   | { kind: 'add-player'; session: SessionRow }
+  | { kind: 'fulfill-player-search'; session: SessionRow }
   | { kind: 'qr'; tableNumber: number; pin?: string }
   | null
 
@@ -178,6 +182,16 @@ export function DashboardPage() {
         onCheckout={(s) => setDialog({ kind: 'checkout', session: s })}
         onSettle={(s) => setDialog({ kind: 'settle', session: s })}
         onAddPlayer={(s) => setDialog({ kind: 'add-player', session: s })}
+        onFulfillPlayerSearch={(s) => setDialog({ kind: 'fulfill-player-search', session: s })}
+        onCancelPlayerSearch={async (s) => {
+          const result = await apiCancelSessionPlayerSearch(s.id)
+          if (!result.ok) {
+            toast({ title: t('Failed to cancel player request'), description: result.error || `Error ${result.status}`, variant: 'error' })
+            return
+          }
+          toast({ title: t('Player request canceled') })
+          await load()
+        }}
         onMaintenance={async () => {
           const result = await apiSetTableStatus(tb.id, 'maintenance')
           if (!result.ok) toast({ title: 'Failed to update table', variant: 'error' })
@@ -425,6 +439,11 @@ export function DashboardPage() {
         onClose={() => setDialog(null)}
         onDone={() => { setDialog(null); void load() }}
       />
+      <FulfillPlayerSearchDialog
+        state={dialog}
+        onClose={() => setDialog(null)}
+        onDone={() => { setDialog(null); void load() }}
+      />
       <SettlementDialog
         open={dialog?.kind === 'settle'}
         sessionId={dialog?.kind === 'settle' ? dialog.session.id : null}
@@ -610,6 +629,8 @@ interface TableTileProps {
   onSettle: (session: SessionRow) => void
   onQr: (pin?: string) => void
   onAddPlayer: (session: SessionRow) => void
+  onFulfillPlayerSearch: (session: SessionRow) => void
+  onCancelPlayerSearch: (session: SessionRow) => Promise<void>
   onMaintenance: () => Promise<void>
   onDelete: () => Promise<void>
 }
@@ -663,6 +684,19 @@ function TableTile(props: TableTileProps) {
               </Button>
             </div>
           </div>
+          {session.lookingForPlayersCount ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/10 px-2 py-1.5">
+              <span className="text-xs font-semibold">
+                {lookingForPlayersLabel(session.lookingForPlayersCount, Boolean(session.lookingForPlayersUpTo), t)}
+              </span>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => props.onFulfillPlayerSearch(session)}>
+                <Check /> {t('Mark as fulfilled')}
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void props.onCancelPlayerSearch(session)}>
+                <X /> {t('Cancel request')}
+              </Button>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between text-sm">
             <span className="font-mono font-semibold tabular-nums">{elapsedDuration(start, now)}</span>
             <span className="text-xs text-muted-foreground">({chargedHours(start, now)}h charged)</span>
@@ -755,6 +789,69 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function FulfillPlayerSearchDialog({ state, onClose, onDone }: { state: DialogState; onClose: () => void; onDone: () => void }) {
+  const { t } = useI18n()
+  const { toast } = useToast()
+  const open = state?.kind === 'fulfill-player-search'
+  const session = state?.kind === 'fulfill-player-search' ? state.session : null
+  const [subscribersAdded, setSubscribersAdded] = React.useState('0')
+  const [nonSubscribersAdded, setNonSubscribersAdded] = React.useState('1')
+  const [busy, setBusy] = React.useState(false)
+
+  React.useEffect(() => {
+    if (open) {
+      setSubscribersAdded('0')
+      setNonSubscribersAdded(String(session?.lookingForPlayersCount || 1))
+    }
+  }, [open, session?.id])
+
+  const fulfill = async () => {
+    if (!session) return
+    const subscribers = Number(subscribersAdded)
+    const nonSubscribers = Number(nonSubscribersAdded)
+    const total = subscribers + nonSubscribers
+    if (!Number.isInteger(subscribers) || !Number.isInteger(nonSubscribers) || total < 1 || total > 50) return
+    setBusy(true)
+    const result = await apiFulfillSessionPlayerSearch(session.id, subscribers, nonSubscribers)
+    setBusy(false)
+    if (!result.ok) {
+      toast({ title: t('Failed to confirm players'), description: result.error || `Error ${result.status}`, variant: 'error' })
+      return
+    }
+    toast({ title: t('Players added to the table') })
+    onDone()
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('Confirm players')}</DialogTitle>
+          <DialogDescription>
+            {session?.lookingForPlayersCount && lookingForPlayersLabel(session.lookingForPlayersCount, Boolean(session.lookingForPlayersUpTo), t)}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="dashboard-subscribers-added">{t('Subscribers (free table time)')}</Label>
+            <Input id="dashboard-subscribers-added" type="number" min="0" max="50" value={subscribersAdded} onChange={(event) => setSubscribersAdded(event.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dashboard-non-subscribers-added">{t('Non-subscribers')}</Label>
+            <Input id="dashboard-non-subscribers-added" type="number" min="0" max="50" value={nonSubscribersAdded} onChange={(event) => setNonSubscribersAdded(event.target.value)} />
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t('Cancel')}</Button>
+          <Button onClick={() => void fulfill()} disabled={busy || !Number.isInteger(Number(subscribersAdded)) || !Number.isInteger(Number(nonSubscribersAdded)) || Number(subscribersAdded) + Number(nonSubscribersAdded) < 1 || Number(subscribersAdded) + Number(nonSubscribersAdded) > 50}>
+            <Check /> {busy ? t('Saving…') : t('Confirm players')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

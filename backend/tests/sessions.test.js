@@ -39,13 +39,75 @@ describe('Sessions API', () => {
     expect(res.body.id).toBe('s1');
   });
 
-  test('List sessions includes the subscriber count', async () => {
+  test('List sessions includes the subscriber count and player-search state', async () => {
     prisma.$queryRawUnsafe.mockResolvedValue([
-      { id: 's1', table_id: 't1', patron_id: null, started_at: new Date().toISOString(), ended_at: null, status: 'active', created_at: new Date().toISOString(), number_of_players: 2, pin: '1234', subscriber_count: 1 }
+      { id: 's1', table_id: 't1', patron_id: null, started_at: new Date().toISOString(), ended_at: null, status: 'active', created_at: new Date().toISOString(), number_of_players: 2, pin: '1234', subscriber_count: 1, looking_for_players_count: 2, looking_for_players_up_to: true }
     ]);
     const res = await agent.get('/api/sessions');
     expect(res.status).toBe(200);
     expect(res.body[0].subscriberCount).toBe(1);
+    expect(res.body[0].lookingForPlayersCount).toBe(2);
+    expect(res.body[0].lookingForPlayersUpTo).toBe(true);
+  });
+
+  test('DELETE /api/sessions/:id/looking-for-players clears an open search', async () => {
+    prisma.session.updateMany.mockResolvedValue({ count: 1 });
+    const res = await agent.delete('/api/sessions/s1/looking-for-players');
+    expect(res.status).toBe(204);
+    expect(prisma.session.updateMany).toHaveBeenCalledWith({
+      where: { id: 's1', status: 'active' },
+      data: { lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+    });
+  });
+
+  test('POST /api/sessions/:id/looking-for-players/fulfill adds players and clears the request', async () => {
+    prisma.session.findUnique.mockResolvedValue({
+      id: 's1',
+      status: 'active',
+      numberOfPlayers: 2,
+      lookingForPlayersCount: 3,
+      lookingForPlayersUpTo: true,
+    });
+    const subscriberMeta = { id: 'subscriber-meta', quantity: 1 };
+    prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
+    prisma.session.updateMany.mockResolvedValue({ count: 1 });
+    prisma.tabLineItem.findFirst.mockResolvedValue(subscriberMeta);
+    prisma.tabLineItem.update.mockResolvedValue({ ...subscriberMeta, quantity: 2 });
+
+    const res = await agent.post('/api/sessions/s1/looking-for-players/fulfill').send({ subscribersAdded: 1, nonSubscribersAdded: 1 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ numberOfPlayers: 4, subscriberCount: 2, lookingForPlayersCount: null, lookingForPlayersUpTo: false });
+    expect(prisma.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 's1', status: 'active', numberOfPlayers: 2, lookingForPlayersCount: 3 }),
+      data: { numberOfPlayers: 4, lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+    }));
+    expect(prisma.tabLineItem.update).toHaveBeenCalledWith({ where: { id: 'subscriber-meta' }, data: { quantity: 2 } });
+  });
+
+  test('fulfilling a request with a non-subscriber starts table billing', async () => {
+    const subscriberMeta = { id: 'subscriber-meta', quantity: 2 };
+    prisma.session.findUnique.mockResolvedValue({
+      id: 's1',
+      status: 'active',
+      numberOfPlayers: 2,
+      lookingForPlayersCount: 3,
+      lookingForPlayersUpTo: true,
+    });
+    prisma.$transaction.mockImplementation(async (callback) => callback(prisma));
+    prisma.session.updateMany.mockResolvedValue({ count: 1 });
+    prisma.tabLineItem.findFirst.mockImplementation(async ({ where }) =>
+      where.description === 'subscriber_count' ? subscriberMeta : null,
+    );
+    prisma.tabLineItem.create.mockResolvedValue({ id: 'billing-start' });
+
+    const res = await agent.post('/api/sessions/s1/looking-for-players/fulfill').send({ subscribersAdded: 0, nonSubscribersAdded: 1 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ numberOfPlayers: 3, subscriberCount: 2 });
+    expect(prisma.tabLineItem.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ type: 'meta', description: 'non_subscriber_started_at' }),
+    });
   });
 
   test('PATCH /api/sessions/:id updates player and subscriber counts (clamped)', async () => {

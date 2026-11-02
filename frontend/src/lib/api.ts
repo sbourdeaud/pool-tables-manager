@@ -140,6 +140,8 @@ export interface SessionRow {
   startedAt: string
   numberOfPlayers?: number
   subscriberCount?: number
+  lookingForPlayersCount?: number | null
+  lookingForPlayersUpTo?: boolean
   pin?: string
 }
 
@@ -267,6 +269,18 @@ export function apiSetPlayerCount(sessionId: string, numberOfPlayers: number) {
 
 export function apiUpdateSession(sessionId: string, patch: { numberOfPlayers?: number; subscriberCount?: number }) {
   return apiSend('/api/sessions/' + sessionId, 'PATCH', patch)
+}
+
+export function apiCancelSessionPlayerSearch(sessionId: string) {
+  return apiSend('/api/sessions/' + sessionId + '/looking-for-players', 'DELETE')
+}
+
+export function apiFulfillSessionPlayerSearch(sessionId: string, subscribersAdded: number, nonSubscribersAdded: number) {
+  return apiSend<{ numberOfPlayers: number; subscriberCount: number; lookingForPlayersCount: null; lookingForPlayersUpTo: false }>(
+    '/api/sessions/' + sessionId + '/looking-for-players/fulfill',
+    'POST',
+    { subscribersAdded, nonSubscribersAdded },
+  )
 }
 
 export function apiAddTabItem(sessionId: string, item: { description: string; quantity: number; unitPrice: number; vatRatePercent?: number | null }) {
@@ -761,12 +775,14 @@ export interface PublicTable {
   status: string
   startedAt?: string | null
   numberOfPlayers?: number
+  lookingForPlayersCount?: number
+  lookingForPlayersUpTo?: boolean
   typeName?: string
 }
 
 export interface PublicTableDetail {
   table: { number: number; name?: string; type?: string }
-  session?: { startedAt: string; numberOfPlayers?: number } | null
+  session?: { startedAt: string; numberOfPlayers?: number; lookingForPlayersCount?: number | null; lookingForPlayersUpTo?: boolean } | null
   tableCharge?: number
   items?: { description: string; quantity: number; unitPrice: number; totalCents: number }[]
   totalCents?: number
@@ -787,4 +803,16 @@ export function apiPublicTable(number: string, pin: string) {
 
 export function apiPlaceOrder(tableNumber: string, pin: string, items: { drinkId: string; quantity: number }[]) {
   return apiSend('/api/public/table/' + tableNumber + '/order', 'POST', { pin, items })
+}
+
+export function apiSetTableLookingForPlayers(tableNumber: string, pin: string, count: number, upTo: boolean) {
+  return apiSend('/api/public/table/' + tableNumber + '/looking-for-players', 'POST', { pin, count, upTo })
+}
+
+export function apiCancelTableLookingForPlayers(tableNumber: string, pin: string) {
+  return apiSend('/api/public/table/' + tableNumber + '/looking-for-players/cancel', 'POST', { pin })
+}
+
+export function apiFulfillTableLookingForPlayers(tableNumber: string, pin: string, subscribersAdded: number, nonSubscribersAdded: number) {
+  return apiSend('/api/public/table/' + tableNumber + '/looking-for-players/fulfill', 'POST', { pin, subscribersAdded, nonSubscribersAdded })
 }

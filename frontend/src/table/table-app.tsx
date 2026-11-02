@@ -1,16 +1,19 @@
 import * as React from 'react'
-import { Minus, Plus, Moon, Sun, Loader2, Search, BookOpen } from 'lucide-react'
-import { apiDrinks, apiPlaceOrder, apiPublicTable, apiPublicTables, type Drink, type PublicTableDetail } from '@/lib/api'
+import { Minus, Plus, Moon, Sun, Loader2, Search, BookOpen, Check, Users, X } from 'lucide-react'
+import { apiCancelTableLookingForPlayers, apiDrinks, apiFulfillTableLookingForPlayers, apiPlaceOrder, apiPublicTable, apiPublicTables, apiSetTableLookingForPlayers, type Drink, type PublicTableDetail } from '@/lib/api'
 import { DRINK_CATEGORIES, groupDrinks, type DrinkCategory } from '@/lib/menu'
 import { formatSeconds, money } from '@/lib/format'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
 import { TableRulesDialog } from '@/components/table-rules-dialog'
 import { rulesForTableType } from '@/lib/table-rules'
+import { lookingForPlayersLabel } from '@/lib/player-search'
 
 function useTableNumber(): string | null {
   const params = new URLSearchParams(window.location.search)
@@ -130,7 +133,7 @@ export function TableApp() {
       </Centered>
     )
   } else {
-    body = <TableDetail detail={detail} currency={currency} now={now} tableNumber={tableNumber} pin={pin} onOrderPlaced={() => void load()} />
+    body = <TableDetail detail={detail} currency={currency} now={now} tableNumber={tableNumber} pin={pin} onChanged={() => void load()} />
   }
 
   return (
@@ -236,22 +239,30 @@ function TableDetail({
   now,
   tableNumber,
   pin,
-  onOrderPlaced,
+  onChanged,
 }: {
   detail: PublicTableDetail
   currency: string
   now: number
   tableNumber: string
   pin: string
-  onOrderPlaced: () => void
+  onChanged: () => void
 }) {
   const { t } = useI18n()
   const [drinks, setDrinks] = React.useState<Drink[]>([])
   const [basket, setBasket] = React.useState<Record<string, number>>({})
   const [placing, setPlacing] = React.useState(false)
   const [message, setMessage] = React.useState<{ text: string; error?: boolean } | null>(null)
+  const [playerMessage, setPlayerMessage] = React.useState<{ text: string; error?: boolean } | null>(null)
   const [activeCategory, setActiveCategory] = React.useState<'all' | DrinkCategory>('all')
   const [search, setSearch] = React.useState('')
+  const [searchDialogOpen, setSearchDialogOpen] = React.useState(false)
+  const [fulfillDialogOpen, setFulfillDialogOpen] = React.useState(false)
+  const [searchCount, setSearchCount] = React.useState('2')
+  const [searchUpTo, setSearchUpTo] = React.useState(false)
+  const [subscribersJoined, setSubscribersJoined] = React.useState('0')
+  const [nonSubscribersJoined, setNonSubscribersJoined] = React.useState('1')
+  const [playerActionBusy, setPlayerActionBusy] = React.useState(false)
   const groups = React.useMemo(() => groupDrinks(drinks), [drinks])
   const showSearch = drinks.length > 8
 
@@ -266,6 +277,12 @@ function TableDetail({
     const timer = window.setTimeout(() => setMessage(null), 5000)
     return () => window.clearTimeout(timer)
   }, [message])
+
+  React.useEffect(() => {
+    if (!playerMessage) return
+    const timer = window.setTimeout(() => setPlayerMessage(null), 5000)
+    return () => window.clearTimeout(timer)
+  }, [playerMessage])
 
   const session = detail.session
   if (!session) {
@@ -294,10 +311,67 @@ function TableDetail({
     if (result.ok) {
       setBasket({})
       setMessage({ text: t('Order sent! A staff member will bring it shortly.') })
-      onOrderPlaced()
+      onChanged()
     } else {
       setMessage({ text: t('Could not place order. Please try again or ask staff for help.'), error: true })
     }
+  }
+
+  const openSearchDialog = () => {
+    setPlayerMessage(null)
+    setSearchCount(String(session.lookingForPlayersCount || 2))
+    setSearchUpTo(Boolean(session.lookingForPlayersUpTo))
+    setSearchDialogOpen(true)
+  }
+
+  const requestPlayers = async () => {
+    const count = Number(searchCount)
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      setPlayerMessage({ text: t('Enter a valid number of players'), error: true })
+      return
+    }
+    setPlayerActionBusy(true)
+    const result = await apiSetTableLookingForPlayers(tableNumber, pin, count, searchUpTo)
+    setPlayerActionBusy(false)
+    if (!result.ok) {
+      setPlayerMessage({ text: t('Failed to update player request'), error: true })
+      return
+    }
+    setSearchDialogOpen(false)
+    setPlayerMessage({ text: t('Player request updated') })
+    onChanged()
+  }
+
+  const cancelPlayerRequest = async () => {
+    setPlayerActionBusy(true)
+    const result = await apiCancelTableLookingForPlayers(tableNumber, pin)
+    setPlayerActionBusy(false)
+    if (!result.ok) {
+      setPlayerMessage({ text: t('Failed to cancel player request'), error: true })
+      return
+    }
+    setPlayerMessage({ text: t('Player request canceled') })
+    onChanged()
+  }
+
+  const fulfillPlayerRequest = async () => {
+    const subscribers = Number(subscribersJoined)
+    const nonSubscribers = Number(nonSubscribersJoined)
+    const total = subscribers + nonSubscribers
+    if (!Number.isInteger(subscribers) || !Number.isInteger(nonSubscribers) || total < 1 || total > 50) {
+      setPlayerMessage({ text: t('Enter a valid number of players'), error: true })
+      return
+    }
+    setPlayerActionBusy(true)
+    const result = await apiFulfillTableLookingForPlayers(tableNumber, pin, subscribers, nonSubscribers)
+    setPlayerActionBusy(false)
+    if (!result.ok) {
+      setPlayerMessage({ text: t('Failed to confirm players'), error: true })
+      return
+    }
+    setFulfillDialogOpen(false)
+    setPlayerMessage({ text: t('Players added to the table') })
+    onChanged()
   }
 
   return (
@@ -322,6 +396,27 @@ function TableDetail({
               <p className="text-base font-semibold">{session.numberOfPlayers || 1}</p>
             </div>
           </div>
+
+          {session.lookingForPlayersCount ? (
+            <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/10 p-3">
+              <p className="text-sm font-semibold">
+                {lookingForPlayersLabel(session.lookingForPlayersCount, Boolean(session.lookingForPlayersUpTo), t)}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => { setPlayerMessage(null); setSubscribersJoined('0'); setNonSubscribersJoined(String(session.lookingForPlayersCount || 1)); setFulfillDialogOpen(true) }} disabled={playerActionBusy}>
+                  <Check /> {t('Mark as fulfilled')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => void cancelPlayerRequest()} disabled={playerActionBusy}>
+                  <X /> {t('Cancel request')}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="outline" className="w-full" onClick={openSearchDialog}>
+              <Users /> {t('Looking for players?')}
+            </Button>
+          )}
+          {playerMessage && <p className={cn('text-sm', playerMessage.error ? 'text-destructive' : 'text-emerald-600')}>{playerMessage.text}</p>}
 
           {(detail.tableCharge || 0) > 0 && (
             <div>
@@ -468,6 +563,79 @@ function TableDetail({
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={searchDialogOpen} onOpenChange={setSearchDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Looking for players?')}</DialogTitle>
+            <DialogDescription>{t('Tell other players how many are needed.')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="player-search-count">{t('How many players are you looking for?')}</Label>
+              <Input
+                id="player-search-count"
+                type="number"
+                min="1"
+                max="50"
+                value={searchCount}
+                onChange={(event) => setSearchCount(event.target.value)}
+              />
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="checkbox" className="accent-primary" checked={searchUpTo} onChange={(event) => setSearchUpTo(event.target.checked)} />
+              {t('Up to this number')}
+            </label>
+            {playerMessage && <p className={cn('text-sm', playerMessage.error ? 'text-destructive' : 'text-emerald-600')}>{playerMessage.text}</p>}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSearchDialogOpen(false)}>{t('Cancel')}</Button>
+            <Button onClick={() => void requestPlayers()} disabled={playerActionBusy}>
+              <Users /> {playerActionBusy ? t('Saving…') : t('Request players')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={fulfillDialogOpen} onOpenChange={setFulfillDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Players found')}</DialogTitle>
+            <DialogDescription>{lookingForPlayersLabel(session.lookingForPlayersCount || 1, Boolean(session.lookingForPlayersUpTo), t)}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="players-subscribers-joined">{t('Subscribers (free table time)')}</Label>
+              <Input
+                id="players-subscribers-joined"
+                type="number"
+                min="0"
+                max="50"
+                value={subscribersJoined}
+                onChange={(event) => setSubscribersJoined(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="players-non-subscribers-joined">{t('Non-subscribers')}</Label>
+              <Input
+                id="players-non-subscribers-joined"
+                type="number"
+                min="0"
+                max="50"
+                value={nonSubscribersJoined}
+                onChange={(event) => setNonSubscribersJoined(event.target.value)}
+              />
+            </div>
+            {playerMessage && <p className={cn('text-sm sm:col-span-2', playerMessage.error ? 'text-destructive' : 'text-emerald-600')}>{playerMessage.text}</p>}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFulfillDialogOpen(false)}>{t('Cancel')}</Button>
+            <Button onClick={() => void fulfillPlayerRequest()} disabled={playerActionBusy || !Number.isInteger(Number(subscribersJoined)) || !Number.isInteger(Number(nonSubscribersJoined)) || Number(subscribersJoined) + Number(nonSubscribersJoined) < 1 || Number(subscribersJoined) + Number(nonSubscribersJoined) > 50}>
+              <Check /> {playerActionBusy ? t('Saving…') : t('Confirm players')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

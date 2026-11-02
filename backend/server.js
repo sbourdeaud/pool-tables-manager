@@ -2581,7 +2581,7 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       }
     }
 
-    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, looking_for_players_count, looking_for_players_up_to FROM "Session" WHERE id::text = $1`, req.params.id);
     const row = Array.isArray(rows) ? rows[0] : rows;
     if (!row) return res.status(404).json({ error: 'not_found' });
     const meta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
@@ -2602,9 +2602,43 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       status: row.status,
       createdAt: row.created_at,
       numberOfPlayers: row.number_of_players,
-      subscriberCount: meta ? Number(meta.quantity) || 0 : 0
+      subscriberCount: meta ? Number(meta.quantity) || 0 : 0,
+      lookingForPlayersCount: row.looking_for_players_count ?? null,
+      lookingForPlayersUpTo: Boolean(row.looking_for_players_up_to)
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.delete('/api/sessions/:id/looking-for-players', requireAuth, async (req, res) => {
+  try {
+    const result = await prisma.session.updateMany({
+      where: { id: req.params.id, status: 'active' },
+      data: { lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+    });
+    if (!result.count) return res.status(404).json({ error: 'session_not_found' });
+    res.status(204).end();
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/sessions/:id/looking-for-players/fulfill', requireAuth, async (req, res) => {
+  const subscribersAdded = Number(req.body?.subscribersAdded);
+  const nonSubscribersAdded = Number(req.body?.nonSubscribersAdded);
+  if (
+    !Number.isInteger(subscribersAdded) || subscribersAdded < 0 || subscribersAdded > 50 ||
+    !Number.isInteger(nonSubscribersAdded) || nonSubscribersAdded < 0 || nonSubscribersAdded > 50 ||
+    subscribersAdded + nonSubscribersAdded < 1
+  ) {
+    return res.status(400).json({ error: 'invalid_player_count' });
+  }
+  try {
+    res.json(await fulfillPlayerSearch(req.params.id, subscribersAdded, nonSubscribersAdded));
+  } catch (e) {
+    if (e.message === 'invalid_player_count') return res.status(400).json({ error: e.message });
+    if (e.message === 'session_not_found') return res.status(404).json({ error: e.message });
+    if (e.message === 'no_player_search' || e.message === 'player_search_changed') return res.status(409).json({ error: e.message });
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 // Session partial settlement (when player leaves mid-session)
@@ -2895,6 +2929,7 @@ app.get('/api/sessions', requireAuth, async (req, res) => {
   try {
     const rows = await prisma.$queryRawUnsafe(`
       SELECT s.id, s.table_id, s.patron_id, s.started_at, s.ended_at, s.status, s.created_at, s.number_of_players, s.pin,
+             s.looking_for_players_count, s.looking_for_players_up_to,
              COALESCE((
                SELECT quantity FROM "TabLineItem"
                WHERE session_id = s.id AND type = 'meta' AND description = 'subscriber_count'
@@ -2904,7 +2939,7 @@ app.get('/api/sessions', requireAuth, async (req, res) => {
       WHERE s.status <> 'cancelled'
       ORDER BY s.started_at DESC
     `);
-    const mapped = rows.map(r => ({ id: r.id, tableId: r.table_id, patronId: r.patron_id, startedAt: r.started_at, endedAt: r.ended_at, status: r.status, createdAt: r.created_at, numberOfPlayers: r.number_of_players, subscriberCount: Number(r.subscriber_count) || 0, pin: r.pin }));
+    const mapped = rows.map(r => ({ id: r.id, tableId: r.table_id, patronId: r.patron_id, startedAt: r.started_at, endedAt: r.ended_at, status: r.status, createdAt: r.created_at, numberOfPlayers: r.number_of_players, subscriberCount: Number(r.subscriber_count) || 0, pin: r.pin, lookingForPlayersCount: r.looking_for_players_count ?? null, lookingForPlayersUpTo: Boolean(r.looking_for_players_up_to) }));
     res.json(mapped);
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
@@ -3086,6 +3121,10 @@ app.get('/api/public/tables', async (req, res) => {
       if (status === 'occupied') {
         entry.numberOfPlayers = session.numberOfPlayers || 1;
         entry.startedAt = session.startedAt;
+        if (session.lookingForPlayersCount) {
+          entry.lookingForPlayersCount = session.lookingForPlayersCount;
+          entry.lookingForPlayersUpTo = Boolean(session.lookingForPlayersUpTo);
+        }
       }
       return entry;
     });
@@ -3110,6 +3149,60 @@ app.get('/api/public/waitlist', async (req, res) => {
     res.json({ queueDepth, averageWaitMinutes, byTableType });
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
+
+async function findPublicTableSession(tableNumber, pin) {
+  const tables = await prisma.poolTable.findMany({ where: { number: tableNumber } });
+  const table = tables[0];
+  if (!table) return { error: 'table_not_found', status: 404 };
+
+  const sessions = await prisma.session.findMany({ where: { tableId: table.id, status: 'active' } });
+  const session = sessions[0];
+  if (!session) return { error: 'no_active_session', status: 400 };
+  if (!pin || session.pin !== pin) return { error: 'invalid_pin', status: 403 };
+
+  return { table, session };
+}
+
+async function fulfillPlayerSearch(sessionId, subscribersAdded, nonSubscribersAdded) {
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.session.findUnique({ where: { id: sessionId } });
+    if (!session || session.status !== 'active') throw new Error('session_not_found');
+    if (!session.lookingForPlayersCount) throw new Error('no_player_search');
+
+    const currentPlayers = Number(session.numberOfPlayers) || 1;
+    const subscriberMeta = await tx.tabLineItem.findFirst({ where: { sessionId, type: 'meta', description: 'subscriber_count' } });
+    const currentSubscribers = Math.min(currentPlayers, Number(subscriberMeta?.quantity) || 0);
+    const nextPlayers = currentPlayers + subscribersAdded + nonSubscribersAdded;
+    const nextSubscribers = currentSubscribers + subscribersAdded;
+    if (nextPlayers > 50) throw new Error('invalid_player_count');
+
+    const previousNonSubscriberCount = currentPlayers - currentSubscribers;
+    const nextNonSubscriberCount = nextPlayers - nextSubscribers;
+    const updated = await tx.session.updateMany({
+      where: {
+        id: sessionId,
+        status: 'active',
+        numberOfPlayers: session.numberOfPlayers ?? null,
+        lookingForPlayersCount: session.lookingForPlayersCount,
+      },
+      data: { numberOfPlayers: nextPlayers, lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+    });
+    if (!updated.count) throw new Error('player_search_changed');
+
+    if (subscriberMeta) {
+      await tx.tabLineItem.update({ where: { id: subscriberMeta.id }, data: { quantity: nextSubscribers } });
+    } else if (nextSubscribers > 0) {
+      await tx.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'subscriber_count', quantity: nextSubscribers, unitPrice: 0, totalCents: 0 } });
+    }
+
+    if (previousNonSubscriberCount <= 0 && nextNonSubscriberCount > 0) {
+      const nonSubscriberStartMeta = await tx.tabLineItem.findFirst({ where: { sessionId, type: 'meta', description: 'non_subscriber_started_at' } });
+      if (nonSubscriberStartMeta) await tx.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+      await tx.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'non_subscriber_started_at', quantity: 1, unitPrice: 0, totalCents: 0 } });
+    }
+    return { numberOfPlayers: nextPlayers, subscriberCount: nextSubscribers, lookingForPlayersCount: null, lookingForPlayersUpTo: false };
+  });
+}
 
 // Public table view - get session info by table number
 app.get('/api/public/table/:tableNumber', async (req, res) => {
@@ -3216,7 +3309,9 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
       },
       session: {
         startedAt: session.startedAt,
-        numberOfPlayers: session.numberOfPlayers
+        numberOfPlayers: session.numberOfPlayers,
+        lookingForPlayersCount: session.lookingForPlayersCount ?? null,
+        lookingForPlayersUpTo: Boolean(session.lookingForPlayersUpTo)
       },
       items: items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement'),
       totalCents: total,
@@ -3227,6 +3322,73 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
   } catch (e) { 
     console.error(e); 
     res.status(500).json({ error: 'db_error' }); 
+  }
+});
+
+app.post('/api/public/table/:tableNumber/looking-for-players', async (req, res) => {
+  try {
+    const tableNumber = parseInt(req.params.tableNumber);
+    const count = Number(req.body?.count);
+    const upTo = req.body?.upTo;
+    if (!Number.isInteger(count) || count < 1 || count > 50 || typeof upTo !== 'boolean') {
+      return res.status(400).json({ error: 'invalid_player_count' });
+    }
+
+    const context = await findPublicTableSession(tableNumber, req.body?.pin);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+
+    const updated = await prisma.session.updateMany({
+      where: { id: context.session.id, status: 'active', pin: req.body.pin },
+      data: { lookingForPlayersCount: count, lookingForPlayersUpTo: upTo },
+    });
+    if (!updated.count) return res.status(409).json({ error: 'session_not_active' });
+    res.json({ count, upTo });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.post('/api/public/table/:tableNumber/looking-for-players/cancel', async (req, res) => {
+  try {
+    const tableNumber = parseInt(req.params.tableNumber);
+    const context = await findPublicTableSession(tableNumber, req.body?.pin);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+
+    const updated = await prisma.session.updateMany({
+      where: { id: context.session.id, status: 'active', pin: req.body.pin },
+      data: { lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+    });
+    if (!updated.count) return res.status(409).json({ error: 'session_not_active' });
+    res.json({ count: null, upTo: false });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.post('/api/public/table/:tableNumber/looking-for-players/fulfill', async (req, res) => {
+  try {
+    const tableNumber = parseInt(req.params.tableNumber);
+    const subscribersAdded = Number(req.body?.subscribersAdded);
+    const nonSubscribersAdded = Number(req.body?.nonSubscribersAdded);
+    if (
+      !Number.isInteger(subscribersAdded) || subscribersAdded < 0 || subscribersAdded > 50 ||
+      !Number.isInteger(nonSubscribersAdded) || nonSubscribersAdded < 0 || nonSubscribersAdded > 50 ||
+      subscribersAdded + nonSubscribersAdded < 1
+    ) {
+      return res.status(400).json({ error: 'invalid_player_count' });
+    }
+
+    const context = await findPublicTableSession(tableNumber, req.body?.pin);
+    if (context.error) return res.status(context.status).json({ error: context.error });
+    res.json(await fulfillPlayerSearch(context.session.id, subscribersAdded, nonSubscribersAdded));
+  } catch (e) {
+    if (e.message === 'invalid_player_count') return res.status(400).json({ error: e.message });
+    if (e.message === 'session_not_found') return res.status(404).json({ error: e.message });
+    if (e.message === 'no_player_search' || e.message === 'player_search_changed') return res.status(409).json({ error: e.message });
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
   }
 });
 

@@ -60,6 +60,8 @@ model Session {
   createdAt     DateTime @default(now()) @map("created_at")
   numberOfPlayers Int?   @map("number_of_players")
   pin           String?
+  lookingForPlayersCount Int? @map("looking_for_players_count")
+  lookingForPlayersUpTo  Boolean @default(false) @map("looking_for_players_up_to")
 }
 
 model TabLineItem {

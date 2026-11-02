@@ -3,6 +3,7 @@ import { Megaphone, Moon, Sun } from 'lucide-react'
 import { apiGetSettings, apiPublicTables, apiPublicWaitlistSummary, type PublicTable, type PublicWaitlistSummary, type SettingsMap } from '@/lib/api'
 import { elapsedDuration } from '@/lib/format'
 import { formatWaitTime } from '@/lib/waitlist-format'
+import { lookingForPlayersLabel } from '@/lib/player-search'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
@@ -214,6 +215,11 @@ export function StatusApp() {
                             <span>
                               {tb.numberOfPlayers || 1} {((tb.numberOfPlayers || 1) > 1 ? t('players') : t('player'))}
                             </span>
+                            {tb.lookingForPlayersCount ? (
+                              <span className="font-semibold text-primary">
+                                {lookingForPlayersLabel(tb.lookingForPlayersCount, Boolean(tb.lookingForPlayersUpTo), t)}
+                              </span>
+                            ) : null}
                             <span className="font-semibold tabular-nums">{elapsedDuration(tb.startedAt, now)}</span>
                           </div>
                         )}
