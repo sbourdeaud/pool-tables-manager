@@ -102,6 +102,17 @@ model Subscription {
   createdAt         DateTime @default(now()) @map("created_at")
 }
 
+model WaitlistEntry {
+  id            String   @id @default(uuid())
+  patronName    String   @map("patron_name")
+  partySize     Int      @map("party_size")
+  tableTypeId   String   @map("table_type_id")
+  tableTypeName String   @map("table_type_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([tableTypeId, createdAt])
+}
+
 model Setting {
   id    String @id @default(uuid())
   key   String @unique
