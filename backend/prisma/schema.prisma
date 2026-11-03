@@ -20,6 +20,7 @@ model TableType {
   id                String  @id @default(uuid())
   name_en           String
   name_fr           String?
+  icon              String  @default("american")
   base_hourly_cents Int
   vatRatePercent    Int      @default(20) @map("vat_rate_percent")
   maxUsedHours      Int?     @map("max_used_hours")

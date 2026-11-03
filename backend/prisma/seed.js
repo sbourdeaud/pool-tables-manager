@@ -12,10 +12,11 @@ async function main(){
 
   await prisma.tableType.createMany({
     data: [
-      { name_en: 'American', name_fr: 'Américaine', base_hourly_cents: 3000 },
-      { name_en: 'Pool', name_fr: 'Pool', base_hourly_cents: 2500 },
-      { name_en: 'Snooker', name_fr: 'Snooker', base_hourly_cents: 4000 },
-      { name_en: 'French', name_fr: 'Française', base_hourly_cents: 3500 }
+      { name_en: 'American', name_fr: 'Américaine', icon: 'american', base_hourly_cents: 3000 },
+      { name_en: 'Pool', name_fr: 'Pool', icon: 'english_pool', base_hourly_cents: 2500 },
+      { name_en: 'Snooker', name_fr: 'Snooker', icon: 'snooker', base_hourly_cents: 4000 },
+      { name_en: 'French', name_fr: 'Française', icon: 'carom', base_hourly_cents: 3500 },
+      { name_en: 'Pyramid', name_fr: 'Pyramide', icon: 'pyramid', base_hourly_cents: 3500 }
     ],
     skipDuplicates: true
   });

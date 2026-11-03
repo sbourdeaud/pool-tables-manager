@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowDown, ArrowLeft, ArrowUp, Check, CircleDot, Pencil, Play, Plus, Trash2, Wrench, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Check, Pencil, Play, Plus, Trash2, Wrench, X } from 'lucide-react'
 import {
   apiAddTables,
   apiCreateTableType,
@@ -20,6 +20,7 @@ import { playPoolBallSound } from '@/lib/audio'
 import { useSettings } from '@/components/settings/settings-context'
 import { useToast } from '@/components/toast'
 import { ConfirmDialog } from '@/components/settings/confirm-dialog'
+import { normalizeTableTypeIcon, TableIconPicker, TableTypeIcon, type TableTypeIconId } from '@/components/type-icon'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,12 +31,13 @@ import { useI18n } from '@/lib/i18n'
 
 interface TypeForm {
   name: string
+  icon: TableTypeIconId
   hourly: string
   vat: string
   maxHours: string
 }
 
-const EMPTY_FORM: TypeForm = { name: '', hourly: '', vat: '20', maxHours: '' }
+const EMPTY_FORM: TypeForm = { name: '', icon: 'american', hourly: '', vat: '20', maxHours: '' }
 
 export function TablesPage() {
   const { settings, save: saveSetting } = useSettings()
@@ -93,6 +95,7 @@ export function TablesPage() {
     if (!form.name.trim()) return
     const result = await apiCreateTableType({
       name_en: form.name.trim(),
+      icon: form.icon,
       base_hourly_cents: Math.round(parseFloat(form.hourly || '0') * 100),
       vatRatePercent: parseInt(form.vat, 10),
       maxUsedHours: form.maxHours ? parseInt(form.maxHours, 10) : null,
@@ -107,6 +110,7 @@ export function TablesPage() {
     if (!editing) return
     const result = await apiUpdateTableType(editing.id, {
       name_en: editing.form.name.trim(),
+      icon: editing.form.icon,
       base_hourly_cents: Math.round(parseFloat(editing.form.hourly || '0') * 100),
       vatRatePercent: parseInt(editing.form.vat, 10),
       maxUsedHours: editing.form.maxHours ? parseInt(editing.form.maxHours, 10) : null,
@@ -178,33 +182,39 @@ export function TablesPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={createType} className="grid gap-4 sm:grid-cols-[1fr_150px_150px_120px_auto] sm:items-end">
+          <form onSubmit={createType} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="type-name">{t('Name')}</Label>
-              <Input id="type-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('American')} required />
+              <Label>{t('Table icon')}</Label>
+              <TableIconPicker value={form.icon} onChange={(icon) => setForm({ ...form, icon })} getLabel={t} />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="type-hourly">{t('Hourly rate ({currency})', { currency })}</Label>
-              <Input id="type-hourly" type="number" min="0" step="0.01" value={form.hourly} onChange={(e) => setForm({ ...form, hourly: e.target.value })} placeholder="12.00" required />
+            <div className="grid gap-4 sm:grid-cols-[1fr_150px_150px_120px_auto] sm:items-end">
+              <div className="space-y-1.5">
+                <Label htmlFor="type-name">{t('Name')}</Label>
+                <Input id="type-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('American')} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="type-hourly">{t('Hourly rate ({currency})', { currency })}</Label>
+                <Input id="type-hourly" type="number" min="0" step="0.01" value={form.hourly} onChange={(e) => setForm({ ...form, hourly: e.target.value })} placeholder="12.00" required />
+              </div>
+              <div className="space-y-1.5">
+                <Label>{t('VAT')}</Label>
+                <Select value={form.vat} onValueChange={(vat) => setForm({ ...form, vat })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="20">20%</SelectItem>
+                    <SelectItem value="10">10%</SelectItem>
+                    <SelectItem value="0">0%</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="type-max">{t('Max hours')}</Label>
+                <Input id="type-max" type="number" min="0" step="1" value={form.maxHours} onChange={(e) => setForm({ ...form, maxHours: e.target.value })} placeholder={t('optional')} />
+              </div>
+              <Button type="submit">{t('Add Table Type')}</Button>
             </div>
-            <div className="space-y-1.5">
-              <Label>{t('VAT')}</Label>
-              <Select value={form.vat} onValueChange={(vat) => setForm({ ...form, vat })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="20">20%</SelectItem>
-                  <SelectItem value="10">10%</SelectItem>
-                  <SelectItem value="0">0%</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="type-max">{t('Max hours')}</Label>
-              <Input id="type-max" type="number" min="0" step="1" value={form.maxHours} onChange={(e) => setForm({ ...form, maxHours: e.target.value })} placeholder={t('optional')} />
-            </div>
-            <Button type="submit">{t('Add Table Type')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -218,7 +228,7 @@ export function TablesPage() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <CircleDot className="h-4 w-4" /> {type.name_en}
+                    <TableTypeIcon icon={type.icon} className="h-6 w-6" /> {type.name_en}
                     <span className="text-xs font-normal text-muted-foreground">
                       {t('{amount}/h · VAT {rate}%', { amount: money(type.base_hourly_cents, currency), rate: type.vatRatePercent ?? 20 })}
                       {type.maxUsedHours ? t(' · maintenance every {hours}h', { hours: type.maxUsedHours }) : ''}
@@ -250,6 +260,7 @@ export function TablesPage() {
                         id: type.id,
                         form: {
                           name: type.name_en,
+                          icon: normalizeTableTypeIcon(type.icon),
                           hourly: (type.base_hourly_cents / 100).toFixed(2),
                           vat: String(type.vatRatePercent ?? 20),
                           maxHours: type.maxUsedHours ? String(type.maxUsedHours) : '',
@@ -275,27 +286,30 @@ export function TablesPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {isEditing && editing && (
-                <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_120px_120px_110px_auto] sm:items-center">
-                  <Input value={editing.form.name} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, name: e.target.value } })} />
-                  <Input type="number" min="0" step="0.01" value={editing.form.hourly} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, hourly: e.target.value } })} />
-                  <Select value={editing.form.vat} onValueChange={(vat) => setEditing({ ...editing, form: { ...editing.form, vat } })}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="20">20%</SelectItem>
-                      <SelectItem value="10">10%</SelectItem>
-                      <SelectItem value="0">0%</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input type="number" min="0" step="1" placeholder={t('Max h')} value={editing.form.maxHours} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, maxHours: e.target.value } })} />
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => void saveType()}>
-                      Save
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
-                      Cancel
-                    </Button>
+                <div className="space-y-3 rounded-lg border p-3">
+                  <TableIconPicker value={editing.form.icon} onChange={(icon) => setEditing({ ...editing, form: { ...editing.form, icon } })} getLabel={t} />
+                  <div className="grid gap-2 sm:grid-cols-[1fr_120px_120px_110px_auto] sm:items-center">
+                    <Input value={editing.form.name} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, name: e.target.value } })} />
+                    <Input type="number" min="0" step="0.01" value={editing.form.hourly} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, hourly: e.target.value } })} />
+                    <Select value={editing.form.vat} onValueChange={(vat) => setEditing({ ...editing, form: { ...editing.form, vat } })}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="20">20%</SelectItem>
+                        <SelectItem value="10">10%</SelectItem>
+                        <SelectItem value="0">0%</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input type="number" min="0" step="1" placeholder={t('Max h')} value={editing.form.maxHours} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, maxHours: e.target.value } })} />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => void saveType()}>
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}

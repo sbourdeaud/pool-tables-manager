@@ -8,6 +8,7 @@ import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
 import { PublicInfoMenu } from '@/components/public-info-menu'
+import { TableTypeIcon } from '@/components/type-icon'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#e11d48', '#06b6d4']
 
@@ -156,7 +157,10 @@ export function StatusApp() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {waitlistByType.map((type) => (
                 <div key={type.tableTypeId} className="rounded-lg border bg-muted/20 p-3">
-                  <p className="truncate text-sm font-semibold">{type.tableTypeName}</p>
+                  <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                    <TableTypeIcon icon={type.tableTypeIcon} className="h-4 w-4" />
+                    {type.tableTypeName}
+                  </p>
                   <div className="mt-2 flex items-end justify-between gap-3">
                     <div>
                       <p className="text-[11px] text-muted-foreground">{t('Waiting parties')}</p>
@@ -183,7 +187,8 @@ export function StatusApp() {
           groups.map(([typeName, groupTables]) => (
             <section key={typeName} className="space-y-3">
               <div className="flex items-center gap-3">
-                <span className="rounded-full px-3 py-1 text-sm font-bold text-white" style={{ background: hashColor(typeName) }}>
+                <span className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold text-white" style={{ background: hashColor(typeName) }}>
+                  <TableTypeIcon icon={groupTables[0]?.typeIcon} className="h-5 w-5" />
                   {typeName}
                 </span>
                 <span className="text-sm text-muted-foreground">

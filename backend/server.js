@@ -1550,21 +1550,40 @@ app.delete('/api/admin/drinks/:id', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
+// Table icons are stored as stable identifiers so the UI can render them
+// consistently in the admin dashboard and on public screens.
+const TABLE_TYPE_ICON_IDS = new Set(['american', 'english_pool', 'snooker', 'carom', 'pyramid']);
+
+function tableTypeIconForName(name) {
+  const value = String(name || '').toLowerCase();
+  if (value.includes('snooker')) return 'snooker';
+  if (value.includes('pyramid')) return 'pyramid';
+  if (value.includes('carom') || value.includes('carambole') || value.includes('french') || value.includes('français') || value.includes('francais')) return 'carom';
+  if (value.includes('english') || value.trim() === 'pool') return 'english_pool';
+  return 'american';
+}
+
+function normalizeTableTypeIcon(icon, fallbackName) {
+  if (typeof icon === 'string' && TABLE_TYPE_ICON_IDS.has(icon)) return icon;
+  return tableTypeIconForName(fallbackName);
+}
+
 // Table types and tables
 app.get('/api/table-types', requireAuth, async (req, res) => {
   try { const types = await prisma.tableType.findMany({ orderBy: { createdAt: 'asc' } }); res.json(types); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 app.post('/api/table-types', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
-  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20, maxUsedHours: parseMaxUsedHours(maxUsedHours) } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+  const { name_en, name_fr, icon, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, icon: normalizeTableTypeIcon(icon, name_en || name_fr), base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20, maxUsedHours: parseMaxUsedHours(maxUsedHours) } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update table type
 app.put('/api/table-types/:id', requireAuth, async (req, res) => {
-  const { name_en, name_fr, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  const { name_en, name_fr, icon, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
   try {
     const data = { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 };
+    if (typeof icon !== 'undefined') data.icon = normalizeTableTypeIcon(icon, name_en || name_fr);
     if (typeof maxUsedHours !== 'undefined') data.maxUsedHours = parseMaxUsedHours(maxUsedHours);
     const updated = await prisma.tableType.update({ where: { id: req.params.id }, data });
     res.json(updated);
@@ -2947,7 +2966,7 @@ app.get('/api/sessions', requireAuth, async (req, res) => {
 async function buildWaitlistSnapshot() {
   const entries = await prisma.waitlistEntry.findMany({ orderBy: { createdAt: 'asc' } });
   if (!entries.length) {
-    const tableTypes = await prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true } });
+    const tableTypes = await prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true, icon: true } });
     return {
       entries: [],
       queueDepth: 0,
@@ -2955,6 +2974,7 @@ async function buildWaitlistSnapshot() {
       byTableType: tableTypes.map(type => ({
         tableTypeId: type.id,
         tableTypeName: type.name_en || type.name_fr || 'Pool',
+        tableTypeIcon: normalizeTableTypeIcon(type.icon, type.name_en || type.name_fr),
         queueDepth: 0,
         averageWaitMinutes: null,
       })),
@@ -2963,7 +2983,7 @@ async function buildWaitlistSnapshot() {
 
   const [tables, tableTypes, activeSessions, sessionHistory] = await Promise.all([
     prisma.poolTable.findMany({ select: { id: true, tableTypeId: true, status: true } }),
-    prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true } }),
+    prisma.tableType.findMany({ select: { id: true, name_en: true, name_fr: true, icon: true } }),
     prisma.session.findMany({ where: { status: 'active' }, select: { tableId: true, startedAt: true } }),
     prisma.session.findMany({
       where: { status: 'ended', endedAt: { not: null } },
@@ -2974,11 +2994,22 @@ async function buildWaitlistSnapshot() {
   ]);
 
   const result = estimateWaitlistEntries({ entries, tables, activeSessions, sessionHistory });
-  const typeNames = new Map((tableTypes || []).map(type => [type.id, type.name_en || type.name_fr || 'Pool']));
-  const enrichedEntries = result.entries.map(entry => ({ ...entry, tableTypeName: typeNames.get(entry.tableTypeId) || entry.tableTypeName }));
+  const typeInfo = new Map((tableTypes || []).map(type => [type.id, {
+    name: type.name_en || type.name_fr || 'Pool',
+    icon: normalizeTableTypeIcon(type.icon, type.name_en || type.name_fr),
+  }]));
+  const enrichedEntries = result.entries.map(entry => {
+    const info = typeInfo.get(entry.tableTypeId);
+    return {
+      ...entry,
+      tableTypeName: info ? info.name : entry.tableTypeName,
+      tableTypeIcon: info ? info.icon : tableTypeIconForName(entry.tableTypeName),
+    };
+  });
   const typeStats = new Map((tableTypes || []).map(type => [type.id, {
     tableTypeId: type.id,
     tableTypeName: type.name_en || type.name_fr || 'Pool',
+    tableTypeIcon: normalizeTableTypeIcon(type.icon, type.name_en || type.name_fr),
     queueDepth: 0,
     waitTimes: [],
   }]));
@@ -2991,6 +3022,7 @@ async function buildWaitlistSnapshot() {
   const byTableType = [...typeStats.values()].map(stat => ({
     tableTypeId: stat.tableTypeId,
     tableTypeName: stat.tableTypeName,
+    tableTypeIcon: stat.tableTypeIcon,
     queueDepth: stat.queueDepth,
     averageWaitMinutes: stat.waitTimes.length
       ? Math.round(stat.waitTimes.reduce((sum, value) => sum + value, 0) / stat.waitTimes.length)
@@ -3112,12 +3144,14 @@ app.get('/api/public/tables', async (req, res) => {
       prisma.tableType.findMany(),
       prisma.session.findMany({ where: { status: 'active' } })
     ]);
-    const typeNameById = Object.fromEntries((types || []).map(t => [t.id, t.name_en || t.name_fr || null]));
+    const typeById = Object.fromEntries((types || []).map(t => [t.id, t]));
     const activeByTableId = Object.fromEntries((sessions || []).map(s => [s.tableId, s]));
     const out = (tables || []).map(tb => {
       const session = activeByTableId[tb.id];
+      const type = typeById[tb.tableTypeId];
+      const typeName = type ? (type.name_en || type.name_fr || null) : null;
       const status = tb.status === 'maintenance' ? 'maintenance' : (session ? 'occupied' : 'available');
-      const entry = { number: tb.number, typeName: typeNameById[tb.tableTypeId] || null, status };
+      const entry = { number: tb.number, typeName, typeIcon: type ? normalizeTableTypeIcon(type.icon, typeName) : null, status };
       if (status === 'occupied') {
         entry.numberOfPlayers = session.numberOfPlayers || 1;
         entry.startedAt = session.startedAt;
@@ -3253,7 +3287,7 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     
     // Get table type information
     const tableTypeRows = await prisma.$queryRawUnsafe(`
-      SELECT tt.id, tt.name_en, tt.name_fr, tt.base_hourly_cents 
+      SELECT tt.id, tt.name_en, tt.name_fr, tt.icon, tt.base_hourly_cents
       FROM "PoolTable" p 
       JOIN "TableType" tt ON tt.id = p.table_type_id 
       WHERE p.id::text = $1
@@ -3305,7 +3339,8 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
       table: { 
         number: tableNumber, 
         name: `Table ${tableNumber}`,
-        type: tableType ? tableType.name_en : null
+        type: tableType ? tableType.name_en : null,
+        icon: tableType ? normalizeTableTypeIcon(tableType.icon, tableType.name_en || tableType.name_fr) : null
       },
       session: {
         startedAt: session.startedAt,

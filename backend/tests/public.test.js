@@ -122,9 +122,9 @@ describe('Public table status board endpoint', () => {
     const res = await agent.get('/api/public/tables');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
-      { number: 1, typeName: 'Pool', status: 'available' },
-      { number: 2, typeName: 'Pool', status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
-      { number: 3, typeName: 'Snooker', status: 'maintenance' }
+      { number: 1, typeName: 'Pool', typeIcon: 'english_pool', status: 'available' },
+      { number: 2, typeName: 'Pool', typeIcon: 'english_pool', status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
+      { number: 3, typeName: 'Snooker', typeIcon: 'snooker', status: 'maintenance' }
     ]);
   });
 

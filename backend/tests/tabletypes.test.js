@@ -27,11 +27,32 @@ describe('TableType CRUD', () => {
     expect(res.body.name_en).toBe('Snooker');
   });
 
+  test('POST /api/table-types stores the selected icon', async () => {
+    prisma.tableType.create.mockResolvedValue({ id: 'tt3', name_en: 'Carom', icon: 'carom', base_hourly_cents: 3000 });
+    const res = await agent.post('/api/table-types').send({ name_en: 'Carom', name_fr: 'Carambole', icon: 'carom', base_hourly_cents: 3000 });
+    expect(res.status).toBe(201);
+    expect(prisma.tableType.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ icon: 'carom' }),
+    }));
+  });
+
+  test('POST /api/table-types derives an icon from the name when omitted', async () => {
+    prisma.tableType.create.mockResolvedValue({ id: 'tt2', name_en: 'Snooker', icon: 'snooker', base_hourly_cents: 3000 });
+    const res = await agent.post('/api/table-types').send({ name_en: 'Snooker', name_fr: 'Snooker', base_hourly_cents: 3000 });
+    expect(res.status).toBe(201);
+    expect(prisma.tableType.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ icon: 'snooker' }),
+    }));
+  });
+
   test('PUT /api/table-types/:id', async () => {
-    prisma.tableType.update.mockResolvedValue({ id: 'tt2', name_en: 'Snooker', base_hourly_cents: 3200 });
-    const res = await agent.put('/api/table-types/tt2').send({ name_en: 'Snooker', name_fr: 'Snooker', base_hourly_cents: 3200 });
+    prisma.tableType.update.mockResolvedValue({ id: 'tt2', name_en: 'Snooker', icon: 'pyramid', base_hourly_cents: 3200 });
+    const res = await agent.put('/api/table-types/tt2').send({ name_en: 'Snooker', name_fr: 'Snooker', icon: 'pyramid', base_hourly_cents: 3200 });
     expect(res.status).toBe(200);
     expect(res.body.base_hourly_cents).toBe(3200);
+    expect(prisma.tableType.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ icon: 'pyramid' }),
+    }));
   });
 
   test('DELETE /api/table-types/:id when no tables or events exist', async () => {

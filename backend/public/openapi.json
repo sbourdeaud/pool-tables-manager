@@ -116,6 +116,16 @@
           "maxUsedHours": {
             "type": "integer",
             "nullable": true
+          },
+          "icon": {
+            "type": "string",
+            "enum": [
+              "american",
+              "english_pool",
+              "snooker",
+              "carom",
+              "pyramid"
+            ]
           }
         }
       },
@@ -637,7 +647,7 @@
                   "type": "string"
                 },
                 "example": {
-                  "currency": "\u20ac"
+                  "currency": "€"
                 }
               }
             }
@@ -848,6 +858,16 @@
                   },
                   "name_fr": {
                     "type": "string"
+                  },
+                  "icon": {
+                    "type": "string",
+                    "enum": [
+                      "american",
+                      "english_pool",
+                      "snooker",
+                      "carom",
+                      "pyramid"
+                    ]
                   },
                   "base_hourly_cents": {
                     "type": "integer"
@@ -1071,7 +1091,7 @@
         "tags": [
           "Tables"
         ],
-        "summary": "Update a table (number, status, type) \u2014 duplicate numbers return 409",
+        "summary": "Update a table (number, status, type) — duplicate numbers return 409",
         "parameters": [
           {
             "name": "id",

@@ -57,7 +57,7 @@ describe('Waitlist endpoints', () => {
     expect(res.body.queueDepth).toBe(1);
     expect(res.body.averageWaitMinutes).toBe(0);
     expect(res.body.byTableType).toEqual([
-      { tableTypeId: 'type1', tableTypeName: 'American', queueDepth: 1, averageWaitMinutes: 0 },
+      { tableTypeId: 'type1', tableTypeName: 'American', tableTypeIcon: 'american', queueDepth: 1, averageWaitMinutes: 0 },
     ]);
     expect(JSON.stringify(res.body)).not.toContain('Private Name');
     expect(res.body.patronName).toBeUndefined();
@@ -69,7 +69,7 @@ describe('Waitlist endpoints', () => {
     expect(res.status).toBe(200);
     expect(res.body.queueDepth).toBe(0);
     expect(res.body.byTableType).toEqual([
-      { tableTypeId: 'type1', tableTypeName: 'American', queueDepth: 0, averageWaitMinutes: null },
+      { tableTypeId: 'type1', tableTypeName: 'American', tableTypeIcon: 'american', queueDepth: 0, averageWaitMinutes: null },
     ]);
   });
 

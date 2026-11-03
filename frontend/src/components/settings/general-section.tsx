@@ -40,7 +40,7 @@ export function GeneralSection({ className }: { className?: string }) {
         checked={settings.pos_enabled === 'true'}
         onCheckedChange={(checked) => void save('pos_enabled', String(checked))}
       />
-      <Field label={t('Dashboard layout')} help={t('Sections: collapsible groups with a flag navigator. Tabs: one table type at a time — drag the flags to reorder them.')}>
+      <Field label={t('Dashboard layout')} help={t('Sections: collapsible groups with an icon navigator. Tabs: one table type at a time — drag the icons to reorder them.')}>
         <Select value={layout} onValueChange={(value) => void save('dashboard_layout', value)}>
           <SelectTrigger>
             <SelectValue />

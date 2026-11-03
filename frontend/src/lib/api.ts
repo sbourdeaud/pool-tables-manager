@@ -119,6 +119,7 @@ export function apiLocalSetup(password: string) {
 export interface TableType {
   id: string
   name_en: string
+  icon?: string | null
   base_hourly_cents: number
   maxUsedHours?: number | null
   vatRatePercent?: number | null
@@ -167,6 +168,7 @@ export interface WaitlistEntry {
   partySize: number
   tableTypeId: string
   tableTypeName: string
+  tableTypeIcon?: string | null
   createdAt: string
   position?: number
   elapsedMinutes?: number
@@ -204,6 +206,7 @@ export interface WaitlistResponse {
 export interface PublicWaitlistTypeSummary {
   tableTypeId: string
   tableTypeName: string
+  tableTypeIcon?: string | null
   queueDepth: number
   averageWaitMinutes: number | null
 }
@@ -409,11 +412,11 @@ export function apiUpdateTableNumber(id: string, number: number) {
   return apiSend('/api/tables/' + id, 'PUT', { number })
 }
 
-export function apiCreateTableType(body: { name_en: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
+export function apiCreateTableType(body: { name_en: string; icon: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
   return apiSend('/api/table-types', 'POST', { name_fr: body.name_en, ...body })
 }
 
-export function apiUpdateTableType(id: string, body: { name_en: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
+export function apiUpdateTableType(id: string, body: { name_en: string; icon: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
   return apiSend('/api/table-types/' + id, 'PUT', { name_fr: body.name_en, ...body })
 }
 
@@ -778,10 +781,11 @@ export interface PublicTable {
   lookingForPlayersCount?: number
   lookingForPlayersUpTo?: boolean
   typeName?: string
+  typeIcon?: string | null
 }
 
 export interface PublicTableDetail {
-  table: { number: number; name?: string; type?: string }
+  table: { number: number; name?: string; type?: string; icon?: string | null }
   session?: { startedAt: string; numberOfPlayers?: number; lookingForPlayersCount?: number | null; lookingForPlayersUpTo?: boolean } | null
   tableCharge?: number
   items?: { description: string; quantity: number; unitPrice: number; totalCents: number }[]

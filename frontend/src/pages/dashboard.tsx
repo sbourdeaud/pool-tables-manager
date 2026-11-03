@@ -35,7 +35,7 @@ import {
 } from '@/lib/api'
 import { buildQrSvg, tableSessionUrl } from '@/lib/qr'
 import { CheckoutDialog } from '@/components/checkout-dialog'
-import { typeFlag } from '@/components/type-flag'
+import { TableTypeIcon } from '@/components/type-icon'
 import { DRINK_CATEGORIES, groupDrinks, type DrinkCategory } from '@/lib/menu'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
@@ -313,6 +313,7 @@ export function DashboardPage() {
                     key={type.id}
                     id={type.name_en}
                     name={type.name_en}
+                    icon={type.icon}
                     count={groupTables.length}
                     occupied={groupTables.filter((tb) => activeSessionFor(tb.id)).length}
                   />
@@ -348,7 +349,7 @@ export function DashboardPage() {
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs font-semibold shadow-sm transition-colors hover:bg-accent"
                 title={`Jump to ${type.name_en}`}
               >
-                {flagChip(type.name_en)}
+                <TableTypeIcon icon={type.icon} className="h-4 w-4" />
                 {type.name_en}
                 <span className="text-muted-foreground">{groupTables.length}</span>
               </button>
@@ -368,7 +369,7 @@ export function DashboardPage() {
                             className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold text-white"
                             style={{ background: hashColor(type.name_en) }}
                           >
-                            {flagChip(type.name_en)}
+                            <TableTypeIcon icon={type.icon} className="h-5 w-5" />
                             {type.name_en}
                           </span>
                           <span className="text-sm text-muted-foreground">
@@ -462,7 +463,10 @@ function TableTypeWaitlist({ type, entries, availableTables, now, onSeat, onRemo
     <section className="space-y-2 rounded-lg border bg-muted/20 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold">{t('Waiting list')} — {type.name_en}</h3>
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+            <TableTypeIcon icon={type.icon} className="h-4 w-4" />
+            {t('Waiting list')} — {type.name_en}
+          </h3>
           <p className="text-xs text-muted-foreground">{t('{count} parties waiting', { count: entries.length })}</p>
         </div>
         {availableTables.length === 0 && (
@@ -533,17 +537,7 @@ function SortableTypeSection({ id, name, children }: { id: string; name: string;
   )
 }
 
-function flagChip(name?: string | null) {
-  const flag = typeFlag(name)
-  if (!flag) return null
-  return (
-    <span className="flex h-[15px] w-[22px] items-center justify-center overflow-hidden rounded-[3px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.15)]">
-      {flag}
-    </span>
-  )
-}
-
-function SortableTabTrigger({ id, name, count, occupied }: { id: string; name: string; count: number; occupied: number }) {
+function SortableTabTrigger({ id, name, icon, count, occupied }: { id: string; name: string; icon?: string | null; count: number; occupied: number }) {
   const { t } = useI18n()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   return (
@@ -553,7 +547,7 @@ function SortableTabTrigger({ id, name, count, occupied }: { id: string; name: s
       className="flex shrink-0 items-center"
     >
       <TabsTrigger value={name} className="gap-1.5 data-[state=active]:shadow-sm">
-        {flagChip(name)}
+        <TableTypeIcon icon={icon} className="h-4 w-4" />
         {name}
         <span className="text-xs font-normal text-muted-foreground">{count}</span>
         {occupied > 0 && <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-label={`${occupied} occupied`} />}

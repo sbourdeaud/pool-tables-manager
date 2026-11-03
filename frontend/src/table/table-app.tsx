@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
 import { TableRulesDialog } from '@/components/table-rules-dialog'
+import { TableTypeIcon } from '@/components/type-icon'
 import { rulesForTableType } from '@/lib/table-rules'
 import { lookingForPlayersLabel } from '@/lib/player-search'
 
@@ -290,7 +291,12 @@ function TableDetail({
       <Card>
         <CardContent className="space-y-1 p-6 text-center">
           <h1 className="text-2xl font-bold">{detail.table.name || 'Table #' + detail.table.number}</h1>
-          {detail.table.type && <p className="text-sm text-muted-foreground">{detail.table.type}</p>}
+          {detail.table.type && (
+            <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+              <TableTypeIcon icon={detail.table.icon} className="h-4 w-4" />
+              {detail.table.type}
+            </p>
+          )}
           <p className="pt-4 text-sm text-muted-foreground">{t('No active session')}</p>
         </CardContent>
       </Card>
@@ -380,7 +386,12 @@ function TableDetail({
         <CardContent className="space-y-4 p-5">
           <div className="border-b pb-4 text-center">
             <h1 className="text-2xl font-bold">{detail.table.name || 'Table #' + detail.table.number}</h1>
-            {detail.table.type && <p className="text-sm text-muted-foreground">{detail.table.type}</p>}
+            {detail.table.type && (
+              <p className="flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+                <TableTypeIcon icon={detail.table.icon} className="h-4 w-4" />
+                {detail.table.type}
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-2 rounded-lg bg-muted/40 p-3 text-center">
             <div>
