@@ -188,4 +188,93 @@ describe('Sessions API', () => {
     expect(res.status).toBe(200);
     expect(res.body.tableCharge).toBe(1250);
   });
+
+  test('uses hourly seat slots and excludes late joiners from the current slot', async () => {
+    const firstPlayerJoinedAt = new Date(Date.now() - 91 * 60000).toISOString();
+    const lateJoinerJoinedAt = new Date(Date.now() - 16 * 60000).toISOString();
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', numberOfPlayers: 2, startedAt: firstPlayerJoinedAt, status: 'active' });
+    prisma.tabLineItem.findMany.mockResolvedValue([]);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tt1', base_hourly_cents: 2500, vat_rate_percent: 20 }]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'subscriber_discount', value: '0' });
+    prisma.sessionPlayer.findMany.mockResolvedValue([
+      { id: 'p1', sessionId: 's1', playerNumber: 1, isSubscriber: false, joinedAt: firstPlayerJoinedAt, leftAt: null, status: 'active' },
+      { id: 'p2', sessionId: 's1', playerNumber: 2, isSubscriber: false, joinedAt: lateJoinerJoinedAt, leftAt: null, status: 'active' },
+    ]);
+
+    const res = await agent.get('/api/sessions/s1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.tableCharge).toBe(5000);
+    expect(res.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerNumber: 1, shareCents: 5000 }),
+      expect.objectContaining({ playerNumber: 2, shareCents: 0 }),
+    ]));
+  });
+
+  test('keeps one slot timeline across non-subscriber gaps and charges only slot-start players', async () => {
+    const firstPlayerJoinedAt = new Date(Date.now() - 100 * 60000).toISOString();
+    const firstPlayerLeftAt = new Date(Date.now() - 85 * 60000).toISOString();
+    const rejoinJoinedAt = new Date(Date.now() - 16 * 60000).toISOString();
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', numberOfPlayers: 3, startedAt: firstPlayerJoinedAt, status: 'active' });
+    prisma.tabLineItem.findMany.mockResolvedValue([]);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tt1', base_hourly_cents: 2500, vat_rate_percent: 20 }]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'subscriber_discount', value: '0' });
+    prisma.sessionPlayer.findMany.mockResolvedValue([
+      { id: 'p1', sessionId: 's1', playerNumber: 1, isSubscriber: false, joinedAt: firstPlayerJoinedAt, leftAt: firstPlayerLeftAt, status: 'settled' },
+      { id: 'p2', sessionId: 's1', playerNumber: 2, isSubscriber: false, joinedAt: firstPlayerJoinedAt, leftAt: null, status: 'active' },
+      { id: 'p3', sessionId: 's1', playerNumber: 3, isSubscriber: false, joinedAt: rejoinJoinedAt, leftAt: null, status: 'active' },
+    ]);
+
+    const res = await agent.get('/api/sessions/s1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.tableCharge).toBe(3750);
+    expect(res.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerNumber: 2, shareCents: 3750 }),
+      expect.objectContaining({ playerNumber: 3, shareCents: 0 }),
+    ]));
+  });
+
+  test('splits each hourly slot between non-subscribers active at slot start', async () => {
+    const joinedAt = new Date(Date.now() - 91 * 60000).toISOString();
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', numberOfPlayers: 2, startedAt: joinedAt, status: 'active' });
+    prisma.tabLineItem.findMany.mockResolvedValue([]);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tt1', base_hourly_cents: 2500, vat_rate_percent: 20 }]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'subscriber_discount', value: '0' });
+    prisma.sessionPlayer.findMany.mockResolvedValue([
+      { id: 'p1', sessionId: 's1', playerNumber: 1, isSubscriber: false, joinedAt, leftAt: null, status: 'active' },
+      { id: 'p2', sessionId: 's1', playerNumber: 2, isSubscriber: false, joinedAt, leftAt: null, status: 'active' },
+    ]);
+
+    const res = await agent.get('/api/sessions/s1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.tableCharge).toBe(5000);
+    expect(res.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerNumber: 1, shareCents: 2500 }),
+      expect.objectContaining({ playerNumber: 2, shareCents: 2500 }),
+    ]));
+  });
+
+  test('applies the subscriber discount from the next slot after a subscriber joins', async () => {
+    const nonSubscriberJoinedAt = new Date(Date.now() - 91 * 60000).toISOString();
+    const subscriberJoinedAt = new Date(Date.now() - 35 * 60000).toISOString();
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', numberOfPlayers: 2, startedAt: nonSubscriberJoinedAt, status: 'active' });
+    prisma.tabLineItem.findMany.mockResolvedValue([]);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'tt1', base_hourly_cents: 2500, vat_rate_percent: 20 }]);
+    prisma.setting.findUnique.mockResolvedValue({ key: 'subscriber_discount', value: '50' });
+    prisma.sessionPlayer.findMany.mockResolvedValue([
+      { id: 'p1', sessionId: 's1', playerNumber: 1, isSubscriber: false, joinedAt: nonSubscriberJoinedAt, leftAt: null, status: 'active' },
+      { id: 'p2', sessionId: 's1', playerNumber: 2, isSubscriber: true, joinedAt: subscriberJoinedAt, leftAt: null, status: 'active' },
+    ]);
+
+    const res = await agent.get('/api/sessions/s1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.tableCharge).toBe(3750);
+    expect(res.body.players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ playerNumber: 1, shareCents: 3750 }),
+      expect.objectContaining({ playerNumber: 2, isSubscriber: true, shareCents: 0 }),
+    ]));
+  });
 });

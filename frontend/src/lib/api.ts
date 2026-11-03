@@ -247,11 +247,22 @@ export interface SessionItem {
   type?: string
 }
 
+export interface SessionPlayerRow {
+  id: string
+  playerNumber: number
+  isSubscriber: boolean
+  joinedAt?: string
+  leftAt?: string | null
+  status?: string
+  shareCents?: number
+}
+
 export interface SessionDetail {
   session?: SessionRow
   items?: SessionItem[]
   totalCents?: number
   tableCharge?: number
+  players?: SessionPlayerRow[]
 }
 
 export function apiSessionDetail(id: string) {
@@ -379,7 +390,7 @@ export function apiCancelPayment(id: string) {
 
 export function apiSessionSettle(
   sessionId: string,
-  body: { tableSettlementCents: number; items: { itemId: string; quantity: number }[]; isSubscriber: boolean },
+  body: { playerId?: string; tableSettlementCents?: number; items: { itemId: string; quantity: number }[]; isSubscriber?: boolean },
 ) {
   return apiSend('/api/sessions/' + sessionId + '/settle', 'POST', body)
 }

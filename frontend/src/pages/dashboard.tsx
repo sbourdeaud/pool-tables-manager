@@ -780,6 +780,7 @@ function AddPlayerDialog({ state, onClose, onDone }: { state: DialogState; onClo
           <Button variant="outline" className="w-full justify-start" disabled={busy} onClick={() => void add(false)}>
             <User /> {t('Non-subscriber — pays their share')}
           </Button>
+          <p className="text-xs text-muted-foreground">{t('New players start sharing from the next hourly billing slot.')}</p>
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>{t('Cancel')}</Button>

@@ -167,6 +167,7 @@ const makeTx = () => ({
   closurePeriod: module.exports.closurePeriod,
   poolTable: module.exports.poolTable,
   session: module.exports.session,
+  sessionPlayer: module.exports.sessionPlayer,
   $executeRawUnsafe: async () => ({}),
   $queryRawUnsafe: async (sql) => {
     const text = String(sql);
@@ -211,6 +212,7 @@ module.exports = {
   poolTable: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), count: mk() },
   tableType: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), updateMany: mk(), deleteMany: mk() },
+  sessionPlayer: { findMany: mk(), findUnique: mk(), create: mk(), createMany: mk(), update: mk(), updateMany: mk(), deleteMany: mk() },
   waitlistEntry: { findMany: mk(), create: mk(), deleteMany: mk() },
   venueEvent: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
   tabLineItem: { findMany: mk(), findFirst: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },

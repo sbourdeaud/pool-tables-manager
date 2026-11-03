@@ -39,6 +39,23 @@ model PoolTable {
   @@index([tableTypeId])
 }
 
+model SessionPlayer {
+  id                String   @id @default(uuid())
+  sessionId         String   @map("session_id")
+  playerNumber      Int      @map("player_number")
+  isSubscriber      Boolean  @default(false) @map("is_subscriber")
+  joinedAt          DateTime @default(now()) @map("joined_at")
+  leftAt            DateTime? @map("left_at")
+  status            String   @default("active")
+  settledTableCents Int      @default(0) @map("settled_table_cents")
+  settledAt         DateTime? @map("settled_at")
+  settledBy         String?  @map("settled_by")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@unique([sessionId, playerNumber])
+  @@index([sessionId, status])
+}
+
 model Drink {
   id             String @id @default(uuid())
   name_en        String

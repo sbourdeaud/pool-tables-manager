@@ -27,6 +27,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
   const { toast } = useToast()
   const currency = settings.currency || '$'
   const [detail, setDetail] = React.useState<SessionDetail | null>(null)
+  const [selectedPlayerId, setSelectedPlayerId] = React.useState<string | null>(null)
   const [tableOption, setTableOption] = React.useState<'none' | 'share' | 'full'>('none')
   const [isSubscriber, setIsSubscriber] = React.useState(false)
   const [quantities, setQuantities] = React.useState<Record<string, number>>({})
@@ -34,6 +35,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
 
   React.useEffect(() => {
     if (!open || !sessionId) return
+    setSelectedPlayerId(null)
     setTableOption('none')
     setIsSubscriber(false)
     setQuantities({})
@@ -41,11 +43,15 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
   }, [open, sessionId])
 
   const items = detail?.items || []
+  const playerSeats = (detail?.players || []).filter((player) => player.status !== 'settled' && !player.leftAt)
+  const useSeatLedger = playerSeats.length > 0
+  const selectedSeat = playerSeats.find((player) => player.id === selectedPlayerId) || null
   const tableCharge = detail?.tableCharge || 0
   const subscriberCount = detail?.session?.subscriberCount ?? 0
   const nonSubscriberCount = Math.max(1, numberOfPlayers - subscriberCount)
-  const tableSettlement =
+  const legacyTableSettlement =
     tableOption === 'none' ? 0 : tableOption === 'full' ? tableCharge : Math.round(tableCharge / nonSubscriberCount)
+  const tableSettlement = useSeatLedger ? (selectedSeat?.shareCents || 0) : legacyTableSettlement
 
   const selectedItems = items
     .filter((i) => (quantities[i.id] || 0) > 0)
@@ -54,20 +60,26 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
 
   const settle = async () => {
     if (!sessionId) return
+    if (useSeatLedger && !selectedSeat) {
+      toast({ title: t('Select a player'), variant: 'error' })
+      return
+    }
     setBusy(true)
     const result = await apiSessionSettle(sessionId, {
-      tableSettlementCents: tableSettlement,
+      playerId: selectedSeat?.id,
       items: selectedItems,
-      isSubscriber,
+      isSubscriber: selectedSeat ? selectedSeat.isSubscriber : isSubscriber,
     })
     if (!result.ok) {
       setBusy(false)
       toast({ title: t('Settlement failed'), description: result.error || `Error ${result.status}`, variant: 'error' })
       return
     }
-    const next = Math.max(1, numberOfPlayers - 1)
-    const patched = await apiSetPlayerCount(sessionId, next)
-    if (!patched.ok) console.warn('Failed to update player count after settlement')
+    if (!useSeatLedger) {
+      const next = Math.max(1, numberOfPlayers - 1)
+      const patched = await apiSetPlayerCount(sessionId, next)
+      if (!patched.ok) console.warn('Failed to update player count after settlement')
+    }
     setBusy(false)
     toast({ title: t('Player settled') })
     onClose()
@@ -82,33 +94,66 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
           <DialogDescription>{t('Settle one player\'s share — table time and selected items.')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
-          <label className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
-            <Switch checked={isSubscriber} onCheckedChange={setIsSubscriber} />
-            <span className="text-sm font-medium">{t('This player is a subscriber')}</span>
-          </label>
-
-          {tableCharge > 0 && (
+          {useSeatLedger ? (
             <div className="space-y-2">
-              <Label>{t('Table Time')}</Label>
-              {(
-                [
-                  ['none', t('Do not settle table time')],
-                  ['share', t('Player share ({amount})', { amount: money(Math.round(tableCharge / nonSubscriberCount), currency) })],
-                  ['full', t('Full table charge ({amount})', { amount: money(tableCharge, currency) })],
-                ] as const
-              ).map(([value, label]) => (
+              <Label>{t('Players')}</Label>
+              {playerSeats.map((player) => (
                 <label
-                  key={value}
+                  key={player.id}
                   className={cn(
-                    'flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm',
-                    tableOption === value ? 'border-primary/60 bg-accent/60' : 'bg-muted/20',
+                    'flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm',
+                    selectedPlayerId === player.id ? 'border-primary/60 bg-accent/60' : 'bg-muted/20',
                   )}
                 >
-                  <input type="radio" name="tableOption" checked={tableOption === value} onChange={() => setTableOption(value)} />
-                  {label}
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="session-player"
+                      checked={selectedPlayerId === player.id}
+                      onChange={() => setSelectedPlayerId(player.id)}
+                    />
+                    {t('Player {number}', { number: player.playerNumber })}
+                    {player.isSubscriber && (
+                      <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                        {t('Subscriber')}
+                      </span>
+                    )}
+                  </span>
+                  <span className="font-semibold tabular-nums">{money(player.shareCents || 0, currency)}</span>
                 </label>
               ))}
             </div>
+          ) : (
+            <>
+              <label className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
+                <Switch checked={isSubscriber} onCheckedChange={setIsSubscriber} />
+                <span className="text-sm font-medium">{t('This player is a subscriber')}</span>
+              </label>
+
+              {tableCharge > 0 && (
+                <div className="space-y-2">
+                  <Label>{t('Table Time')}</Label>
+                  {(
+                    [
+                      ['none', t('Do not settle table time')],
+                      ['share', t('Player share ({amount})', { amount: money(Math.round(tableCharge / nonSubscriberCount), currency) })],
+                      ['full', t('Full table charge ({amount})', { amount: money(tableCharge, currency) })],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value}
+                      className={cn(
+                        'flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+                        tableOption === value ? 'border-primary/60 bg-accent/60' : 'bg-muted/20',
+                      )}
+                    >
+                      <input type="radio" name="tableOption" checked={tableOption === value} onChange={() => setTableOption(value)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {items.length > 0 && (
@@ -154,7 +199,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
             <Button variant="outline" onClick={onClose}>
               {t('Cancel')}
             </Button>
-            <Button disabled={busy} onClick={() => void settle()}>
+            <Button disabled={busy || (useSeatLedger && !selectedSeat)} onClick={() => void settle()}>
               <UserMinus /> {busy ? t('Settling…') : t('Settle player')}
             </Button>
           </div>

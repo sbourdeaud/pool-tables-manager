@@ -1831,6 +1831,22 @@ app.delete('/api/tables/:id', requireAuth, async (req, res) => {
 });
 
 // Sessions: start, end
+async function createSessionPlayersInTx(tx, sessionId, numberOfPlayers, subscriberCount){
+  const players = Math.max(0, Math.min(Number(numberOfPlayers) || 0, 50));
+  const subscribers = Math.max(0, Math.min(Number(subscriberCount) || 0, players));
+  for (let playerNumber = 1; playerNumber <= players; playerNumber += 1) {
+    await tx.$executeRawUnsafe(
+      `INSERT INTO "SessionPlayer" (id, session_id, player_number, is_subscriber, joined_at, status, created_at)
+       VALUES ($1::uuid, $2::uuid, $3, $4, now(), 'active', now())
+       ON CONFLICT ("session_id", "player_number") DO NOTHING`,
+      crypto.randomUUID(),
+      sessionId,
+      playerNumber,
+      playerNumber <= subscribers
+    );
+  }
+}
+
 app.post('/api/sessions', requireAuth, async (req, res) => {
   const { tableId, patronId, numberOfPlayers, subscriberCount } = req.body;
   try {
@@ -1852,6 +1868,8 @@ app.post('/api/sessions', requireAuth, async (req, res) => {
       if(subscriberCount && subscriberCount > 0){
         await tx.$executeRawUnsafe(`INSERT INTO "TabLineItem" (id, session_id, type, description, quantity, unit_price, total_cents, created_at) VALUES ($1::uuid, $2::uuid, 'meta', 'subscriber_count', $3, 0, 0, now())`, crypto.randomUUID(), s.id, subscriberCount);
       }
+
+      await createSessionPlayersInTx(tx, s.id, numberOfPlayers || 1, subscriberCount);
       
       // Map snake_case DB fields to camelCase for frontend
       return { 
@@ -1894,15 +1912,159 @@ function getNonSubscriberChargeStart(startedAt, startMeta){
   return Number.isFinite(recordedStart) && recordedStart > sessionStart ? recordedStart : sessionStart;
 }
 
-// Compute the live table-time charge (and the table type's VAT rate) for an active session
-async function getTableChargeForSession(session){
+const HOUR_MS = 60 * 60 * 1000;
+
+function timeValueMs(value){
+  if (!value) return NaN;
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(time) ? time : NaN;
+}
+
+function sessionPlayerJoinedAtMs(player){
+  return timeValueMs(player.joinedAt ?? player.joined_at);
+}
+
+function sessionPlayerLeftAtMs(player, asOfMs){
+  const leftAt = timeValueMs(player.leftAt ?? player.left_at);
+  return Number.isFinite(leftAt) ? leftAt : asOfMs;
+}
+
+function activeAtMs(player, atMs, asOfMs){
+  const joinedAt = sessionPlayerJoinedAtMs(player);
+  if (!Number.isFinite(joinedAt) || joinedAt > atMs) return false;
+  return sessionPlayerLeftAtMs(player, asOfMs) > atMs;
+}
+
+// Table time is billed in whole hour slots anchored at the first non-subscriber
+// join. A slot is only charged when at least one non-subscriber is active at the
+// slot start, so seats that join after a slot has begun wait for the next slot.
+function mergeNonSubscriberPeriods(players, asOfMs){
+  const intervals = players
+    .filter((player) => !player.isSubscriber)
+    .map((player) => ({
+      start: sessionPlayerJoinedAtMs(player),
+      end: sessionPlayerLeftAtMs(player, asOfMs),
+    }))
+    .filter((interval) => Number.isFinite(interval.start) && interval.end > interval.start)
+    .sort((a, b) => a.start - b.start);
+
+  if (!intervals.length) return [];
+  return [{
+    start: intervals[0].start,
+    end: intervals.reduce((latest, interval) => Math.max(latest, interval.end), intervals[0].end),
+  }];
+}
+
+function calculateHourlyPlayerBilling({ players, baseHourlyCents, subscriberDiscountPercent, asOf }){
+  const asOfMs = timeValueMs(asOf) || Date.now();
+  const shares = new Map(players.map((player) => [player.id, 0]));
+  const slots = [];
+
+  if (!players.length || !Number.isFinite(baseHourlyCents) || baseHourlyCents <= 0) {
+    return { shares, slots, billableSlotCount: 0 };
+  }
+
+  const discount = Math.max(0, Math.min(100, Number.isFinite(subscriberDiscountPercent) ? subscriberDiscountPercent : 50));
+  for (const period of mergeNonSubscriberPeriods(players, asOfMs)) {
+    const slotCount = Math.ceil((period.end - period.start) / HOUR_MS);
+    for (let slotIndex = 0; slotIndex < slotCount; slotIndex += 1) {
+      const slotStart = period.start + slotIndex * HOUR_MS;
+      if (slotStart >= period.end) break;
+      const eligibleNonSubscribers = players
+        .filter((player) => !player.isSubscriber && activeAtMs(player, slotStart, asOfMs))
+        .sort((a, b) => (a.playerNumber ?? 0) - (b.playerNumber ?? 0));
+      if (!eligibleNonSubscribers.length) continue;
+      const subscriberPresent = players.some((player) => player.isSubscriber && activeAtMs(player, slotStart, asOfMs));
+      const slotCharge = subscriberPresent
+        ? Math.round(baseHourlyCents * (1 - discount / 100))
+        : baseHourlyCents;
+      const baseShare = Math.floor(slotCharge / eligibleNonSubscribers.length);
+      let remainder = slotCharge - baseShare * eligibleNonSubscribers.length;
+      const slotShares = eligibleNonSubscribers.map((player) => {
+        const share = baseShare + (remainder > 0 ? 1 : 0);
+        if (remainder > 0) remainder -= 1;
+        return { playerId: player.id, playerNumber: player.playerNumber, shareCents: share };
+      });
+      for (const share of slotShares) {
+        shares.set(share.playerId, (shares.get(share.playerId) || 0) + share.shareCents);
+      }
+      slots.push({
+        slotIndex,
+        startedAt: new Date(slotStart).toISOString(),
+        endsAt: new Date(Math.min(slotStart + HOUR_MS, period.end)).toISOString(),
+        chargeCents: slotCharge,
+        subscriberDiscounted: subscriberPresent,
+        players: slotShares,
+      });
+    }
+  }
+
+  return { shares, slots, billableSlotCount: slots.length };
+}
+
+async function listSessionPlayers(sessionId){
+  try {
+    return (await prisma.sessionPlayer.findMany({
+      where: { sessionId },
+      orderBy: { playerNumber: 'asc' },
+    })) || [];
+  } catch (err) {
+    console.warn('Unable to load session players', err.message);
+    return [];
+  }
+}
+
+function activeSessionPlayers(players){
+  return players.filter((player) => player.status === 'active' && !player.leftAt);
+}
+
+function mapSessionPlayer(player, shareCents = 0){
+  return {
+    id: player.id,
+    playerNumber: player.playerNumber,
+    isSubscriber: Boolean(player.isSubscriber),
+    joinedAt: player.joinedAt,
+    leftAt: player.leftAt || null,
+    status: player.status,
+    shareCents: shareCents || 0,
+  };
+}
+
+// Compute the live table-time charge (and the table type's VAT rate) for an active session.
+// Sessions with a seat ledger use whole-hour slots split between non-subscribers who were
+// active at each slot start. Sessions without seats keep the legacy aggregate calculation.
+async function getTableChargeForSession(session, asOf = new Date()){
   const tableRows = await prisma.$queryRawUnsafe(`
     SELECT tt.base_hourly_cents, tt.vat_rate_percent
     FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id
     WHERE p.id::text = $1
   `, session.tableId);
   const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
-  if(!table || !session.startedAt) return { tableCharge: 0, hoursCharged: 0, vatRatePercent: 20 };
+  if(!table || !session.startedAt) return { tableCharge: 0, hoursCharged: 0, vatRatePercent: 20, players: [], playerShares: [] };
+
+  const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
+  const subscriberDiscountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
+  const players = await listSessionPlayers(session.id);
+
+  if (players.length > 0) {
+    const billing = calculateHourlyPlayerBilling({
+      players,
+      baseHourlyCents: Number(table.base_hourly_cents) || 0,
+      subscriberDiscountPercent,
+      asOf,
+    });
+    const activePlayers = activeSessionPlayers(players);
+    const playerShares = activePlayers.map((player) => mapSessionPlayer(player, billing.shares.get(player.id) || 0));
+    const tableCharge = playerShares.reduce((sum, player) => sum + player.shareCents, 0);
+    return {
+      tableCharge,
+      hoursCharged: billing.billableSlotCount,
+      vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20,
+      players,
+      playerShares,
+      billingSlots: billing.slots,
+    };
+  }
 
   const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
   const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
@@ -1912,21 +2074,26 @@ async function getTableChargeForSession(session){
   const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
 
   const chargeStart = getNonSubscriberChargeStart(session.startedAt, nonSubscriberStartMeta);
-  const elapsedMs = Date.now() - chargeStart;
+  const elapsedMs = asOf.getTime() - chargeStart;
   const hoursCharged = Math.ceil(elapsedMs / 3600000);
   let tableCharge = 0;
   if(nonSubscriberCount > 0){
     const baseCharge = hoursCharged * table.base_hourly_cents;
     if(subscriberCount > 0){
-      const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
-      const discountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
-      tableCharge = Math.round(baseCharge * (1 - discountPercent / 100));
+      tableCharge = Math.round(baseCharge * (1 - subscriberDiscountPercent / 100));
     } else {
       tableCharge = baseCharge;
     }
     tableCharge += tableSettlements;
   }
-  return { tableCharge, hoursCharged, vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20 };
+  return {
+    tableCharge,
+    hoursCharged,
+    vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20,
+    players,
+    playerShares: [],
+    billingSlots: [],
+  };
 }
 
 // Gross amount due for an active session (table time + non-voided sale items),
@@ -2577,12 +2744,34 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
     const previousSession = Array.isArray(previousSessionRows) ? previousSessionRows[0] : previousSessionRows;
     if (!previousSession) return res.status(404).json({ error: 'not_found' });
     const previousSubscriberMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
-    const previousNonSubscriberCount = (Number(previousSession.number_of_players) || 1) - (Number(previousSubscriberMeta?.quantity) || 0);
+    const previousSubscriberCount = Number(previousSubscriberMeta?.quantity) || 0;
+    const previousNonSubscriberCount = (Number(previousSession.number_of_players) || 1) - previousSubscriberCount;
+    const existingPlayers = await listSessionPlayers(req.params.id);
+    const nextPlayerNumber = existingPlayers.reduce((max, player) => Math.max(max, Number(player.playerNumber) || 0), 0) + 1;
 
     if (typeof numberOfPlayers !== 'undefined') {
       const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
       const row = Array.isArray(out) ? out[0] : out;
       if (!row) return res.status(404).json({ error: 'not_found' });
+
+      const nextPlayerCount = Math.max(0, Math.min(Math.round(Number(numberOfPlayers) || 0), 50));
+      const activePlayerCount = activeSessionPlayers(existingPlayers).length;
+      const playersToAdd = Math.max(0, nextPlayerCount - activePlayerCount);
+      const subscriberDelta = typeof subscriberCount !== 'undefined'
+        ? Math.round(Number(subscriberCount) || 0) - previousSubscriberCount
+        : 0;
+      const subscribersToAdd = Math.max(0, Math.min(subscriberDelta, playersToAdd));
+      for (let offset = 0; offset < playersToAdd; offset += 1) {
+        await prisma.sessionPlayer.create({
+          data: {
+            sessionId: req.params.id,
+            playerNumber: nextPlayerNumber + offset,
+            isSubscriber: offset < subscribersToAdd,
+            joinedAt: new Date(),
+            status: 'active',
+          },
+        });
+      }
     }
 
     // Subscriber count is stored as a meta tab line item; clamp to the player count.
@@ -2663,13 +2852,32 @@ app.post('/api/sessions/:id/looking-for-players/fulfill', requireAuth, async (re
 // Session partial settlement (when player leaves mid-session)
 app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
   try {
-    const { tableSettlementCents, items, isSubscriber } = req.body;
+    const { tableSettlementCents, items, isSubscriber, playerId } = req.body;
     const sessionId = req.params.id;
     const actor = getActorName(req);
+    let settledPlayer = null;
+    let effectiveTableSettlementCents = Math.max(0, Math.round(Number(tableSettlementCents) || 0));
+
+    if (playerId) {
+      const sessionRow = await prisma.session.findUnique({ where: { id: sessionId } });
+      if (!sessionRow || sessionRow.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
+      const player = await prisma.sessionPlayer.findUnique({ where: { id: playerId } });
+      if (!player || player.sessionId !== sessionId || player.status !== 'active' || player.leftAt) {
+        return res.status(404).json({ error: 'player_not_found' });
+      }
+
+      const chargeInfo = await getTableChargeForSession(sessionRow);
+      const calculatedShare = chargeInfo.playerShares?.find((share) => share.id === playerId)?.shareCents || 0;
+      // tableSettlementCents remains available as an explicit staff override.
+      if (typeof tableSettlementCents === 'undefined') {
+        effectiveTableSettlementCents = calculatedShare;
+      }
+      settledPlayer = player;
+    }
 
     // If table settlement amount is provided, add a negative line item for it,
     // snapshotting the table type's current VAT rate.
-    if (tableSettlementCents && tableSettlementCents > 0) {
+    if (effectiveTableSettlementCents > 0) {
       const sessionRow = await prisma.session.findUnique({ where: { id: sessionId } });
       let tableVatRate = 20;
       if(sessionRow){
@@ -2687,19 +2895,61 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
         'table_settlement',
         'Table charge settlement',
         1,
-        -tableSettlementCents,
-        -tableSettlementCents,
+        -effectiveTableSettlementCents,
+        -effectiveTableSettlementCents,
         tableVatRate,
-        -vatAmountFromTotal(tableSettlementCents, tableVatRate)
+        -vatAmountFromTotal(effectiveTableSettlementCents, tableVatRate)
       );
     }
-    
-    // Update subscriber count if settling player is a subscriber (metadata only, not a sale record)
-    if(isSubscriber){
+
+    if (settledPlayer) {
+      const settledAt = new Date();
+      await prisma.sessionPlayer.update({
+        where: { id: settledPlayer.id },
+        data: {
+          leftAt: settledAt,
+          status: 'settled',
+          settledTableCents: effectiveTableSettlementCents,
+          settledAt,
+          settledBy: actor,
+        },
+      });
+
+      const remainingPlayers = await listSessionPlayers(sessionId);
+      const remainingActivePlayers = activeSessionPlayers(remainingPlayers);
+      const nextPlayers = remainingActivePlayers.length;
+      const nextSubscribers = remainingActivePlayers.filter((player) => player.isSubscriber).length;
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2`,
+        nextPlayers,
+        sessionId
+      );
+
       const subscriberMeta = await prisma.tabLineItem.findFirst({
         where: { sessionId, type: 'meta', description: 'subscriber_count' }
       });
-      
+      if (nextSubscribers > 0) {
+        if (subscriberMeta) {
+          await prisma.tabLineItem.update({ where: { id: subscriberMeta.id }, data: { quantity: nextSubscribers } });
+        } else {
+          await prisma.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'subscriber_count', quantity: nextSubscribers, unitPrice: 0, totalCents: 0 } });
+        }
+      } else if (subscriberMeta) {
+        await prisma.tabLineItem.delete({ where: { id: subscriberMeta.id } });
+      }
+
+      if (!remainingActivePlayers.some((player) => !player.isSubscriber)) {
+        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({
+          where: { sessionId, type: 'meta', description: 'non_subscriber_started_at' }
+        });
+        if (nonSubscriberStartMeta) await prisma.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+      }
+    } else if (isSubscriber) {
+      // Legacy sessions without a seat ledger still decrement the aggregate count.
+      const subscriberMeta = await prisma.tabLineItem.findFirst({
+        where: { sessionId, type: 'meta', description: 'subscriber_count' }
+      });
+
       if(subscriberMeta){
         const newSubscriberCount = Math.max(0, subscriberMeta.quantity - 1);
         if(newSubscriberCount > 0){
@@ -2766,7 +3016,11 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
       }
     }
     
-    res.json({ success: true });
+    res.json({
+      success: true,
+      tableSettlementCents: effectiveTableSettlementCents,
+      player: settledPlayer ? mapSessionPlayer(settledPlayer, effectiveTableSettlementCents) : null,
+    });
   } catch (err) { 
     console.error(err); 
     res.status(500).json({ error: 'settlement_failed' }); 
@@ -2779,77 +3033,24 @@ app.get('/api/sessions/:id', requireAuth, async (req, res) => {
     const s = await prisma.session.findUnique({ where: { id: req.params.id } });
     if(!s) return res.status(404).json({ error: 'not_found' });
     const items = await prisma.tabLineItem.findMany({ where: { sessionId: req.params.id, voidedAt: null } });
-    
-    // Check for subscriber count meta item
-    const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
-    const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
-    const nonSubscriberCount = (s.numberOfPlayers || 1) - subscriberCount;
-    
-    // Calculate items total (exclude meta, table_settlement, and settlement items)
-    // Settlement items are already reflected in the reduced quantities of original items
     const itemsTotal = items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
-    
-    // Calculate total table charge settlements
-    const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
-    
-    // Calculate table charge with subscriber discount
-    let tableCharge = 0;
-    if(s.startedAt && s.status === 'active'){
-      const tableRows = await prisma.$queryRawUnsafe(`
-        SELECT p.id, tt.base_hourly_cents 
-        FROM "PoolTable" p 
-        JOIN "TableType" tt ON tt.id = p.table_type_id 
-        WHERE p.id::text = $1
-      `, s.tableId);
-      const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
-      if(table && table.base_hourly_cents){
-        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
-        const chargeStart = getNonSubscriberChargeStart(s.startedAt, chargeStartMeta);
-        const elapsedMs = Date.now() - chargeStart;
-        const hoursCharged = Math.ceil(elapsedMs / 3600000);
-        
-        // Get subscriber discount setting
-        const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
-        const discountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
-        
-        // Subscribers pay 0, non-subscribers get discount if playing with subscribers
-        if(nonSubscriberCount > 0){
-          const baseCharge = hoursCharged * table.base_hourly_cents;
-          if(subscriberCount > 0){
-            // Apply discount for non-subscribers playing with subscribers
-            tableCharge = Math.round(baseCharge * (1 - discountPercent / 100));
-          } else {
-            // No subscribers, full charge
-            tableCharge = baseCharge;
-          }
-        }
-        // If all subscribers, tableCharge remains 0
-      }
-    }
-    
-    // Apply settlements to table charge only if there are non-subscribers remaining
-    // If only subscribers remain, table charge is 0 regardless of previous settlements
-    console.log('[Session Detail] Session ID:', req.params.id);
-    console.log('[Session Detail] Player count:', s.numberOfPlayers);
-    console.log('[Session Detail] Subscriber count:', subscriberCount);
-    console.log('[Session Detail] Non-subscriber count:', nonSubscriberCount);
-    console.log('[Session Detail] Calculated table charge (before settlements):', tableCharge);
-    console.log('[Session Detail] Table settlements:', tableSettlements);
-    console.log('[Session Detail] Items total:', itemsTotal);
-    
-    if(nonSubscriberCount > 0){
-      tableCharge = tableCharge + tableSettlements;
-      console.log('[Session Detail] Applied settlements, new table charge:', tableCharge);
-    } else {
-      console.log('[Session Detail] Only subscribers remain, ignoring settlements, keeping tableCharge at:', tableCharge);
-    }
-    
+    const chargeInfo = s.status === 'active' ? await getTableChargeForSession(s) : { tableCharge: 0, players: [], playerShares: [] };
+    const activeSeatRows = activeSessionPlayers(chargeInfo.players || []);
+    const subscriberCount = activeSeatRows.length
+      ? activeSeatRows.filter(player => player.isSubscriber).length
+      : (items.find(i => i.type === 'meta' && i.description === 'subscriber_count')?.quantity || 0);
+    const tableCharge = chargeInfo.tableCharge || 0;
     const total = itemsTotal + tableCharge;
-    console.log('[Session Detail] Final table charge:', tableCharge);
-    console.log('[Session Detail] Grand total:', total);
-    console.log('[Session Detail] Returning: { totalCents:', total, ', itemsTotal:', itemsTotal, ', tableCharge:', tableCharge, ', subscriberCount:', subscriberCount, '}');
-    
-    res.json({ session: s, items: items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement'), totalCents: total, itemsTotal, tableCharge, subscriberCount });
+
+    res.json({
+      session: { ...s, subscriberCount },
+      items: items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement'),
+      totalCents: total,
+      itemsTotal,
+      tableCharge,
+      subscriberCount,
+      players: chargeInfo.playerShares || [],
+    });
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -3203,7 +3404,7 @@ async function fulfillPlayerSearch(sessionId, subscribersAdded, nonSubscribersAd
     if (!session || session.status !== 'active') throw new Error('session_not_found');
     if (!session.lookingForPlayersCount) throw new Error('no_player_search');
 
-    const currentPlayers = Number(session.numberOfPlayers) || 1;
+    const currentPlayers = Number(session.numberOfPlayers ?? 1);
     const subscriberMeta = await tx.tabLineItem.findFirst({ where: { sessionId, type: 'meta', description: 'subscriber_count' } });
     const currentSubscribers = Math.min(currentPlayers, Number(subscriberMeta?.quantity) || 0);
     const nextPlayers = currentPlayers + subscribersAdded + nonSubscribersAdded;
@@ -3227,6 +3428,24 @@ async function fulfillPlayerSearch(sessionId, subscribersAdded, nonSubscribersAd
       await tx.tabLineItem.update({ where: { id: subscriberMeta.id }, data: { quantity: nextSubscribers } });
     } else if (nextSubscribers > 0) {
       await tx.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'subscriber_count', quantity: nextSubscribers, unitPrice: 0, totalCents: 0 } });
+    }
+
+    const existingSeatRows = (await tx.sessionPlayer.findMany({ where: { sessionId }, orderBy: { playerNumber: 'asc' } })) || [];
+    const nextSeatNumber = existingSeatRows.reduce((max, seat) => Math.max(max, Number(seat.playerNumber) || 0), 0) + 1;
+    const seatsToCreate = [
+      ...Array.from({ length: subscribersAdded }, () => ({ isSubscriber: true })),
+      ...Array.from({ length: nonSubscribersAdded }, () => ({ isSubscriber: false })),
+    ];
+    for (let offset = 0; offset < seatsToCreate.length; offset += 1) {
+      await tx.sessionPlayer.create({
+        data: {
+          sessionId,
+          playerNumber: nextSeatNumber + offset,
+          isSubscriber: seatsToCreate[offset].isSubscriber,
+          joinedAt: new Date(),
+          status: 'active',
+        },
+      });
     }
 
     if (previousNonSubscriberCount <= 0 && nextNonSubscriberCount > 0) {
@@ -3272,18 +3491,7 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     
     // Get session details with items
     const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
-    
-    // Check for subscriber count meta item
-    const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
-    const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
-    const nonSubscriberCount = (session.numberOfPlayers || 1) - subscriberCount;
-    
-    // Calculate items total (exclude meta, table_settlement, and settlement items)
-    // Settlement items are already reflected in the reduced quantities of original items
     const itemsTotal = items.filter(i => i.type !== 'meta' && i.type !== 'table_settlement' && i.type !== 'settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
-    
-    // Calculate table charge settlements
-    const tableSettlements = items.filter(i => i.type === 'table_settlement').reduce((sum,i)=>sum + (i.totalCents || 0), 0);
     
     // Get table type information
     const tableTypeRows = await prisma.$queryRawUnsafe(`
@@ -3294,38 +3502,12 @@ app.get('/api/public/table/:tableNumber', async (req, res) => {
     `, table.id);
     const tableType = Array.isArray(tableTypeRows) ? tableTypeRows[0] : tableTypeRows;
     
-    // Calculate table charge with subscriber discount
-    let tableCharge = 0;
-    if(session.startedAt && session.status === 'active'){
-      if(tableType && tableType.base_hourly_cents){
-        const chargeStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
-        const chargeStart = getNonSubscriberChargeStart(session.startedAt, chargeStartMeta);
-        const elapsedMs = Date.now() - chargeStart;
-        const hoursCharged = Math.ceil(elapsedMs / 3600000);
-        
-        // Get subscriber discount setting
-        const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
-        const discountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
-        
-        // Subscribers pay 0, non-subscribers get discount if playing with subscribers
-        if(nonSubscriberCount > 0){
-          const baseCharge = hoursCharged * tableType.base_hourly_cents;
-          if(subscriberCount > 0){
-            // Apply discount for non-subscribers playing with subscribers
-            tableCharge = Math.round(baseCharge * (1 - discountPercent / 100));
-          } else {
-            // No subscribers, full charge
-            tableCharge = baseCharge;
-          }
-        }
-        // If all subscribers, tableCharge remains 0
-      }
-    }
-    
-    // Apply settlements to table charge only if there are non-subscribers remaining
-    if(nonSubscriberCount > 0){
-      tableCharge = tableCharge + tableSettlements;
-    }
+    const chargeInfo = await getTableChargeForSession(session);
+    const activeSeatRows = activeSessionPlayers(chargeInfo.players || []);
+    const subscriberCount = activeSeatRows.length
+      ? activeSeatRows.filter((player) => player.isSubscriber).length
+      : (items.find(i => i.type === 'meta' && i.description === 'subscriber_count')?.quantity || 0);
+    const tableCharge = chargeInfo.tableCharge || 0;
     
     const total = itemsTotal + tableCharge;
 
