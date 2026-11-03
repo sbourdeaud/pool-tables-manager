@@ -52,6 +52,7 @@ pool-tables-manager/
 - `TableType` - Pool table types (American, Snooker, etc.) with hourly rates and VAT rate
 - `PoolTable` - Individual tables with status (available, occupied, maintenance)
 - `Session` - Active/ended table sessions with timestamps, player count, PIN
+- `SessionPlayer` - Numbered seat ledger for each session: subscriber flag, join/leave timestamps, settled table-time amount and status
 - `TabLineItem` - Tab items (drinks, charges, settlements) linked to sessions, with VAT snapshot and soft-void/correction audit fields
 - `Drink` - Menu items with prices, VAT rate and menu `category` (`cold`, `warm`, `alcoholic`, `other`)
 - `Subscription` - Player subscriptions for discounts
@@ -66,6 +67,7 @@ pool-tables-manager/
 
 **Key Relationships:**
 - Session → PoolTable (many-to-one)
+- Session → SessionPlayer (one-to-many, numbered seats)
 - Session → TabLineItem (one-to-many)
 - Session → PendingOrder (one-to-many)
 - PoolTable → TableType (many-to-one)
@@ -73,7 +75,10 @@ pool-tables-manager/
 
 **Special Fields:**
 - `Session.pin` - 4-digit PIN for public table access
-- `Session.number_of_players` - Player count for charge splitting
+- `Session.number_of_players` - Aggregate player count, kept in sync with active `SessionPlayer` seats
+- `SessionPlayer.playerNumber` - Stable per-session seat number (Player 1, Player 2, …)
+- `SessionPlayer.isSubscriber` / `joinedAt` / `leftAt` - Seat type and presence interval used by hourly billing
+- `SessionPlayer.settledTableCents` - Frozen table-time amount when a seat is settled
 - `TabLineItem.type` - Categories: `menu_item`/`drink`, `custom_charge`, `meta`, `settlement`, `table_settlement`, `table_time`, `discount`
 - `TabLineItem.vatRatePercent` / `vatAmountCents` - VAT rate and amount snapshotted at the time of sale (independent of later rate changes)
 - `TabLineItem.voidedAt` / `voidedBy` / `voidReason` / `correctedFromId` - Anti-tamper audit trail: line items are never hard-deleted or overwritten. Deleting or correcting an item soft-voids the original and, if a replacement is needed, inserts a new row linked back via `correctedFromId`
@@ -111,10 +116,10 @@ pool-tables-manager/
 - `GET /api/sessions` - List all sessions (includes `subscriberCount`)
 - `GET /api/sessions/:id` - Get session details with tab items
 - `POST /api/sessions` - Start new session (generates PIN)
-- `PATCH /api/sessions/:id` - Update session (`numberOfPlayers`, `subscriberCount` — clamped to the player count and stored as the subscriber-count meta line item)
+- `PATCH /api/sessions/:id` - Update session (`numberOfPlayers`, `subscriberCount` — creates numbered `SessionPlayer` seats for added players and keeps the subscriber-count meta line item in sync)
 - `PATCH /api/sessions/:id/end` - End session without generating a receipt (no VAT/table-time persistence; prefer `/checkout`)
-- `POST /api/sessions/:id/checkout` - End session, persist the table-time charge and any discount (VAT-tagged), issue a sequential receipt, and free the table
-- `POST /api/sessions/:id/settle` - Player settlement (reduce items/charges via soft-void + replacement row)
+- `POST /api/sessions/:id/checkout` - End session, persist the remaining table-time charge and any discount (VAT-tagged), issue a sequential receipt, and free the table; the UI supports per-player amount allocation and split-even
+- `POST /api/sessions/:id/settle` - Player settlement. Accepts `playerId` and an optional `tableSettlementCents` override (capped by the remaining table charge); reduces items via soft-void + replacement row and freezes that seat's table-time share
 - `POST /api/sessions/:id/transfer` - Transfer session to different table
 
 **Tab Items**
@@ -163,7 +168,7 @@ pool-tables-manager/
 - `GET /api/reports/payments/export?from=&to=` - Per-method payments CSV (payments + credit notes)
 
 **Public Access**
-- `GET /api/public/tables` - Unauthenticated live table-status board data: table number, type, and status (`available`/`occupied`/`maintenance`); includes `numberOfPlayers` and `startedAt` only when occupied. Never exposes PINs, session IDs, or tab data
+- `GET /api/public/tables` - Unauthenticated live table-status board data: table number, type, icon, hourly rate, and status (`available`/`occupied`/`maintenance`); includes `numberOfPlayers` and `startedAt` only when occupied. Never exposes PINs, session IDs, or tab data
 - `GET /api/public/table/:tableNumber` - Get table session info (requires PIN)
 - `POST /api/public/table/:tableNumber/order` - Submit a drink order (requires PIN) — see Pending Orders above
 
@@ -231,7 +236,7 @@ Add or refresh components with `npm run ui:add -- <name>` / `npm run ui:update -
 ### Dashboard layouts
 
 The `dashboard_layout` setting selects:
-- **Sections** (default): collapsible type groups with a top flag navigator (jump-and-expand); collapse
+- **Sections** (default): collapsible type groups with a top table-icon navigator (jump-and-expand); collapse
   state is stored per device in `localStorage.dashboard_collapsed_types`.
 - **Tabs**: one table type per tab, with drag-to-reorder grips.
 
@@ -241,18 +246,20 @@ the public status board and the table inventory page.
 ### Key UI Features
 
 **Dashboard:**
-- Grouped by table type with flag badges and real-time duration updates (every second)
+- Grouped by table type with selectable icons and real-time duration updates (every second)
 - Quick actions: Start Session, Add drink, Transfer, Checkout, player +/- (minus opens settlement), QR code
 - Pending Orders panel polls every 10s and plays the new-order chime
 - Maintenance-due warnings based on table usage vs the type's `maxUsedHours`
 
 **Session Management:**
-- Multiple players per table, subscriber discount system (50% default)
-- Dynamic charge calculation based on elapsed time, hourly rounding (ceil)
+- Multiple numbered players per table, subscriber discount system (50% default)
+- Hourly billing slots: non-subscribers active at slot start or joining within the first 45 minutes share that slot; final-quarter joins wait for the next slot
+- Subscriber presence is snapshotted per slot for discounting; settlement amounts reduce the remaining table charge and are reallocated proportionally to active seats
 
 **Settlement System:**
-- Player settles their portion and leaves; item selection (partial quantities), table-share or full charge
-- Negative `table_settlement` line items, player count decremented, optional printed receipt
+- Player settles their numbered seat and leaves; item selection supports partial quantities
+- Table-time amount is editable and can be split evenly across active non-subscribers; it cannot exceed the remaining charge
+- Negative `table_settlement` line items, seat marked settled, remaining charge reallocated, optional printed receipt
 
 **Public Table View (`table.html`):**
 - PIN-protected access per session, auto-refresh every 60 seconds, live timer and tab
@@ -261,6 +268,7 @@ the public status board and the table inventory page.
 **Public Status Board (`status.html`, `/status`):**
 - No authentication or PIN required; polls `/api/public/tables` every 5 seconds
 - Tiles grouped by table type (same order as the dashboard), color-coded; occupied tiles show player count and a live duration
+- Shows each type's hourly rate, venue open/closed state from `venue_opening_hours`, and marks every table unavailable while closed
 
 ## Key Workflows
 
@@ -280,14 +288,15 @@ the public status board and the table inventory page.
    - Transfer to different table if needed
 
 3. **Player Settlement** (optional)
-   - Player selects items to pay for
-   - Choose table share (equal split) or full charge
-   - System creates negative line items
-   - Items reduced or removed from tab
-   - Player count decremented
+   - Select the numbered player seat
+   - Adjust the table-time amount or use **Split even** across active non-subscribers
+   - Select items to pay for
+   - System creates negative line items and freezes the seat's table-time amount
+   - Items reduced or removed from tab; remaining charge recalculated
 
 4. **Checkout (End Session)**
    - Review final charges, adjust discount if needed
+   - Allocate player amounts or use **Split even** across the full bill (table time + items). These checkout allocations are display/payment-split helpers; the checkout total itself is unchanged.
    - `POST /api/sessions/:id/checkout` persists the table-time charge and discount (VAT-tagged), issues a sequential receipt (per calendar year), ends the session, and frees the table — all in one transaction
    - Optional receipt printing
    - If checkout fails for any reason, the UI falls back to a bare session-end so staff are never blocked from freeing a table
@@ -295,9 +304,11 @@ the public status board and the table inventory page.
 ### Revenue Calculation
 
 **Table Charges:**
-- Base: `hourlyRate * ceiledHours`
-- With subscribers playing: Apply discount % to non-subscribers
-- All subscribers: No charge
+- Billing is split into 60-minute slots from the first non-subscriber join time
+- A non-subscriber shares a slot if they were active at slot start or joined within its first 45 minutes; later joins wait for the next slot
+- Slot rate: full hourly rate without subscribers, or hourly rate × (1 − subscriber discount) when a subscriber is present at slot start
+- Slot charge is divided equally between eligible non-subscribers
+- Paid settlements are subtracted from total accrued table time; remaining charge is reallocated across active seats
 - VAT rate applied is the table type's configured `vatRatePercent`, snapshotted onto the persisted `table_time` line item at checkout
 
 **Tab Items:**
@@ -312,18 +323,14 @@ the public status board and the table inventory page.
 
 ### Subscriber Discount Logic
 
-```javascript
-if (subscriberCount > 0 && nonSubscriberCount > 0) {
-  // Mixed group: discount for non-subscribers
-  charge = baseCharge * (1 - discountPercent / 100);
-} else if (subscriberCount > 0 && nonSubscriberCount === 0) {
-  // All subscribers: no charge
-  charge = 0;
-} else {
-  // No subscribers: full charge
-  charge = baseCharge;
-}
+```text
+For each hourly slot:
+  subscriberPresent = any subscriber active at slot start (or joined within first 45 minutes)
+  slotCharge = subscriberPresent ? hourlyRate * (1 - discount / 100) : hourlyRate
+  split slotCharge equally between eligible non-subscribers
 ```
+
+Subscribers never pay table time. A player joining in the final 15 minutes of a running slot starts sharing in the next slot.
 
 ## Development Setup
 
@@ -389,7 +396,7 @@ Docker Compose sets:
 - SMTP configuration (Settings) plus a test-email button
 - Table maintenance alerts emailed once per cycle when a table's usage crosses its type's max
 - VAT (TVA) reports with CSV export and period closures (French compliance)
-- Settings (currency, app name, subscriber discount, public base URL for QR codes, dashboard layout, fiscal/legal information)
+- Settings (expanded language-derived currency list, app name, subscriber discount, public base URL for QR codes, dashboard layout, opening hours, fiscal/legal information)
 - Clear session history (closed VAT periods are protected from deletion)
 
 ### Operator Features

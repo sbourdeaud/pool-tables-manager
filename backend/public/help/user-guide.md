@@ -15,7 +15,7 @@ Pool Tables Manager is a comprehensive solution for managing pool hall operation
 7. [Player Settlements](#player-settlements)
 8. [Ending Sessions (Checkout)](#ending-sessions-checkout)
 9. [Subscriptions](#subscriptions)
-10. [Public Table View](#public-table-view)
+10. [Public Table View & Status Board](#public-table-view)
 11. [Admin Features](#admin-features)
 12. [Reports](#reports)
 13. [VAT (TVA) Reporting — France](#vat-tva-reporting--france)
@@ -41,7 +41,7 @@ The header has three entries plus the theme toggle and a logout button:
 - **Admin** - Menu, table inventory, subscriptions, reports and settings
 - **Public Status** - Opens the customer-facing availability board in a new tab (no login needed)
 - **Help** - In-app user guide (this document) with a table of contents; includes a link to the API reference
-- **Language selector** - Available in the header (desktop), Settings → Localization & Pricing, the player table page and the public status board. The choice is remembered on the device; drink names follow the menu translations (English/French today)
+- **Language selector** - Available in the header (desktop), Settings → Localization & Pricing, the player table page and the public status board. The choice is remembered on the device; the app supports English, French, German, Spanish, Italian, Dutch, Arabic, Portuguese, Chinese, Japanese and Korean
 - **Log out** (top-right) - Ends the admin session. With OIDC enabled the identity-provider
   session is ended too when supported; you are returned to the login page
 
@@ -53,14 +53,14 @@ The dashboard is your central hub for managing all tables.
 
 ### Table Display
 
-Tables are grouped by type (American, Pool, Snooker, French, …) with flag badges and colour-coded tiles:
+Tables are grouped by type (American, English Pool, Snooker, Carom, Pyramid, …) with selectable type icons and colour-coded tiles:
 - **Green tiles** = Available tables
 - **Red tiles** = Active sessions
 - Maintenance tables are hidden from the dashboard (manage them in Admin → Table Types & Inventory)
 
 Two layouts are available (choose in **Settings → Dashboard layout**):
 
-- **Sections** (default) — all types as collapsible groups. A row of **flags at the top** jumps
+- **Sections** (default) — all types as collapsible groups. A row of **type icons at the top** jumps
   (and expands) to a type; use the chevron on a group to collapse it. Collapsed state is remembered
   on this device.
 - **Tabs** — one table type per tab; drag the **grip handle** next to a tab to reorder tabs.
@@ -90,7 +90,7 @@ Each tile shows:
 - **Transfer** - Move the session to another table
 - **Checkout** - Apply a discount, print the tab estimate, complete payment and print the invoice
 - **−** next to the player count - Player settlement (one player pays their share and leaves)
-- **+** - Add a player — asks whether they are a subscriber (affects the discount)
+- **+** - Add a numbered player — asks whether they are a subscriber (affects the discount)
 - **QR thumbnail** - Enlarge the player QR code
 
 ---
@@ -99,9 +99,10 @@ Each tile shows:
 
 1. Click **▶ Start** on an available table
 2. Set the number of players (default: 1)
-3. (Optional) Select subscribers from your list
+3. Set how many are subscribers and how many are non-subscribers
    - Subscribers receive discounts when playing; **subscriber-only sessions are allowed** (0
      non-subscribers) and play free table time
+   - Each player gets a stable number for the session (Player 1, Player 2, …)
    - At least one player (subscriber or not) is required
 4. Click **Start Session**
 
@@ -119,18 +120,23 @@ Each tile shows:
 
 Active sessions display:
 - **Duration** - Updates every second (e.g., "1h 23m 45s")
-- **Hours Charged** - Rounded up to nearest hour
+- **Hours Charged** - Number of started hourly billing slots
 - **Tab Total** - Table charge + item charges
 
 ### Table Charges
 
-Charges are calculated per hour based on table type:
-- **American Pool:** €30/hour
-- **Pool:** €25/hour
-- **Snooker:** €40/hour
-- **French Billiards:** €35/hour
+Charges are calculated in whole hourly slots based on table type:
+- **American Pool:** e.g. €30/hour
+- **English Pool:** e.g. €25/hour
+- **Snooker:** e.g. €40/hour
+- **Carom / French Billiards:** e.g. €35/hour
+- **Pyramid:** e.g. €35/hour
 
-Time is always rounded up to the next hour (e.g., 1 hour 1 minute = 2 hours charged).
+The first billable slot starts when the first non-subscriber joins. A non-subscriber who is present at
+the start of a slot—or joins during its first 45 minutes—shares that slot equally with the other
+eligible non-subscribers. A player joining in the final 15 minutes starts sharing from the next slot.
+
+Table time is charged per slot, not per second or per minute. Subscribers never pay table time.
 
 ### Subscriber Discounts
 
@@ -138,6 +144,10 @@ When subscribers play with non-subscribers:
 - **Default:** 50% discount on table charge
 - **All subscribers:** No charge
 - **No subscribers:** Full price
+
+The subscriber discount is evaluated at each hourly slot start. A subscriber joining during the first
+45 minutes of a running slot applies the discount to that slot; a subscriber joining in the final 15
+minutes applies it from the next slot.
 
 *Discount percentage can be adjusted in Settings.*
 
@@ -192,26 +202,21 @@ Players can order drinks themselves from the [Public Table View](#public-table-v
 
 When a player wants to leave while others continue playing:
 
-1. Click **🧾 Settle** on the table tile
-2. Review the current tab and table charge
-3. **Select Table Charge Option:**
-   - **Player's share** - Equal split among original players
-   - **Full table charge** - Player pays entire table charge
-   - **Skip table charge** - Only pay for items
-
-4. **Select Items:**
-   - Use quantity spinners to select items player consumed
-   - Can settle partial quantities (e.g., 1 of 3 beers)
-
-5. Click **💰 Settle**
+1. Click **Settle** on the table tile
+2. Select the numbered player seat (Player 1, Player 2, …)
+3. Review the remaining table charge and the player's calculated share
+4. Adjust the **Table Time** amount if needed, or click **Split even** to divide the remaining table
+   charge equally between active non-subscribers
+5. **Select Items:** use the quantity fields to settle all or part of the items that player consumed
+6. Click **Settle player**
 
 **What Happens:**
+- The table-time amount is recorded and frozen for that player (it cannot exceed the remaining charge)
 - Selected items are removed or reduced on the tab
-- Player count decreases by 1
+- The player seat is marked settled and leaves the table
+- Remaining table charge is reallocated across the active players
 - Remaining players' view updates automatically
 - Receipt can be printed
-
-**Important:** Settlement amounts are based on the *original* table charge before any previous settlements.
 
 ---
 
@@ -221,14 +226,16 @@ When all players are finished:
 
 1. Click **✓ Checkout** on the table tile
 2. Review the final charges:
-   - Table charge (based on total duration)
-   - All items on the tab
-   - Any previous settlements (shown as deductions)
-3. **Optional:** Click **🖨 Print Receipt** for a paper copy
-4. Click **End Session** to complete
+   - Remaining table charge (previous player settlements already deducted)
+   - All remaining items on the tab
+3. **Optional:** Allocate the total bill between players, adjust individual amounts, or click
+   **Split even** to divide the full total (table time + items) equally
+4. **Optional:** Click **Print Receipt** for a paper copy
+5. Click **Complete checkout** to complete
 
 **What Happens:**
 - Final total is calculated
+- Per-player amounts can be adjusted but cannot exceed the checkout total; this split does not change the total due
 - Session is marked as complete
 - Table becomes available for next session
 - Data is saved for reports
@@ -291,6 +298,14 @@ Example: `http://localhost:3000/table.html?number=5`
 - Running total
 - A drink menu they can order from directly (PIN required) — see [Pending Orders](#pending-orders-player-self-service)
 
+### Public Status Board
+
+The public status board (`/status`, also available from **Public Status** in the header) requires no
+login and updates automatically. It shows:
+- Venue **Open** / **Closed** state based on Admin → Settings → Opening Hours
+- Each table type's hourly rate, so customers know the price in advance
+- Live table availability; while the venue is closed, every table is shown as **Unavailable**
+
 **Auto-Refresh:** The view refreshes automatically (every ~10 seconds, and immediately when you return to the tab), so fulfilled orders and tab changes appear promptly.
 
 ### QR Codes
@@ -309,6 +324,7 @@ Access via menu (☰) → **Admin Panel**
 
 **Manage Table Types:**
 - Add new table types (e.g., "Billiards", "Carom")
+- Choose the icon shown for the type in the dashboard and public views (American, English Pool, Snooker, Carom, Pyramid)
 - Set hourly rates in your currency
 - Set the **VAT rate** applied to that table type's time charges (20%, 10%, or 0% — see [VAT (TVA) Reporting](#vat-tva-reporting--france))
 - Edit or delete existing types
@@ -321,7 +337,7 @@ Access via menu (☰) → **Admin Panel**
 - **Set Maintenance Mode:** Temporarily disable tables; returning a table to service resets its
   usage-since-maintenance counter
 - **Order the types:** use the **↑/↓** buttons on each type to change the order used on the dashboard,
-  the dashboard tabs/flag navigator and the public status board
+  the dashboard tabs/icon navigator and the public status board
 
 **Bulk Operations:**
 - Add multiple tables of same type (1-50 at once)
@@ -382,9 +398,9 @@ Access via menu (☰) → **Settings**
 
 - **Application Name:** Header display name (e.g., "Joe's Pool Hall")
 - **Public Base URL:** Hostname/IP or FQDN used when generating table QR codes (see [QR Codes](#qr-codes)); leave blank to use the address you're currently browsing from
-- **Dashboard layout:** Sections (collapsible groups + flag navigator) or Tabs (one type per tab)
-- **Language:** English, Français, Deutsch, Español or Italiano — changes the interface on this device (also selectable from the header, the player table page and the public status board)
-- **Currency:** $ (USD), € (EUR), or £ (GBP)
+- **Dashboard layout:** Sections (collapsible groups + icon navigator) or Tabs (one type per tab)
+- **Language:** English, Français, Deutsch, Español, Italiano, Nederlands, العربية, Português, 中文, 日本語 or 한국어 — changes the interface on this device (also selectable from the header, the player table page and the public status board)
+- **Currency:** 112 currencies covering countries where the supported languages are spoken, including USD, EUR, GBP, CAD, AUD, NZD, CHF, MXN, BRL, CNY, JPY, KRW, INR, ZAR, AED and many more
 - **Subscriber Discount:** Percentage discount (0-100%)
 - **Audio Cues:** Toggle UI click sounds and the new-order chime
 - **Fiscal / Legal Information:** Legal business name, SIRET, SIREN, TVA intracommunautaire number, registered address, VAT regime, and declaration periodicity — used on the VAT report and for your own records (see [VAT (TVA) Reporting](#vat-tva-reporting--france))
@@ -424,7 +440,7 @@ Access via menu (☰) → **Settings**
    - `COOKIE_SECURE=true` when the app is served over HTTPS
 3. **App settings**
    - **Settings → General → “Payments (POS)” → on**.
-   - Currency must be `€`, `$` or `£` (sent to Stripe as eur/usd/gbp).
+   - The selected currency is mapped to its Stripe currency code (for example `CA$` → `cad`, `¥` → `jpy`).
    - Set the application name and the Fiscal / Legal information (used by reports and your records).
    - Optional: SMTP settings + maintenance alert email for cash-variance alerts.
 4. **Test without buying hardware**

@@ -624,7 +624,7 @@
           "Settings"
         ],
         "summary": "Read settings (public-safe subset when not authenticated)",
-        "description": "Unauthenticated callers receive only app_name, currency, public_base_url, subscriber_discount, dashboard_layout and table_type_order. Authenticated admins get all settings except secrets (`smtp_pass` is never returned).",
+        "description": "Unauthenticated callers receive app_name, currency, public_base_url, subscriber_discount, dashboard_layout, table_type_order, venue_opening_hours, venue_motd, venue_address and venue_phone. Authenticated admins get all settings except secrets (`smtp_pass` is never returned).",
         "security": [],
         "responses": {
           "200": {
@@ -1457,7 +1457,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "playerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Numbered session player seat to settle."
+                  },
+                  "tableSettlementCents": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Optional table-time override, capped by the remaining table charge."
+                  },
+                  "isSubscriber": {
+                    "type": "boolean",
+                    "description": "Legacy fallback used when playerId is omitted."
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "itemId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "quantity": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }

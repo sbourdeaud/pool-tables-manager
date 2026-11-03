@@ -17,8 +17,9 @@ status board.
     `POST /api/public/table/:tableNumber/order`
   - `POST /api/webhooks/stripe` (signature-verified)
 - `GET /api/settings` is public but returns a **public-safe subset** (`app_name`, `currency`,
-  `public_base_url`, `subscriber_discount`, `dashboard_layout`, `table_type_order`). Secrets and the
-  local admin hash are only returned to an authenticated admin (and `smtp_pass` is never returned).
+  `public_base_url`, `subscriber_discount`, `dashboard_layout`, `table_type_order`,
+  `venue_opening_hours`, `venue_motd`, `venue_address`, `venue_phone`). Secrets and the local admin
+  hash are only returned to an authenticated admin (and `smtp_pass` is never returned).
 - Everything else returns `401` without a session: settings updates, table types/tables, sessions and
   tab items, payments/cash shifts/credit notes, reports, closures, backups, admin actions.
 
@@ -35,13 +36,13 @@ Each installation serves an interactive Swagger UI at **`/api-docs`**, backed by
 | Auth | `/api/auth/info`, `/auth/local/login`, `/auth/login`, `/auth/logout` | Session handling |
 | Settings | `/api/settings` | Public-safe read; admin write |
 | Table types & tables | `/api/table-types`, `/api/tables` | Inventory; renumbering returns 409 on duplicates |
-| Sessions | `/api/sessions` | Start/end/checkout/settle/switch, tab items |
+| Sessions | `/api/sessions` | Start/end/checkout/settle/switch, tab items; `settle` accepts `playerId` plus an optional `tableSettlementCents` override |
 | Drinks | `/api/drinks`, `/api/admin/drinks` | Categorised menu |
 | Subscriptions / patrons | `/api/subscriptions`, `/api/patrons` | Monthly memberships |
 | Payments & cash | `/api/payments`, `/api/cash-shifts`, `/api/credit-notes`, `/api/webhooks/stripe` | Optional POS feature |
 | Reports | `/api/reports/…`, `/api/closures` | Financial, VAT/TVA, reconciliation, CSV/PDF |
 | Admin | `/api/admin/…` | SMTP/OIDC tests, clear history, database backup/restore |
-| Public | `/api/public/…` | Player view and status board |
+| Public | `/api/public/…` | Player view and status board; `/api/public/tables` includes table-type icons and hourly rates |
 
 ## Database backup/restore
 

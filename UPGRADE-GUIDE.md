@@ -82,7 +82,7 @@ simply ignores the new nullable column.
 - `prisma migrate status` → 10 migrations, schema up to date; live smoke test of `/api/settings`,
   `/api/drinks`, SPA routes and local login.
 - Frontend: type-check + production build (multi-entry), and a browser regression pass over login,
-  dashboard (sections/tabs, collapse, flag nav, drag order), drinks/menu categories, table
+  dashboard (sections/tabs, collapse, icon nav, drag order), drinks/menu categories, table
   renumbering, checkout/settlement, reports (charts, PDF/Excel/email) and VAT tab.
 
 ---

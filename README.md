@@ -20,21 +20,23 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 ## Features
 
 - **Session Management**: Track active sessions, players and table usage with live timers
-- **Billing System**: Time-based billing (rounded up per hour) with subscriber discounts
+- **Billing System**: Hourly table-time slots split between numbered players, with subscriber discounts, per-player settlement, adjustable shares and split-even checkout
 - **Subscriptions**: Monthly subscriptions with automatic discounts and renewal tracking
 - **Drink Ordering**: Categorised menu (cold / warm / alcoholic / other) that players can order from their phone (PIN-protected); staff fulfil orders from the dashboard queue with an audio notification
 - **QR Codes**: Every active table shows a QR code linking to its player view, with a configurable public hostname
-- **Multiple Dashboard Layouts**: Collapsible sections with a flag navigator, or one table type per tab with drag-to-reorder — configurable in Settings
+- **Multiple Dashboard Layouts**: Collapsible sections with an icon navigator, or one table type per tab with drag-to-reorder — configurable in Settings
 - **Reporting**: Financial reports by day/week/month/quarter/year with charts, PDF/Excel export and email delivery
 - **Database Backups**: one-click export of a consistent, compressed snapshot and transactional restore — Admin → Database Backup
 - **Optional Payments (POS)**: cash and card-terminal payments with split payers and change, payment methods on receipts, cash-shift reconciliation, refunds with **VAT credit notes (avoir)**, day-close reconciliation tied to accounting closures, and per-method CSV export — off by default, enable in Settings
 - **French VAT (TVA) Compliance**: Per-item VAT rates, anti-tamper audit trail, sequential receipts, a VAT report with CSV ledger export, and period closures — see [VAT-COMPLIANCE.md](VAT-COMPLIANCE.md)
 - **Authentication**: OIDC integration or local admin authentication (full-page login)
-- **Multi-language UI**: English, French, German, Spanish and Italian for the staff app, player table view and public status board (menu item names support English/French translations)
+- **Multi-language UI**: English, French, German, Spanish, Italian, Dutch, Arabic, Portuguese, Chinese, Japanese and Korean for the staff app, player table view and public status board (menu item names support English/French translations)
+- **Public status board**: Venue open/closed state from opening hours, hourly rate per table type, and tables shown as unavailable while the venue is closed
+- **Flexible currencies**: 112 currencies covering countries where the supported languages are spoken, with Stripe currency mapping
 
 ## Screenshots
 
-**Dashboard** — live sessions with timers, tabs, per-table QR codes, a flag navigator and collapsible groups:
+**Dashboard** — live sessions with timers, tabs, per-table QR codes, an icon navigator and collapsible groups:
 
 ![Dashboard with active sessions and collapsible type groups](docs/screenshots/dashboard.png)
 
@@ -58,7 +60,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![Drink menu management with categories](docs/screenshots/drinks-menu.png)
 
-**Table inventory** — inline renumbering, maintenance mode and drag-ordered type groups:
+**Table inventory** — selectable table-type icons, inline renumbering, maintenance mode and ordered type groups:
 
 ![Table inventory](docs/screenshots/table-inventory.png)
 
@@ -74,7 +76,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![VAT report](docs/screenshots/vat-report.png)
 
-**Public table status board** (`/status`) — no login required, updates automatically:
+**Public table status board** (`/status`) — open/closed state, hourly rates per table type and live availability:
 
 ![Public status board](docs/screenshots/public-status.png)
 
@@ -82,7 +84,7 @@ ordering and reporting — with a modern React UI and a French VAT (TVA) complia
 
 ![Player table view](docs/screenshots/table-view.png)
 
-**Payments (POS, optional)** — split cash/card payments at checkout, card-terminal flow and cash-shift reconciliation:
+**Payments (POS, optional)** — per-player amount splits, split-even, cash/card payments, card-terminal flow and cash-shift reconciliation:
 
 ![Checkout with split cash/card payments](docs/screenshots/pos-checkout.png)
 
