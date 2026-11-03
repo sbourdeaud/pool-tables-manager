@@ -37,6 +37,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
   const [tender, setTender] = React.useState('')
   const [cardConfig, setCardConfig] = React.useState<PaymentConfig | null>(null)
   const [cardPayment, setCardPayment] = React.useState<{ paymentId: string; status: string } | null>(null)
+  const [playerAmounts, setPlayerAmounts] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
     if (!open || !sessionId) return
@@ -46,6 +47,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
     setCardPayment(null)
     setDiscountValue('0')
     setDiscountType('%')
+    setPlayerAmounts({})
     setLoading(true)
     void apiPaymentConfig().then((r) => setCardConfig(r.data || null))
     void apiSessionDetail(sessionId).then((r) => {
@@ -56,13 +58,52 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
 
   const tableCharge = detail?.tableCharge || 0
   const items = detail?.items || []
-  const subtotal = tableCharge + items.reduce((sum, i) => sum + (i.totalCents || 0), 0)
+  const itemsTotal = items.reduce((sum, i) => sum + (i.totalCents || 0), 0)
+  const subtotal = tableCharge + itemsTotal
   const rawDiscount = Number(discountValue) || 0
   const discountCents = Math.min(subtotal, Math.round(discountType === '%' ? (subtotal * rawDiscount) / 100 : rawDiscount * 100))
   const total = Math.max(0, subtotal - discountCents)
-  const perPlayer = numberOfPlayers > 1 ? total / numberOfPlayers : null
   const paidCents = payments.reduce((sum, p) => sum + p.amountCents, 0)
   const remainingCents = Math.max(0, total - paidCents)
+  const playerRows = React.useMemo(() => {
+    const active = (detail?.players || []).filter((player) => player.status !== 'settled' && !player.leftAt)
+    if (active.length > 0) return active
+    return Array.from({ length: Math.max(0, Math.round(numberOfPlayers)) }, (_, index) => ({
+      id: `seat-${index + 1}`,
+      playerNumber: index + 1,
+      isSubscriber: false,
+      shareCents: 0,
+    }))
+  }, [detail, numberOfPlayers])
+
+  // Rebuild the default allocation whenever the bill total changes (for example
+  // after applying a discount). Manual edits are preserved while the total is stable.
+  React.useEffect(() => {
+    if (!detail || playerRows.length === 0) {
+      setPlayerAmounts({})
+      return
+    }
+    const hasSeatShares = (detail.players || []).length > 0
+    const itemShares = splitCents(itemsTotal, playerRows.length)
+    const weights = hasSeatShares
+      ? playerRows.map((player, index) => (player.shareCents || 0) + itemShares[index])
+      : playerRows.map(() => 0)
+    const amounts = hasSeatShares ? allocateByWeights(weights, total) : splitCents(total, playerRows.length)
+    setPlayerAmounts(Object.fromEntries(playerRows.map((player, index) => [player.id, (amounts[index] / 100).toFixed(2)])))
+  }, [detail, total, itemsTotal, numberOfPlayers])
+
+  const playerAmountsTotal = playerRows.reduce((sum, player) => {
+    const amount = Math.max(0, Math.round((parseFloat(playerAmounts[player.id] || '0') || 0) * 100))
+    return sum + amount
+  }, 0)
+  const playerAmountsOverLimit = playerRows.length > 0 && playerAmountsTotal > total
+  const playerAmountsUnassigned = Math.max(0, total - playerAmountsTotal)
+
+  const splitEven = () => {
+    if (playerRows.length === 0) return
+    const amounts = splitCents(total, playerRows.length)
+    setPlayerAmounts(Object.fromEntries(playerRows.map((player, index) => [player.id, (amounts[index] / 100).toFixed(2)])))
+  }
 
   const addCardTerminalPayment = async () => {
     if (!sessionId || remainingCents <= 0 || cardPayment) return
@@ -264,12 +305,47 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
                   <span>{t('TOTAL (TTC)')}</span>
                   <span>{money(total, currency)}</span>
                 </div>
-                {perPlayer != null && (
-                  <p className="pt-1 text-center text-sm text-muted-foreground">
-                    {t('{count} players · {amount} per person', { count: numberOfPlayers, amount: money(perPlayer, currency) })}
-                  </p>
-                )}
               </div>
+
+              {playerRows.length > 0 && (
+                <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>{t('Players')}</Label>
+                    {playerRows.length > 1 && (
+                      <Button size="sm" variant="outline" onClick={splitEven} disabled={payments.length > 0}>
+                        {t('Split even')}
+                      </Button>
+                    )}
+                  </div>
+                  {playerRows.map((player) => (
+                    <div key={player.id} className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 text-sm">
+                        {t('Player {number}', { number: player.playerNumber })}
+                        {player.isSubscriber && (
+                          <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                            {t('Subscriber')}
+                          </span>
+                        )}
+                      </span>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={(total / 100).toFixed(2)}
+                        className="w-28 text-right"
+                        value={playerAmounts[player.id] ?? ''}
+                        disabled={payments.length > 0}
+                        onChange={(event) => setPlayerAmounts((current) => ({ ...current, [player.id]: event.target.value }))}
+                      />
+                    </div>
+                  ))}
+                  {playerAmountsOverLimit ? (
+                    <p className="text-xs text-destructive">{t('Player amounts cannot exceed the total due.')}</p>
+                  ) : playerAmountsUnassigned > 0 ? (
+                    <p className="text-xs text-muted-foreground">{t('Unassigned: {amount}', { amount: money(playerAmountsUnassigned, currency) })}</p>
+                  ) : null}
+                </div>
+              )}
 
               {posEnabled && (
                 <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
@@ -381,7 +457,7 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
               </Button>
               <ConfirmDialog
                 trigger={
-                  <Button disabled={busy || (posEnabled && remainingCents > 0)}>
+                  <Button disabled={busy || playerAmountsOverLimit || (posEnabled && remainingCents > 0)}>
                     {busy ? t('Processing…') : t('Complete checkout')}
                   </Button>
                 }
@@ -401,6 +477,32 @@ export function CheckoutDialog({ open, sessionId, numberOfPlayers, onClose, onDo
       </DialogContent>
     </Dialog>
   )
+}
+
+function splitCents(totalCents: number, count: number): number[] {
+  if (count <= 0) return []
+  const safeTotal = Math.max(0, Math.round(totalCents))
+  const base = Math.floor(safeTotal / count)
+  let remainder = safeTotal - base * count
+  return Array.from({ length: count }, () => {
+    const value = base + (remainder > 0 ? 1 : 0)
+    if (remainder > 0) remainder -= 1
+    return value
+  })
+}
+
+function allocateByWeights(weights: number[], totalCents: number): number[] {
+  if (weights.length === 0) return []
+  const safeTotal = Math.max(0, Math.round(totalCents))
+  const weightTotal = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0)
+  if (weightTotal <= 0) return splitCents(safeTotal, weights.length)
+  let allocated = 0
+  return weights.map((weight, index) => {
+    if (index === weights.length - 1) return safeTotal - allocated
+    const share = Math.round((safeTotal * Math.max(0, weight)) / weightTotal)
+    allocated += share
+    return share
+  })
 }
 
 function LineRow({ label, sub, value }: { label: string; sub?: string; value: string }) {

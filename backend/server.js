@@ -1913,6 +1913,7 @@ function getNonSubscriberChargeStart(startedAt, startMeta){
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const SLOT_JOIN_CUTOFF_MS = 45 * 60 * 1000;
 
 function timeValueMs(value){
   if (!value) return NaN;
@@ -1935,9 +1936,18 @@ function activeAtMs(player, atMs, asOfMs){
   return sessionPlayerLeftAtMs(player, asOfMs) > atMs;
 }
 
+// A seat can join a running hour slot until the start of its final quarter.
+// Joining later means the seat waits for the next slot.
+function qualifiesForSlot(player, slotStart, asOfMs){
+  const joinedAt = sessionPlayerJoinedAtMs(player);
+  if (!Number.isFinite(joinedAt)) return false;
+  if (joinedAt > slotStart + SLOT_JOIN_CUTOFF_MS) return false;
+  return sessionPlayerLeftAtMs(player, asOfMs) > slotStart;
+}
+
 // Table time is billed in whole hour slots anchored at the first non-subscriber
-// join. A slot is only charged when at least one non-subscriber is active at the
-// slot start, so seats that join after a slot has begun wait for the next slot.
+// join. Seats that join within the first three quarters of a running slot share
+// that slot; seats joining in the final quarter wait for the next slot.
 function mergeNonSubscriberPeriods(players, asOfMs){
   const intervals = players
     .filter((player) => !player.isSubscriber)
@@ -1953,6 +1963,28 @@ function mergeNonSubscriberPeriods(players, asOfMs){
     start: intervals[0].start,
     end: intervals.reduce((latest, interval) => Math.max(latest, interval.end), intervals[0].end),
   }];
+}
+
+function allocateCentsByWeights(weights, totalCents){
+  if (!weights.length) return [];
+  const safeTotal = Math.max(0, Math.round(totalCents));
+  const totalWeight = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
+  if (totalWeight <= 0) {
+    const base = Math.floor(safeTotal / weights.length);
+    let remainder = safeTotal - base * weights.length;
+    return weights.map(() => {
+      const value = base + (remainder > 0 ? 1 : 0);
+      if (remainder > 0) remainder -= 1;
+      return value;
+    });
+  }
+  let allocated = 0;
+  return weights.map((weight, index) => {
+    if (index === weights.length - 1) return safeTotal - allocated;
+    const share = Math.round((safeTotal * Math.max(0, weight)) / totalWeight);
+    allocated += share;
+    return share;
+  });
 }
 
 function calculateHourlyPlayerBilling({ players, baseHourlyCents, subscriberDiscountPercent, asOf }){
@@ -1971,10 +2003,10 @@ function calculateHourlyPlayerBilling({ players, baseHourlyCents, subscriberDisc
       const slotStart = period.start + slotIndex * HOUR_MS;
       if (slotStart >= period.end) break;
       const eligibleNonSubscribers = players
-        .filter((player) => !player.isSubscriber && activeAtMs(player, slotStart, asOfMs))
+        .filter((player) => !player.isSubscriber && qualifiesForSlot(player, slotStart, asOfMs))
         .sort((a, b) => (a.playerNumber ?? 0) - (b.playerNumber ?? 0));
       if (!eligibleNonSubscribers.length) continue;
-      const subscriberPresent = players.some((player) => player.isSubscriber && activeAtMs(player, slotStart, asOfMs));
+      const subscriberPresent = players.some((player) => player.isSubscriber && qualifiesForSlot(player, slotStart, asOfMs));
       const slotCharge = subscriberPresent
         ? Math.round(baseHourlyCents * (1 - discount / 100))
         : baseHourlyCents;
@@ -2054,10 +2086,16 @@ async function getTableChargeForSession(session, asOf = new Date()){
       asOf,
     });
     const activePlayers = activeSessionPlayers(players);
-    const playerShares = activePlayers.map((player) => mapSessionPlayer(player, billing.shares.get(player.id) || 0));
-    const tableCharge = playerShares.reduce((sum, player) => sum + player.shareCents, 0);
+    const totalTimeCharge = players.reduce((sum, player) => sum + (billing.shares.get(player.id) || 0), 0);
+    const settledTotal = players
+      .filter((player) => player.status === 'settled')
+      .reduce((sum, player) => sum + (Number(player.settledTableCents) || 0), 0);
+    const remainingTableCharge = Math.max(0, totalTimeCharge - settledTotal);
+    const activeWeights = activePlayers.map((player) => billing.shares.get(player.id) || 0);
+    const activeAmounts = allocateCentsByWeights(activeWeights, remainingTableCharge);
+    const playerShares = activePlayers.map((player, index) => mapSessionPlayer(player, activeAmounts[index] || 0));
     return {
-      tableCharge,
+      tableCharge: remainingTableCharge,
       hoursCharged: billing.billableSlotCount,
       vatRatePercent: table.vat_rate_percent != null ? table.vat_rate_percent : 20,
       players,
@@ -2868,9 +2906,14 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 
       const chargeInfo = await getTableChargeForSession(sessionRow);
       const calculatedShare = chargeInfo.playerShares?.find((share) => share.id === playerId)?.shareCents || 0;
-      // tableSettlementCents remains available as an explicit staff override.
       if (typeof tableSettlementCents === 'undefined') {
         effectiveTableSettlementCents = calculatedShare;
+      } else {
+        const requested = Math.round(Number(tableSettlementCents));
+        if (!Number.isFinite(requested) || requested < 0 || requested > (chargeInfo.tableCharge || 0)) {
+          return res.status(400).json({ error: 'invalid_table_settlement' });
+        }
+        effectiveTableSettlementCents = requested;
       }
       settledPlayer = player;
     }

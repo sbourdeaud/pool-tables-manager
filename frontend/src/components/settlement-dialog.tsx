@@ -31,6 +31,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
   const [tableOption, setTableOption] = React.useState<'none' | 'share' | 'full'>('none')
   const [isSubscriber, setIsSubscriber] = React.useState(false)
   const [quantities, setQuantities] = React.useState<Record<string, number>>({})
+  const [tableTimeAmount, setTableTimeAmount] = React.useState('')
   const [busy, setBusy] = React.useState(false)
 
   React.useEffect(() => {
@@ -39,6 +40,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
     setTableOption('none')
     setIsSubscriber(false)
     setQuantities({})
+    setTableTimeAmount('')
     void apiSessionDetail(sessionId).then((r) => setDetail(r.data || null))
   }, [open, sessionId])
 
@@ -49,9 +51,23 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
   const tableCharge = detail?.tableCharge || 0
   const subscriberCount = detail?.session?.subscriberCount ?? 0
   const nonSubscriberCount = Math.max(1, numberOfPlayers - subscriberCount)
+  const nonSubscriberSeats = playerSeats.filter((player) => !player.isSubscriber)
+  const splitEvenTableCents = nonSubscriberSeats.length
+    ? Math.round(tableCharge / nonSubscriberSeats.length)
+    : 0
+  const selectedTableCents = Math.max(0, Math.round((parseFloat(tableTimeAmount || '0') || 0) * 100))
   const legacyTableSettlement =
     tableOption === 'none' ? 0 : tableOption === 'full' ? tableCharge : Math.round(tableCharge / nonSubscriberCount)
-  const tableSettlement = useSeatLedger ? (selectedSeat?.shareCents || 0) : legacyTableSettlement
+  const tableSettlement = useSeatLedger ? selectedTableCents : legacyTableSettlement
+  const tableSettlementOverLimit = useSeatLedger && tableSettlement > tableCharge
+
+  React.useEffect(() => {
+    if (!selectedSeat) {
+      setTableTimeAmount('')
+      return
+    }
+    setTableTimeAmount(((selectedSeat.shareCents || 0) / 100).toFixed(2))
+  }, [selectedSeat?.id, selectedSeat?.shareCents])
 
   const selectedItems = items
     .filter((i) => (quantities[i.id] || 0) > 0)
@@ -64,9 +80,11 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
       toast({ title: t('Select a player'), variant: 'error' })
       return
     }
+    if (tableSettlementOverLimit) return
     setBusy(true)
     const result = await apiSessionSettle(sessionId, {
       playerId: selectedSeat?.id,
+      tableSettlementCents: tableSettlement,
       items: selectedItems,
       isSubscriber: selectedSeat ? selectedSeat.isSubscriber : isSubscriber,
     })
@@ -122,6 +140,37 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
                   <span className="font-semibold tabular-nums">{money(player.shareCents || 0, currency)}</span>
                 </label>
               ))}
+              {selectedSeat && (
+                <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>{t('Table Time')}</Label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedSeat.isSubscriber || nonSubscriberSeats.length === 0}
+                      onClick={() => setTableTimeAmount((splitEvenTableCents / 100).toFixed(2))}
+                    >
+                      {t('Split even')} ({money(splitEvenTableCents, currency)})
+                    </Button>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    max={(tableCharge / 100).toFixed(2)}
+                    value={tableTimeAmount}
+                    disabled={selectedSeat.isSubscriber}
+                    onChange={(event) => setTableTimeAmount(event.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('Remaining table charge: {amount}', { amount: money(tableCharge, currency) })}
+                  </p>
+                  {tableSettlementOverLimit && (
+                    <p className="text-xs text-destructive">{t('Table time cannot exceed the remaining table charge.')}</p>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -199,7 +248,7 @@ export function SettlementDialog({ open, sessionId, numberOfPlayers, onClose, on
             <Button variant="outline" onClick={onClose}>
               {t('Cancel')}
             </Button>
-            <Button disabled={busy || (useSeatLedger && !selectedSeat)} onClick={() => void settle()}>
+            <Button disabled={busy || tableSettlementOverLimit || (useSeatLedger && !selectedSeat)} onClick={() => void settle()}>
               <UserMinus /> {busy ? t('Settling…') : t('Settle player')}
             </Button>
           </div>
