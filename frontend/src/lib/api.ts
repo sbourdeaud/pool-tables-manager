@@ -793,6 +793,7 @@ export interface PublicTable {
   lookingForPlayersUpTo?: boolean
   typeName?: string
   typeIcon?: string | null
+  typeHourlyRateCents?: number | null
 }
 
 export interface PublicTableDetail {

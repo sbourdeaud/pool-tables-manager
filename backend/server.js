@@ -3352,7 +3352,13 @@ app.get('/api/public/tables', async (req, res) => {
       const type = typeById[tb.tableTypeId];
       const typeName = type ? (type.name_en || type.name_fr || null) : null;
       const status = tb.status === 'maintenance' ? 'maintenance' : (session ? 'occupied' : 'available');
-      const entry = { number: tb.number, typeName, typeIcon: type ? normalizeTableTypeIcon(type.icon, typeName) : null, status };
+      const entry = {
+        number: tb.number,
+        typeName,
+        typeIcon: type ? normalizeTableTypeIcon(type.icon, typeName) : null,
+        typeHourlyRateCents: type && type.base_hourly_cents != null ? Number(type.base_hourly_cents) : null,
+        status,
+      };
       if (status === 'occupied') {
         entry.numberOfPlayers = session.numberOfPlayers || 1;
         entry.startedAt = session.startedAt;

@@ -111,8 +111,8 @@ describe('Public table status board endpoint', () => {
       { id: 'tbl-3', tableTypeId: 'tt-2', number: 3, status: 'maintenance' }
     ]);
     prisma.tableType.findMany.mockResolvedValue([
-      { id: 'tt-1', name_en: 'Pool' },
-      { id: 'tt-2', name_en: 'Snooker' }
+      { id: 'tt-1', name_en: 'Pool', base_hourly_cents: 2500 },
+      { id: 'tt-2', name_en: 'Snooker', base_hourly_cents: 4000 }
     ]);
     const started = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     prisma.session.findMany.mockResolvedValue([
@@ -122,9 +122,9 @@ describe('Public table status board endpoint', () => {
     const res = await agent.get('/api/public/tables');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
-      { number: 1, typeName: 'Pool', typeIcon: 'english_pool', status: 'available' },
-      { number: 2, typeName: 'Pool', typeIcon: 'english_pool', status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
-      { number: 3, typeName: 'Snooker', typeIcon: 'snooker', status: 'maintenance' }
+      { number: 1, typeName: 'Pool', typeIcon: 'english_pool', typeHourlyRateCents: 2500, status: 'available' },
+      { number: 2, typeName: 'Pool', typeIcon: 'english_pool', typeHourlyRateCents: 2500, status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
+      { number: 3, typeName: 'Snooker', typeIcon: 'snooker', typeHourlyRateCents: 4000, status: 'maintenance' }
     ]);
   });
 

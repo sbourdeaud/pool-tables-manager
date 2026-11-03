@@ -1,8 +1,9 @@
 import * as React from 'react'
 import { Megaphone, Moon, Sun } from 'lucide-react'
 import { apiGetSettings, apiPublicTables, apiPublicWaitlistSummary, type PublicTable, type PublicWaitlistSummary, type SettingsMap } from '@/lib/api'
-import { elapsedDuration } from '@/lib/format'
+import { elapsedDuration, money } from '@/lib/format'
 import { formatWaitTime } from '@/lib/waitlist-format'
+import { isVenueOpenAt, parseWeeklyOpeningHours } from '@/lib/opening-hours'
 import { lookingForPlayersLabel } from '@/lib/player-search'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
@@ -95,6 +96,9 @@ export function StatusApp() {
     return [...map.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
   }, [tables, typeOrder])
   const motd = publicSettings?.venue_motd?.trim()
+  const currency = publicSettings?.currency || '$'
+  const schedule = React.useMemo(() => parseWeeklyOpeningHours(publicSettings?.venue_opening_hours), [publicSettings?.venue_opening_hours])
+  const venueOpen = React.useMemo(() => (schedule ? isVenueOpenAt(schedule, new Date(now)) : null), [schedule, now])
   const waitlistByType = React.useMemo(() => {
     if (!waitlistSummary || !Array.isArray(waitlistSummary.byTableType)) return []
     const order = new Map(typeOrder.map((name, index) => [name, index]))
@@ -117,6 +121,16 @@ export function StatusApp() {
           <div className="flex items-center gap-2">
             <PublicInfoMenu settings={publicSettings} settingsLoading={settingsLoading} settingsError={settingsError} />
             <LanguageSelect className="rounded-lg border bg-card shadow-sm" />
+            {venueOpen !== null && (
+              <span
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-semibold',
+                  venueOpen ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-600',
+                )}
+              >
+                {venueOpen ? t('Open') : t('Closed')}
+              </span>
+            )}
             <span
               className={cn(
                 'rounded-full px-3 py-1 text-xs font-semibold',
@@ -193,6 +207,9 @@ export function StatusApp() {
                 </span>
                 <span className="text-sm text-muted-foreground">
                   {groupTables.length} {groupTables.length === 1 ? t('table') : t('tables')}
+                  {groupTables[0]?.typeHourlyRateCents != null && (
+                    <> · {t('{amount}/h', { amount: money(groupTables[0].typeHourlyRateCents, currency) })}</>
+                  )}
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -200,7 +217,7 @@ export function StatusApp() {
                   .slice()
                   .sort((a, b) => a.number - b.number)
                   .map((tb) => {
-                    const status = tb.status || 'available'
+                    const status = venueOpen === false ? 'unavailable' : (tb.status || 'available')
                     return (
                       <div
                         key={tb.number}
@@ -209,6 +226,7 @@ export function StatusApp() {
                           status === 'occupied' && 'border-l-red-500/70 bg-gradient-to-b from-red-500/15 to-red-600/10',
                           status === 'maintenance' && 'border-l-gray-400/70 bg-gradient-to-b from-gray-500/15 to-gray-600/10',
                           status === 'available' && 'border-l-emerald-500/70 bg-gradient-to-b from-emerald-500/15 to-emerald-600/10',
+                          status === 'unavailable' && 'border-l-rose-500/70 bg-gradient-to-b from-rose-500/15 to-rose-600/10',
                         )}
                       >
                         <div className="flex items-baseline justify-between gap-2">

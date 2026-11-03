@@ -36,3 +36,44 @@ export function localizedWeekday(index: number, language: string) {
   const date = new Date(Date.UTC(2024, 0, index + 1))
   return new Intl.DateTimeFormat(language, { weekday: 'long', timeZone: 'UTC' }).format(date)
 }
+
+function timeToMinutes(value: string): number | null {
+  if (!VALID_TIME.test(value)) return null
+  const [hours, minutes] = value.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+/**
+ * Returns whether the venue is open at the given local time.
+ * Overnight ranges (e.g. 18:00–02:00) are supported by also checking the
+ * previous weekday's opening range after midnight.
+ */
+export function isVenueOpenAt(schedule: WeeklyOpeningHours | null | undefined, now = new Date()): boolean | null {
+  if (!schedule || schedule.length !== WEEKDAYS.length) return null
+
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const mondayBasedDay = (now.getDay() + 6) % 7
+  const today = schedule[mondayBasedDay]
+  const previousDay = schedule[(mondayBasedDay + 6) % 7]
+
+  const isWithin = (day: OpeningHoursDay | undefined, minutes: number) => {
+    if (!day?.isOpen) return false
+    const opensAt = timeToMinutes(day.opensAt)
+    const closesAt = timeToMinutes(day.closesAt)
+    if (opensAt === null || closesAt === null || opensAt === closesAt) return false
+    if (opensAt < closesAt) return minutes >= opensAt && minutes < closesAt
+    return minutes >= opensAt
+  }
+
+  if (isWithin(today, nowMinutes)) return true
+
+  if (previousDay?.isOpen) {
+    const opensAt = timeToMinutes(previousDay.opensAt)
+    const closesAt = timeToMinutes(previousDay.closesAt)
+    if (opensAt !== null && closesAt !== null && opensAt > closesAt && nowMinutes < closesAt) {
+      return true
+    }
+  }
+
+  return false
+}
