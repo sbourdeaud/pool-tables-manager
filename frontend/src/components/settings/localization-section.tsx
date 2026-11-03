@@ -3,18 +3,18 @@ import { SectionCard } from '@/components/settings/section-card'
 import { SettingField, Field } from '@/components/settings/field'
 import { useSettings } from '@/components/settings/settings-context'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { LanguageSelect, useI18n } from '@/lib/i18n'
+import { LANGUAGES, LanguageSelect, useI18n } from '@/lib/i18n'
+import { currencyOptionsForLanguages } from '@/lib/currencies'
 
-const CURRENCIES = [
-  { value: '$', label: '$ (USD)' },
-  { value: '€', label: '€ (EUR)' },
-  { value: '£', label: '£ (GBP)' },
-]
+const CURRENCIES = currencyOptionsForLanguages(LANGUAGES.map((language) => language.value))
 
 export function LocalizationSection({ className }: { className?: string }) {
   const { settings, save } = useSettings()
   const { t } = useI18n()
   const currency = settings.currency || '$'
+  const options = CURRENCIES.some((option) => option.value === currency)
+    ? CURRENCIES
+    : [{ value: currency, label: currency, code: currency }, ...CURRENCIES]
 
   const handleCurrency = (value: string) => {
     void save('currency', value).then((ok) => {
@@ -38,7 +38,7 @@ export function LocalizationSection({ className }: { className?: string }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {CURRENCIES.map((c) => (
+            {options.map((c) => (
               <SelectItem key={c.value} value={c.value}>
                 {c.label}
               </SelectItem>
