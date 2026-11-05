@@ -277,3 +277,12 @@ model VenueEvent {
 
   @@index([eventDate])
 }
+
+model UserSession {
+  sid    String   @id @db.VarChar
+  sess   Json     @db.Json
+  expire DateTime @db.Timestamp(6)
+
+  @@index([expire], map: "IDX_user_sessions_expire")
+  @@map("user_sessions")
+}

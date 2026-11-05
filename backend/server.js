@@ -14,6 +14,8 @@ const { createBackupService } = require('./src/backup');
 const { estimateWaitlistEntries } = require('./src/waitlist-estimates');
 
 const app = express();
+const TRUST_PROXY = process.env.TRUST_PROXY ?? '1';
+app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY === 'true' ? true : TRUST_PROXY === 'false' ? false : TRUST_PROXY);
 app.use(cors());
 // The Stripe webhook needs the raw body for signature verification; every other
 // request gets the usual JSON parser.
@@ -44,7 +46,16 @@ app.use(['/auth/login', '/auth/callback', '/auth/local/login', '/api/auth/local-
 
 // Session configuration
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev_secret_change_me';
+const PgSessionStore = require('connect-pg-simple')(session);
+const sessionStore = process.env.NODE_ENV === 'test' || !process.env.DATABASE_URL
+  ? undefined
+  : new PgSessionStore({
+    conString: process.env.DATABASE_URL,
+    tableName: 'user_sessions',
+    pruneSessionInterval: 15 * 60
+  });
 app.use(session({
+  store: sessionStore,
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
