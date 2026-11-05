@@ -26,7 +26,7 @@ export function SecuritySection({ className }: { className?: string }) {
       description={t('Authentication for admin pages and account recovery')}
     >
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <h3 className="text-sm font-bold">{t('OpenID Connect (OIDC)')}</h3>
           <SwitchRow
             label={t('Enable OIDC (admin pages)')}
@@ -57,12 +57,12 @@ export function SecuritySection({ className }: { className?: string }) {
           )}
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <h3 className="text-sm font-bold">{t('Local Admin (Recovery)')}</h3>
           {localAdminConfigured ? <RotatePasswordForm onRotated={refresh} /> : <CreateAdminForm onCreated={refresh} />}
           {localAdminConfigured && (
             <ConfirmDialog
-              trigger={<Button variant="outline" className="text-destructive">{t('Clear Local Admin (allow re-bootstrap)')}</Button>}
+              trigger={<Button variant="outline" className="h-auto w-full whitespace-normal py-2 text-destructive">{t('Clear Local Admin (allow re-bootstrap)')}</Button>}
               title={t('Clear local admin password?')}
               description={t('This removes the local admin password and allows the setup flow to run again. You will need to configure a password before admin access works.')}
               confirmLabel={t('Clear local admin')}
@@ -113,12 +113,10 @@ function RotatePasswordForm({ onRotated }: { onRotated: () => Promise<void> }) {
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <Field label={t('Current password')}>
-            <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-          </Field>
-        </div>
+      <div className="grid gap-4">
+        <Field label={t('Current password')}>
+          <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        </Field>
         <Field label={t('New password')}>
           <Input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
@@ -168,7 +166,7 @@ function CreateAdminForm({ onCreated }: { onCreated: () => Promise<void> }) {
       <p className="text-[13px] leading-relaxed text-muted-foreground">
         {t('No local admin is configured. You can create one here (only available if OIDC is disabled).')}
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4">
         <Field label={t('New admin password')}>
           <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>

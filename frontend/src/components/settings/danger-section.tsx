@@ -55,7 +55,9 @@ export function DangerSection({ className }: { className?: string }) {
     >
       <AlertDialog open={open} onOpenChange={handleOpenChange}>
         <AlertDialogTrigger asChild>
-          <Button variant="destructive">{t('Clear All Session History')}</Button>
+          <Button variant="destructive" className="h-auto w-full whitespace-normal py-2">
+            {t('Clear All Session History')}
+          </Button>
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
