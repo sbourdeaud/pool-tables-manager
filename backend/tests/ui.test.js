@@ -9,7 +9,7 @@ const app = require('../server');
 
 function swaggerConfig(fetch = jest.fn()) {
   const html = fs.readFileSync(path.join(__dirname, '../public/api-docs.html'), 'utf8');
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const script = html.match(/<script>([\s\S]*?)<\/script>/i)[1];
   const window = { location: new URL('https://pool.example/api-docs') };
   vm.runInNewContext(script, { window, URL, fetch, SwaggerUIBundle: config => config });
   return window.ui;
