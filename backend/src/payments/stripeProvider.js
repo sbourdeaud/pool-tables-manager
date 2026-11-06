@@ -239,6 +239,32 @@ function mapIntentStatus(status) {
   }
 }
 
+function cardIntentParameters({ amountCents, currency, reference }) {
+  return {
+    amount: amountCents,
+    currency: toStripeCurrency(currency),
+    payment_method_types: ['card_present'],
+    capture_method: 'automatic',
+    metadata: reference ? { reference } : undefined,
+  };
+}
+
+function definitiveRejection(err) {
+  const types = { StripeInvalidRequestError: [400, 404], StripeAuthenticationError: [401], StripePermissionError: [403] };
+  return Boolean(types[err?.type]?.includes(err.statusCode) && !err.payment_intent && !err.raw?.payment_intent && err.code !== 'idempotency_key_in_use' && err.headers?.['stripe-should-retry'] !== 'true');
+}
+
+function mapRefund(refund) {
+  if(typeof refund?.id !== 'string' || !refund.id || !Number.isSafeInteger(refund.amount) || refund.amount <= 0 || !refund.payment_intent) throw new Error('invalid_refund_response');
+  return {
+    providerRefundRef: refund.id,
+    status: refund.status === 'succeeded' ? 'refunded' : ['failed', 'canceled'].includes(refund.status) ? 'failed' : 'pending',
+    amountCents: refund.amount,
+    providerRef: typeof refund.payment_intent === 'string' ? refund.payment_intent : refund.payment_intent?.id,
+    reference: refund.metadata?.reference,
+  };
+}
+
 function createStripeProvider(secretKey) {
   // Required lazily so the SDK is only loaded when actually configured.
   const Stripe = require('stripe');
@@ -253,21 +279,47 @@ function createStripeProvider(secretKey) {
       if (!readerId) {
         const err = new Error('reader_not_configured');
         err.code = 'reader_not_configured';
+        err.noRemoteObject = true;
         throw err;
       }
-      const intent = await stripe.paymentIntents.create(
-        {
-          amount: amountCents,
-          currency: toStripeCurrency(currency),
-          payment_method_types: ['card_present'],
-          capture_method: 'automatic',
-          metadata: reference ? { reference } : undefined,
-        },
-        reference ? { idempotencyKey: reference } : undefined,
-      );
+      let intent;
+      try {
+        intent = await stripe.paymentIntents.create(
+          cardIntentParameters({ amountCents, currency, reference }),
+          { ...(reference ? { idempotencyKey: reference } : {}), maxNetworkRetries: 0 },
+        );
+      } catch (err) {
+        err.noRemoteObject = definitiveRejection(err);
+        if (err.payment_intent?.id || err.raw?.payment_intent?.id) err.providerRef = err.payment_intent?.id || err.raw.payment_intent.id;
+        throw err;
+      }
       // Server-driven: ask the reader to collect the card for this intent.
-      await stripe.terminal.readers.processPaymentIntent(readerId, intent.id);
+      try {
+        await stripe.terminal.readers.processPaymentIntent(readerId, intent.id);
+      } catch (cause) {
+        const err = new Error('reader_processing_failed', { cause });
+        err.code = cause?.code || 'reader_processing_failed';
+        err.providerRef = intent.id;
+        throw err;
+      }
       return { providerRef: intent.id, status: mapIntentStatus(intent.status) };
+    },
+
+    async reconcileCardPayment({ amountCents, currency, reference, createdAt, providerRef }) {
+      if(!reference) throw new Error('payment_reconciliation_required');
+      if(!providerRef) {
+        const startedAt = new Date(createdAt).getTime();
+        if(!Number.isFinite(startedAt) || startedAt > Date.now() || Date.now() - startedAt >= 23 * 60 * 60 * 1000) throw new Error('payment_reconciliation_required');
+        const intent = await stripe.paymentIntents.create(
+          cardIntentParameters({ amountCents, currency, reference }),
+          { idempotencyKey: reference, maxNetworkRetries: 0 },
+        );
+        providerRef = intent?.id;
+      }
+      if(typeof providerRef !== 'string' || !providerRef) throw new Error('payment_reconciliation_required');
+      const intent = await stripe.paymentIntents.retrieve(providerRef);
+      if(intent.id !== providerRef || intent.amount !== amountCents || intent.currency !== toStripeCurrency(currency) || intent.metadata?.reference !== reference || mapIntentStatus(intent.status) === 'failed') throw new Error('payment_reconciliation_required');
+      return { providerRef, status: mapIntentStatus(intent.status) };
     },
 
     async getStatus(providerRef) {
@@ -291,9 +343,39 @@ function createStripeProvider(secretKey) {
       }
     },
 
-    async refund({ providerRef, amountCents }) {
-      await stripe.refunds.create({ payment_intent: providerRef, amount: amountCents });
-      return { status: 'refunded' };
+    async getRefund({ providerRef, providerRefundRef, reference, amountCents }) {
+      try {
+        if (providerRefundRef) return mapRefund(await stripe.refunds.retrieve(providerRefundRef));
+        for await (const refund of stripe.refunds.list({ payment_intent: providerRef, limit: 100 })) {
+          if (refund.metadata?.reference === reference) {
+            if (refund.amount !== amountCents) throw new Error('refund_amount_mismatch');
+            return mapRefund(refund);
+          }
+        }
+        return null;
+      } catch (err) {
+        err.noRemoteObject = false;
+        throw err;
+      }
+    },
+
+    async refund({ providerRef, amountCents, reference, createdAt }) {
+      if (!reference) throw new Error('refund_reconciliation_required');
+      const existing = await this.getRefund({ providerRef, amountCents, reference });
+      if (existing) return existing;
+      const startedAt = new Date(createdAt).getTime();
+      if (!Number.isFinite(startedAt) || startedAt > Date.now() || Date.now() - startedAt >= 23 * 60 * 60 * 1000) throw new Error('refund_reconciliation_required');
+      let refund;
+      try {
+        refund = await stripe.refunds.create(
+          { payment_intent: providerRef, amount: amountCents, metadata: { reference } },
+          { idempotencyKey: reference, maxNetworkRetries: 0 },
+        );
+      } catch (err) {
+        err.noRemoteObject = definitiveRejection(err) && !err.refund && !err.raw?.refund && !err.providerRefundRef && !String(err.code || err.raw?.code || '').startsWith('idempotency_');
+        throw err;
+      }
+      return mapRefund(refund);
     },
 
     // Gross/refunded/fee totals for the terminal charges in a date range, from

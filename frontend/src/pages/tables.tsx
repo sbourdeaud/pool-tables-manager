@@ -5,15 +5,19 @@ import {
   apiAddTables,
   apiCreateTableType,
   apiDeleteTable,
+  apiDeleteTableBackgroundImage,
   apiDeleteTableType,
   apiSetTableStatus,
   apiStartSession,
   apiTableTypes,
+  apiTableBackgroundImages,
+  apiUploadTableBackgroundImage,
   apiTables,
   apiUpdateTableNumber,
   apiUpdateTableType,
   type TableRow,
   type TableType,
+  type TableBackgroundImage,
 } from '@/lib/api'
 import { money } from '@/lib/format'
 import { playPoolBallSound } from '@/lib/audio'
@@ -26,7 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { cn } from '@/lib/utils'
+import { cn, tableBackgroundFileError, tableBackgroundUrl } from '@/lib/utils'
 import { useI18n } from '@/lib/i18n'
 
 interface TypeForm {
@@ -35,9 +39,11 @@ interface TypeForm {
   hourly: string
   vat: string
   maxHours: string
+  background: string | null
+  backgroundOpacity: number
 }
 
-const EMPTY_FORM: TypeForm = { name: '', icon: 'american', hourly: '', vat: '20', maxHours: '' }
+const EMPTY_FORM: TypeForm = { name: '', icon: 'american', hourly: '', vat: '20', maxHours: '', background: null, backgroundOpacity: 70 }
 
 export function TablesPage() {
   const { settings, save: saveSetting } = useSettings()
@@ -50,6 +56,24 @@ export function TablesPage() {
   const [editing, setEditing] = React.useState<{ id: string; form: TypeForm } | null>(null)
   const [quantities, setQuantities] = React.useState<Record<string, number>>({})
   const [editingNumber, setEditingNumber] = React.useState<{ id: string; value: string } | null>(null)
+  const [backgroundImages, setBackgroundImages] = React.useState<TableBackgroundImage[]>([])
+  const [imagesLoading, setImagesLoading] = React.useState(true)
+  const [imagesError, setImagesError] = React.useState(false)
+  const [uploading, setUploading] = React.useState(false)
+  const [deletingImage, setDeletingImage] = React.useState<string | null>(null)
+  const imagesBusy = uploading || deletingImage !== null
+
+  const loadBackgroundImages = React.useCallback(async () => {
+    setImagesLoading(true)
+    const result = await apiTableBackgroundImages()
+    if (result.ok && Array.isArray(result.data)) {
+      setBackgroundImages(result.data)
+      setImagesError(false)
+    } else {
+      setImagesError(true)
+    }
+    setImagesLoading(false)
+  }, [])
 
   const load = React.useCallback(async () => {
     const [typesRes, tablesRes] = await Promise.all([apiTableTypes(), apiTables()])
@@ -59,7 +83,8 @@ export function TablesPage() {
 
   React.useEffect(() => {
     void load()
-  }, [load])
+    void loadBackgroundImages()
+  }, [load, loadBackgroundImages])
 
   const typeOrder = React.useMemo<string[]>(() => {
     try {
@@ -90,32 +115,70 @@ export function TablesPage() {
     void saveSetting('table_type_order', JSON.stringify(merged))
   }
 
+  const removeBackgroundImage = async (id: string) => {
+    if (imagesBusy || imagesLoading || imagesError) return
+    setDeletingImage(id)
+    const result = await apiDeleteTableBackgroundImage(id)
+    if (result.ok || result.status === 404) {
+      const background = `upload:${id}`
+      setBackgroundImages((current) => current.filter((image) => image.id !== id))
+      setForm((current) => current.background === background ? { ...current, background: null } : current)
+      setEditing((current) => current?.form.background === background ? { ...current, form: { ...current.form, background: null } } : current)
+    }
+    setDeletingImage(null)
+    if (!result.ok) {
+      return toast({
+        title: t('Failed to delete'),
+        description: result.status === 409
+          ? t('This image is used by a table type. Change its background and save before deleting the image.')
+          : result.status === 404
+            ? t('Background image no longer exists.')
+            : result.error || t('Something went wrong'),
+        variant: 'error',
+      })
+    }
+    toast({ title: t('Background image deleted') })
+  }
+
+  const backgroundAvailable = (background: string | null) => {
+    if (!background) return true
+    if (!tableBackgroundUrl(background)) return false
+    if (!background.startsWith('upload:')) return true
+    return !imagesLoading && !imagesError && backgroundImages.some((image) => `upload:${image.id}` === background)
+  }
+
   const createType = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.name.trim()) return
+    if (imagesBusy || !form.name.trim()) return
+    if (!backgroundAvailable(form.background)) return toast({ title: t('Selected background image is unavailable. Choose another image.'), variant: 'error' })
     const result = await apiCreateTableType({
       name_en: form.name.trim(),
       icon: form.icon,
+      background: form.background,
+      backgroundOpacity: form.backgroundOpacity,
       base_hourly_cents: Math.round(parseFloat(form.hourly || '0') * 100),
       vatRatePercent: parseInt(form.vat, 10),
       maxUsedHours: form.maxHours ? parseInt(form.maxHours, 10) : null,
     })
-    if (!result.ok) return toast({ title: t('Failed to add table type'), variant: 'error' })
+    if (!result.ok) return toast({ title: t('Failed to add table type'), description: result.error, variant: 'error' })
     toast({ title: t('Table type added') })
     setForm(EMPTY_FORM)
     await load()
   }
 
   const saveType = async () => {
-    if (!editing) return
+    if (!editing || imagesBusy) return
+    if (!backgroundAvailable(editing.form.background)) return toast({ title: t('Selected background image is unavailable. Choose another image.'), variant: 'error' })
     const result = await apiUpdateTableType(editing.id, {
       name_en: editing.form.name.trim(),
       icon: editing.form.icon,
+      background: editing.form.background,
+      backgroundOpacity: editing.form.backgroundOpacity,
       base_hourly_cents: Math.round(parseFloat(editing.form.hourly || '0') * 100),
       vatRatePercent: parseInt(editing.form.vat, 10),
       maxUsedHours: editing.form.maxHours ? parseInt(editing.form.maxHours, 10) : null,
     })
-    if (!result.ok) return toast({ title: t('Failed to update table type'), variant: 'error' })
+    if (!result.ok) return toast({ title: t('Failed to update table type'), description: result.error, variant: 'error' })
     toast({ title: t('Table type updated') })
     setEditing(null)
     await load()
@@ -187,6 +250,8 @@ export function TablesPage() {
               <Label>{t('Table icon')}</Label>
               <TableIconPicker value={form.icon} onChange={(icon) => setForm({ ...form, icon })} getLabel={t} />
             </div>
+            <BackgroundPicker value={form.background} onChange={(background) => setForm((current) => ({ ...current, background }))} images={backgroundImages} setImages={setBackgroundImages} loading={imagesLoading} loadError={imagesError} onRetry={loadBackgroundImages} uploading={uploading} setUploading={setUploading} deleting={deletingImage !== null} onDelete={removeBackgroundImage} />
+            <OpacitySlider value={form.backgroundOpacity} onChange={(backgroundOpacity) => setForm((current) => ({ ...current, backgroundOpacity }))} />
             <div className="grid gap-4 sm:grid-cols-[1fr_150px_150px_120px_auto] sm:items-end">
               <div className="space-y-1.5">
                 <Label htmlFor="type-name">{t('Name')}</Label>
@@ -213,7 +278,7 @@ export function TablesPage() {
                 <Label htmlFor="type-max">{t('Max hours')}</Label>
                 <Input id="type-max" type="number" min="0" step="1" value={form.maxHours} onChange={(e) => setForm({ ...form, maxHours: e.target.value })} placeholder={t('optional')} />
               </div>
-              <Button type="submit">{t('Add Table Type')}</Button>
+              <Button type="submit" disabled={imagesBusy}>{t('Add Table Type')}</Button>
             </div>
           </form>
         </CardContent>
@@ -255,6 +320,7 @@ export function TablesPage() {
                     variant="ghost"
                     className="h-8 w-8"
                     aria-label={t('Edit type')}
+                    disabled={imagesBusy}
                     onClick={() =>
                       setEditing({
                         id: type.id,
@@ -264,6 +330,8 @@ export function TablesPage() {
                           hourly: (type.base_hourly_cents / 100).toFixed(2),
                           vat: String(type.vatRatePercent ?? 20),
                           maxHours: type.maxUsedHours ? String(type.maxUsedHours) : '',
+                          background: type.background ?? null,
+                          backgroundOpacity: type.backgroundOpacity ?? 70,
                         },
                       })
                     }
@@ -272,7 +340,7 @@ export function TablesPage() {
                   </Button>
                   <ConfirmDialog
                     trigger={
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label={t('Delete type')}>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" aria-label={t('Delete type')} disabled={imagesBusy}>
                         <Trash2 />
                       </Button>
                     }
@@ -288,6 +356,8 @@ export function TablesPage() {
               {isEditing && editing && (
                 <div className="space-y-3 rounded-lg border p-3">
                   <TableIconPicker value={editing.form.icon} onChange={(icon) => setEditing({ ...editing, form: { ...editing.form, icon } })} getLabel={t} />
+                  <BackgroundPicker value={editing.form.background} onChange={(background) => setEditing((current) => current?.id === type.id ? { ...current, form: { ...current.form, background } } : current)} images={backgroundImages} setImages={setBackgroundImages} loading={imagesLoading} loadError={imagesError} onRetry={loadBackgroundImages} uploading={uploading} setUploading={setUploading} deleting={deletingImage !== null} onDelete={removeBackgroundImage} />
+                  <OpacitySlider value={editing.form.backgroundOpacity} onChange={(backgroundOpacity) => setEditing((current) => current?.id === type.id ? { ...current, form: { ...current.form, backgroundOpacity } } : current)} />
                   <div className="grid gap-2 sm:grid-cols-[1fr_120px_120px_110px_auto] sm:items-center">
                     <Input value={editing.form.name} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, name: e.target.value } })} />
                     <Input type="number" min="0" step="0.01" value={editing.form.hourly} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, hourly: e.target.value } })} />
@@ -303,10 +373,10 @@ export function TablesPage() {
                     </Select>
                     <Input type="number" min="0" step="1" placeholder={t('Max h')} value={editing.form.maxHours} onChange={(e) => setEditing({ ...editing, form: { ...editing.form, maxHours: e.target.value } })} />
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={() => void saveType()}>
+                      <Button size="sm" disabled={imagesBusy} onClick={() => void saveType()}>
                         Save
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                      <Button size="sm" variant="ghost" disabled={imagesBusy} onClick={() => setEditing(null)}>
                         Cancel
                       </Button>
                     </div>
@@ -416,5 +486,119 @@ export function TablesPage() {
         )
       })}
     </div>
+  )
+}
+
+function OpacitySlider({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const { t } = useI18n()
+  const id = React.useId()
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{t('Gradient transparency: {percent}%', { percent: 100 - value })}</Label>
+      <input id={id} type="range" min="0" max="100" step="1" value={100 - value} onChange={(event) => onChange(100 - Number(event.target.value))} aria-valuetext={t('{percent}%', { percent: 100 - value })} className="block w-full max-w-xs accent-primary" />
+    </div>
+  )
+}
+
+function BackgroundPicker({ value, onChange, images, setImages, loading, loadError, onRetry, uploading, setUploading, deleting, onDelete }: {
+  value: string | null
+  onChange: (value: string | null) => void
+  images: TableBackgroundImage[]
+  setImages: React.Dispatch<React.SetStateAction<TableBackgroundImage[]>>
+  loading: boolean
+  loadError: boolean
+  onRetry: () => Promise<void>
+  uploading: boolean
+  setUploading: React.Dispatch<React.SetStateAction<boolean>>
+  deleting: boolean
+  onDelete: (id: string) => Promise<void>
+}) {
+  const { t } = useI18n()
+  const id = React.useId()
+  const [errors, setErrors] = React.useState<string[]>([])
+  const imagesBusy = uploading || deleting
+  const uploaded = images.filter((image) => tableBackgroundUrl(`upload:${image.id}`))
+  const options: { value: string | null; label: string }[] = [
+    { value: null, label: t('None') },
+    ...['United States flag', 'United Kingdom flag', 'European Union flag', 'French flag'].map((label, index) => ({ value: `preset-${index + 1}`, label: t(label) })),
+    ...uploaded.map((image, index) => ({ value: `upload:${image.id}`, label: t('Uploaded image {number}', { number: index + 1 }) })),
+  ]
+  const missingBackground = value && !loading && !loadError && !options.some((option) => option.value === value)
+
+  const upload = async (files: File[]) => {
+    if (imagesBusy || loading) return
+    setUploading(true)
+    setErrors([])
+    const nextErrors: string[] = []
+    for (const file of files) {
+      const validationError = tableBackgroundFileError(file)
+      if (validationError) {
+        const message = validationError === 'type'
+          ? t('{name}: Choose a JPEG, PNG, or WebP image.', { name: file.name })
+          : validationError === 'size'
+            ? t('{name}: Image must be 5 MB or smaller.', { name: file.name })
+            : t('{name}: Image must not be empty.', { name: file.name })
+        nextErrors.push(message)
+        continue
+      }
+      const result = await apiUploadTableBackgroundImage(file)
+      if (!result.ok || !result.data || !tableBackgroundUrl(`upload:${result.data.id}`)) {
+        nextErrors.push(t('{name}: Upload failed ({error}).', { name: file.name, error: result.error || (result.ok ? t('Invalid server response') : String(result.status)) }))
+        continue
+      }
+      const image = result.data
+      setImages((current) => current.some((item) => item.id === image.id) ? current : [...current, image])
+    }
+    setErrors(nextErrors)
+    setUploading(false)
+  }
+
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium">{t('Table background')}</legend>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const url = tableBackgroundUrl(option.value)
+          const imageId = option.value?.startsWith('upload:') ? option.value.slice(7) : null
+          return (
+            <div key={option.value || 'none'} className={cn('relative flex w-28 flex-col gap-1 rounded-lg border p-2 text-xs font-semibold', value === option.value && 'border-primary bg-primary/10')}>
+              <label className="flex cursor-pointer flex-col gap-1">
+                {url ? <img src={url} alt="" className="h-14 w-full rounded object-cover" /> : <span className="flex h-14 items-center justify-center rounded bg-muted">{t('None')}</span>}
+                <span className="flex items-center gap-1.5">
+                  <input type="radio" name={id} checked={value === option.value} disabled={imagesBusy || Boolean(imageId && (loading || loadError))} onChange={() => onChange(option.value)} className="accent-primary" />
+                  {option.label}
+                </span>
+              </label>
+              {imageId && <ConfirmDialog
+                trigger={
+                  <Button type="button" size="icon" variant="outline" className="absolute right-1 top-1 h-6 w-6 bg-background text-destructive" aria-label={t('Delete {name}', { name: option.label })} disabled={imagesBusy || loading || loadError}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                }
+                title={t('Delete background image?')}
+                description={t('This permanently deletes the uploaded image. Images used by a table type cannot be deleted.')}
+                confirmLabel={t('Delete')}
+                onConfirm={() => void onDelete(imageId)}
+              />}
+            </div>
+          )
+        })}
+      </div>
+      {loading && <p className="text-sm text-muted-foreground" role="status">{t('Loading background images…')}</p>}
+      {loadError && <div role="alert" className="text-sm text-destructive">{t('Failed to load uploaded images.')} <Button type="button" variant="outline" size="sm" onClick={() => void onRetry()} disabled={loading || imagesBusy}>{t('Retry')}</Button></div>}
+      {missingBackground && <p role="alert" className="text-sm text-destructive">{t('Selected background image is unavailable. Choose another image.')}</p>}
+      {deleting && <p role="status" className="text-sm">{t('Deleting image…')}</p>}
+      <div className="space-y-1">
+        <Label htmlFor={`${id}-upload`}>{t('Upload background images')}</Label>
+        <Input id={`${id}-upload`} type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={imagesBusy || loading} onChange={(event) => {
+          const files = Array.from(event.currentTarget.files || [])
+          event.currentTarget.value = ''
+          if (files.length) void upload(files)
+        }} />
+        <p className="text-xs text-muted-foreground">{t('JPEG, PNG, or WebP; maximum 5 MB per image. Select an uploaded image after uploading.')}</p>
+      </div>
+      {uploading && <p role="status" className="text-sm">{t('Uploading images…')}</p>}
+      {errors.length > 0 && <div role="alert" className="space-y-1 text-sm text-destructive">{errors.map((error, index) => <p key={index}>{error}</p>)}</div>}
+    </fieldset>
   )
 }

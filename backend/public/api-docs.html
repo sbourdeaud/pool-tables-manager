@@ -21,7 +21,31 @@
         url: '/openapi.json',
         dom_id: '#swagger-ui',
         deepLinking: true,
-        withCredentials: true,
+        withCredentials: false,
+        requestInterceptor: async (request) => {
+          const url = new URL(request.url, window.location.href);
+          const sameOrigin = url.origin === window.location.origin;
+          request.credentials = sameOrigin ? 'same-origin' : 'omit';
+          request.headers = request.headers || {};
+          for (const name of Object.keys(request.headers)) {
+            if (name.toLowerCase() === 'x-csrf-token') delete request.headers[name];
+          }
+          if (!sameOrigin) return request;
+          request.mode = 'same-origin';
+          if (['GET', 'HEAD', 'OPTIONS'].includes((request.method || 'GET').toUpperCase())) return request;
+          request.redirect = 'error';
+          const response = await fetch('/api/csrf-token', {
+            credentials: 'same-origin',
+            mode: 'same-origin',
+            cache: 'no-store',
+            redirect: 'error',
+          });
+          if (!response.ok) throw new Error('Failed to load CSRF token (' + response.status + ')');
+          const data = await response.json();
+          if (typeof data.token !== 'string' || !data.token) throw new Error('Invalid CSRF token response');
+          request.headers['x-csrf-token'] = data.token;
+          return request;
+        },
         persistAuthorization: false,
         tryItOutEnabled: true,
         displayRequestDuration: true,

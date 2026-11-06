@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const { setupAuthBypass, restoreStatefulMocks } = require('./helpers/authBypass');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
@@ -79,6 +79,10 @@ describe('POS payments (optional feature)', () => {
     prisma.$queryRaw.mockResolvedValue([]);
     prisma.tabLineItem.findFirst.mockResolvedValue(null);
     prisma.tabLineItem.findMany.mockResolvedValue([]);
+    prisma.state.payments.push(
+      { id: 'pending-card', sessionId: 's1', method: 'card', amountCents: 1200, refundedCents: 0, status: 'pending', createdAt: new Date('2025-06-01') },
+      { id: 'failed-card', sessionId: 's1', method: 'card', amountCents: 1200, refundedCents: 0, status: 'failed', createdAt: new Date('2025-06-01') }
+    );
 
     const enabled = await agent.get('/api/reports/financial').query({ periodType: 'year', year: '2025' });
     expect(enabled.status).toBe(200);

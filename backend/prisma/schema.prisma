@@ -21,10 +21,19 @@ model TableType {
   name_en           String
   name_fr           String?
   icon              String  @default("american")
+  background        String?
+  backgroundOpacity Int      @default(70) @map("background_opacity")
   base_hourly_cents Int
   vatRatePercent    Int      @default(20) @map("vat_rate_percent")
   maxUsedHours      Int?     @map("max_used_hours")
   createdAt         DateTime @default(now()) @map("created_at")
+}
+
+model TableBackgroundImage {
+  id          String   @id @default(uuid()) @db.Uuid
+  contentType String   @map("content_type")
+  bytes       Bytes
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 }
 
 model PoolTable {
@@ -158,6 +167,7 @@ model Payment {
   detailsJson    String?  @map("details_json")
   idempotencyKey String?  @unique @map("idempotency_key")
   refundedCents  Int      @default(0) @map("refunded_cents")
+  refundOperationsJson String @default("[]") @map("refund_operations_json")
   createdBy      String?  @map("created_by")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")

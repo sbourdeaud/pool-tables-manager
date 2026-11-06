@@ -21,9 +21,9 @@ function timestamp() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-function run(spawnFn, cmd, args) {
+function run(spawnFn, cmd, args, options) {
   return new Promise((resolve) => {
-    const child = spawnFn(cmd, args);
+    const child = spawnFn(cmd, args, options);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
@@ -121,7 +121,14 @@ function createBackupService({ spawnFn = spawn, databaseUrl = process.env.DATABA
 
       // 3) Bring the schema up to date (backups from older versions) and drop
       // the Prisma pool so new connections see the restored objects.
-      const migrate = await run(spawnFn, 'npx', ['prisma', 'migrate', 'deploy']);
+      const hasImages = /\bTABLE (?:DATA )?public TableBackgroundImage(?:\s|$)/.test(listing.stdout);
+      const cleanup = hasImages ? { code: 0 } : await run(spawnFn, 'psql', [
+        '--dbname', databaseUrl, '--no-psqlrc', '--set', 'ON_ERROR_STOP=1',
+        '--command', 'DO $$ BEGIN IF to_regclass(\'public."TableBackgroundImage"\') IS NOT NULL THEN TRUNCATE TABLE public."TableBackgroundImage"; END IF; END $$;'
+      ]);
+      const migrate = cleanup.code === 0 ? await run(spawnFn, 'npx', ['prisma', 'migrate', 'deploy'], {
+        env: { ...process.env, DATABASE_URL: databaseUrl }
+      }) : null;
       let disconnected = false;
       try {
         if (prisma && typeof prisma.$disconnect === 'function') {
@@ -130,10 +137,17 @@ function createBackupService({ spawnFn = spawn, databaseUrl = process.env.DATABA
         }
       } catch { /* the pool reconnects lazily */ }
 
+      if (cleanup.code !== 0) {
+        return { failed: 'restore_failed', message: cleanup.stderr.slice(-1500), disconnected };
+      }
+      const migrations = { code: migrate.code, output: (migrate.stdout + migrate.stderr).slice(-1000) };
+      if (migrate.code !== 0) {
+        return { failed: 'migration_failed', message: migrations.output, migrations, disconnected };
+      }
       return {
         ok: true,
         sizeBytes: fs.statSync(file).size,
-        migrations: { code: migrate.code, output: (migrate.stdout + migrate.stderr).slice(-1000) },
+        migrations,
         disconnected
       };
     } finally {

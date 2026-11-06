@@ -1,5 +1,6 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const bcrypt = require('bcryptjs');
+const oidc = require('openid-client');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
 const prisma = require('../src/prismaClient');
@@ -21,6 +22,21 @@ describe('Local auth flows', () => {
     expect(res.status).toBe(200);
     expect(res.body.oidc_enabled).toBe(false);
     expect(res.body.local_admin_setup).toBe(false);
+  });
+
+  test('GET /api/admin/oidc/test discovers issuer metadata', async () => {
+    const metadata = { issuer: 'https://identity.example.com' };
+    const discovery = jest.spyOn(oidc, 'discovery').mockResolvedValue({ serverMetadata: () => metadata });
+    prisma.state.mockSettings.oidc_issuer = metadata.issuer;
+
+    try {
+      const res = await agent.get('/api/admin/oidc/test');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ issuer: metadata });
+      expect(discovery).toHaveBeenCalledWith(new URL(metadata.issuer), 'oidc-test', undefined);
+    } finally {
+      discovery.mockRestore();
+    }
   });
 
   test('Create local admin, login, rotate, and clear', async () => {

@@ -64,7 +64,7 @@ else
     echo "Migration failed, attempting to resolve..."
     npx prisma migrate resolve --rolled-back 00000000000005_add_session_pin 2>/dev/null || true
     npx prisma migrate resolve --applied 00000000000005_add_session_pin 2>/dev/null || true
-    npx prisma migrate deploy || echo "Warning: Some migrations may have issues, but continuing..."
+    npx prisma migrate deploy || { echo "Database migration failed; application startup aborted."; exit 1; }
   }
 fi
 

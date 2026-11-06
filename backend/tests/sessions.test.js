@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const { setupAuthBypass } = require('./helpers/authBypass');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
@@ -11,6 +11,8 @@ describe('Sessions API', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     setupAuthBypass(prisma);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', status: 'active' });
   });
 
   test('Create session (POST /api/sessions)', async () => {
@@ -37,6 +39,31 @@ describe('Sessions API', () => {
     const res = await agent.patch('/api/sessions/s1/end');
     expect(res.status).toBe(200);
     expect(res.body.id).toBe('s1');
+  });
+
+  describe('table switching locks', () => {
+    beforeEach(() => {
+      prisma.$queryRawUnsafe.mockImplementation(async (sql) => String(sql).includes('FOR UPDATE')
+        ? [{ id: 't1', status: 'occupied' }, { id: 't2', status: 'available' }]
+        : [{ id: 's1', table_id: 't2', status: 'active' }]);
+    });
+
+    test('locks both table rows in deterministic order before moving the session', async () => {
+      const res = await agent.post('/api/sessions/s1/switch').send({ newTableId: 't2' });
+      expect(res.status).toBe(200);
+      expect(prisma.$queryRawUnsafe.mock.calls[0]).toEqual([expect.stringContaining('ORDER BY id FOR UPDATE'), ['t1', 't2']]);
+      const moveIndex = prisma.$executeRawUnsafe.mock.calls.findIndex(call => String(call[0]).includes('SET table_id'));
+      expect(prisma.$queryRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(prisma.$executeRawUnsafe.mock.invocationCallOrder[moveIndex]);
+      const release = prisma.$executeRawUnsafe.mock.calls.find(call => String(call[0]).includes("SET status = 'available'"));
+      expect(release).toEqual([expect.stringContaining("AND status = 'occupied' AND NOT EXISTS"), 't1']);
+    });
+
+    test('rejects an active legacy session on a stale available target without moving', async () => {
+      prisma.session.findMany.mockResolvedValue([{ id: 'legacy' }]);
+      const res = await agent.post('/api/sessions/s1/switch').send({ newTableId: 't2' });
+      expect(res.status).toBe(409);
+      expect(prisma.$executeRawUnsafe.mock.calls.some(call => String(call[0]).includes('UPDATE'))).toBe(false);
+    });
   });
 
   test('List sessions includes the subscriber count and player-search state', async () => {
@@ -276,6 +303,201 @@ describe('Sessions API', () => {
       expect.objectContaining({ playerNumber: 1, shareCents: 2500 }),
       expect.objectContaining({ playerNumber: 2, shareCents: 2500 }),
     ]));
+  });
+
+  describe('item writes', () => {
+    const item = { id: 'i1', sessionId: 's1', type: 'drink', description: 'Tea', quantity: 2, unitPrice: 300, totalCents: 600, vatRatePercent: 20, voidedAt: null };
+
+    beforeEach(() => {
+      prisma.tabLineItem.findUnique.mockResolvedValue(item);
+      prisma.tabLineItem.create.mockImplementation(async ({ data }) => ({ id: 'i2', ...data }));
+    });
+
+    test.each(['/api/sessions/s1/items/i1', '/api/tab-items/i1'])('voids via %s under the session lock', async (url) => {
+      const res = await agent.delete(url).query({ reason: 'mistake' });
+      expect(res.status).toBe(204);
+      expect(prisma.tabLineItem.findUnique).toHaveBeenCalledTimes(2);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), 's1');
+      expect(prisma.tabLineItem.update).toHaveBeenCalledWith({ where: { id: 'i1' }, data: expect.objectContaining({ voidedAt: expect.any(Date), voidReason: 'mistake' }) });
+      expect(prisma.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(prisma.tabLineItem.update.mock.invocationCallOrder[0]);
+    });
+
+    test('rejects a session/item mismatch without changing the item', async () => {
+      const res = await agent.delete('/api/sessions/other/items/i1');
+      expect(res.status).toBe(404);
+      expect(prisma.tabLineItem.update).not.toHaveBeenCalled();
+    });
+
+    test('corrects a historical ended session atomically with a linked replacement', async () => {
+      prisma.session.findUnique.mockResolvedValue({ id: 's1', status: 'ended' });
+      const res = await agent.patch('/api/tab-items/i1').send({ totalCents: 480 });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ correctedFromId: 'i1', totalCents: 480, vatAmountCents: 80 });
+      expect(prisma.tabLineItem.update).toHaveBeenCalledWith({ where: { id: 'i1' }, data: expect.objectContaining({ voidReason: 'corrected: amount changed' }) });
+      expect(prisma.tabLineItem.update.mock.invocationCallOrder[0]).toBeLessThan(prisma.tabLineItem.create.mock.invocationCallOrder[0]);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['cancelled', 'missing'])('rejects writes when the session is %s', async (status) => {
+      prisma.session.findUnique.mockResolvedValue(status === 'missing' ? null : { id: 's1', status });
+      const res = await agent.patch('/api/tab-items/i1').send({ totalCents: 480 });
+      expect(res.status).toBe(status === 'missing' ? 404 : 409);
+      expect(prisma.tabLineItem.update).not.toHaveBeenCalled();
+      expect(prisma.tabLineItem.create).not.toHaveBeenCalled();
+    });
+
+    test('rejects an item voided while waiting for the lock', async () => {
+      prisma.tabLineItem.findUnique.mockResolvedValueOnce(item).mockResolvedValueOnce({ ...item, voidedAt: new Date() });
+      const res = await agent.patch('/api/tab-items/i1').send({ totalCents: 480 });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('item_already_voided');
+      expect(prisma.tabLineItem.update).not.toHaveBeenCalled();
+      expect(prisma.tabLineItem.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pending order cancellation', () => {
+    const order = { id: 'o1', sessionId: 's1', status: 'pending' };
+
+    test.each(['active', 'ended'])('cancels a pending order on a %s session under lock', async (status) => {
+      prisma.session.findUnique.mockResolvedValue({ id: 's1', status });
+      prisma.pendingOrder.findUnique.mockResolvedValue(order);
+      const res = await agent.post('/api/pending-orders/o1/cancel');
+      expect(res.status).toBe(200);
+      expect(prisma.pendingOrder.findUnique).toHaveBeenCalledTimes(2);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), 's1');
+      expect(prisma.pendingOrder.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: { status: 'cancelled', fulfilledAt: expect.any(Date) } });
+    });
+
+    test.each(['fulfilled', 'cancelled'])('does not overwrite an order that became %s while waiting', async (status) => {
+      prisma.pendingOrder.findUnique.mockResolvedValueOnce(order).mockResolvedValueOnce({ ...order, status });
+      const res = await agent.post('/api/pending-orders/o1/cancel');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('already_resolved');
+      expect(prisma.pendingOrder.update).not.toHaveBeenCalled();
+    });
+
+    test('does not update a missing session or missing order', async () => {
+      prisma.pendingOrder.findUnique.mockResolvedValue(order);
+      prisma.session.findUnique.mockResolvedValue(null);
+      expect((await agent.post('/api/pending-orders/o1/cancel')).status).toBe(404);
+      prisma.pendingOrder.findUnique.mockResolvedValue(null);
+      expect((await agent.post('/api/pending-orders/o1/cancel')).status).toBe(404);
+      expect(prisma.pendingOrder.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancellation', () => {
+    beforeEach(() => {
+      prisma.state.payments = [];
+      prisma.state.receipts = [];
+      prisma.session.update.mockImplementation(async ({ data }) => ({ id: 's1', ...data }));
+    });
+
+    test('cancels an empty active session without checkout, payment, invoice, or usage writes', async () => {
+      const res = await agent.post('/api/sessions/s1/cancel');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, id: 's1', status: 'cancelled' });
+      expect(prisma.session.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: {
+          status: 'cancelled',
+          endedAt: expect.any(Date),
+          pin: null,
+          lookingForPlayersCount: null,
+          lookingForPlayersUpTo: false,
+        },
+      });
+      const tableRelease = prisma.$executeRawUnsafe.mock.calls.find(call => String(call[0]).includes('UPDATE "PoolTable"'));
+      expect(tableRelease[1]).toBe('t1');
+      expect(tableRelease[0]).toContain('NOT EXISTS');
+      expect(prisma.$executeRawUnsafe.mock.calls.some(call => String(call[0]).includes('total_used_seconds'))).toBe(false);
+      expect(prisma.state.receipts).toHaveLength(0);
+      expect(prisma.state.receipts).toHaveLength(0);
+      expect(prisma.state.payments).toHaveLength(0);
+      expect(prisma.tabLineItem.create).not.toHaveBeenCalled();
+      expect(prisma.$executeRawUnsafe.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
+      expect(prisma.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(prisma.session.update.mock.invocationCallOrder[0]);
+    });
+
+    test('does not record a cancellation before its start', async () => {
+      const startedAt = new Date(Date.now() + 60000);
+      prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', status: 'active', startedAt });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(200);
+      expect(prisma.session.update.mock.calls[0][0].data.endedAt).toEqual(startedAt);
+    });
+
+    test('returns session_not_found for an unknown session', async () => {
+      prisma.session.findUnique.mockResolvedValue(null);
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'session_not_found' });
+      expect(prisma.session.update).not.toHaveBeenCalled();
+    });
+
+    test.each(['ended', 'cancelled'])('returns session_not_active for a %s session without releasing a table', async (status) => {
+      prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', status });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_not_active' });
+      expect(prisma.session.update).not.toHaveBeenCalled();
+      expect(prisma.$executeRawUnsafe.mock.calls.some(call => String(call[0]).includes('UPDATE "PoolTable"'))).toBe(false);
+    });
+
+    test('blocks voided sales and does not treat metadata as activity', async () => {
+      prisma.tabLineItem.findFirst.mockResolvedValue({ id: 'voided-sale', voidedAt: new Date() });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+      expect(prisma.tabLineItem.findFirst).toHaveBeenCalledWith({
+        where: expect.objectContaining({ sessionId: 's1', OR: expect.any(Array) }),
+        select: { id: true },
+      });
+      expect(prisma.session.update).not.toHaveBeenCalled();
+    });
+
+    test.each(['pending', 'fulfilled'])('blocks %s orders', async (status) => {
+      prisma.pendingOrder.findFirst.mockResolvedValue({ id: 'order1', status });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+      expect(prisma.pendingOrder.findFirst).toHaveBeenCalledWith({
+        where: { sessionId: 's1', status: { in: ['pending', 'fulfilled'] } },
+        select: { id: true },
+      });
+    });
+
+    test('blocks settled players even when their settlement amount was zero', async () => {
+      prisma.sessionPlayer.findFirst.mockResolvedValue({ id: 'player1', status: 'settled', settledTableCents: 0 });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+      expect(prisma.session.update).not.toHaveBeenCalled();
+    });
+
+    test('blocks receipts', async () => {
+      prisma.state.receipts.push({ id: 'receipt1', sessionId: 's1' });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+    });
+
+    test('blocks transactions', async () => {
+      prisma.transaction.findFirst.mockResolvedValue({ id: 'transaction1', sessionId: 's1' });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+    });
+
+    test.each(['pending', 'captured', 'voided', 'refunded'])('blocks %s payments', async (status) => {
+      prisma.state.payments.push({ id: `payment-${status}`, sessionId: 's1', status });
+      const res = await agent.post('/api/sessions/s1/cancel');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'session_has_activity' });
+      expect(prisma.session.update).not.toHaveBeenCalled();
+    });
   });
 
   test('applies the subscriber discount from the next slot after a subscriber joins', async () => {

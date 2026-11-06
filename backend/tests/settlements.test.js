@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
 const prisma = require('../src/prismaClient');
@@ -10,6 +10,8 @@ describe('Settlement / Checkout flows', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     setupAuthBypass(prisma);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.session.findUnique.mockResolvedValue({ id: 's1', tableId: 't1', status: 'active' });
   });
 
   test('POST /api/sessions/:id/settle handles table settlement and item adjustments', async () => {

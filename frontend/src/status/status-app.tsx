@@ -6,7 +6,7 @@ import { formatWaitTime } from '@/lib/waitlist-format'
 import { isVenueOpenAt, parseWeeklyOpeningHours } from '@/lib/opening-hours'
 import { lookingForPlayersLabel } from '@/lib/player-search'
 import { applyTheme, getStoredTheme } from '@/lib/theme'
-import { cn } from '@/lib/utils'
+import { cn, tableBackgroundStyle } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
 import { PublicInfoMenu } from '@/components/public-info-menu'
 import { TableTypeIcon } from '@/components/type-icon'
@@ -218,6 +218,7 @@ export function StatusApp() {
                   .sort((a, b) => a.number - b.number)
                   .map((tb) => {
                     const status = venueOpen === false ? 'unavailable' : (tb.status || 'available')
+                    const backgroundStyle = tableBackgroundStyle(tb.typeBackground, tb.typeBackgroundOpacity, tb.status === 'occupied')
                     return (
                       <div
                         key={tb.number}
@@ -227,7 +228,9 @@ export function StatusApp() {
                           status === 'maintenance' && 'border-l-gray-400/70 bg-gradient-to-b from-gray-500/15 to-gray-600/10',
                           status === 'available' && 'border-l-emerald-500/70 bg-gradient-to-b from-emerald-500/15 to-emerald-600/10',
                           status === 'unavailable' && 'border-l-rose-500/70 bg-gradient-to-b from-rose-500/15 to-rose-600/10',
+                          backgroundStyle && 'text-white',
                         )}
+                        style={backgroundStyle}
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-xl font-bold">#{tb.number}</span>
@@ -239,7 +242,7 @@ export function StatusApp() {
                               {tb.numberOfPlayers || 1} {((tb.numberOfPlayers || 1) > 1 ? t('players') : t('player'))}
                             </span>
                             {tb.lookingForPlayersCount ? (
-                              <span className="font-semibold text-primary">
+                              <span className={cn('font-semibold text-primary', backgroundStyle && 'text-white')}>
                                 {lookingForPlayersLabel(tb.lookingForPlayersCount, Boolean(tb.lookingForPlayersUpTo), t)}
                               </span>
                             ) : null}

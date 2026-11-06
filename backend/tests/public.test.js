@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
 const prisma = require('../src/prismaClient');
@@ -122,10 +122,39 @@ describe('Public table status board endpoint', () => {
     const res = await agent.get('/api/public/tables');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
-      { number: 1, typeName: 'Pool', typeIcon: 'english_pool', typeHourlyRateCents: 2500, status: 'available' },
-      { number: 2, typeName: 'Pool', typeIcon: 'english_pool', typeHourlyRateCents: 2500, status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
-      { number: 3, typeName: 'Snooker', typeIcon: 'snooker', typeHourlyRateCents: 4000, status: 'maintenance' }
+      { number: 1, typeName: 'Pool', typeIcon: 'english_pool', typeBackground: null, typeBackgroundOpacity: 70, typeHourlyRateCents: 2500, status: 'available' },
+      { number: 2, typeName: 'Pool', typeIcon: 'english_pool', typeBackground: null, typeBackgroundOpacity: 70, typeHourlyRateCents: 2500, status: 'occupied', numberOfPlayers: 3, startedAt: started, lookingForPlayersCount: 2, lookingForPlayersUpTo: true },
+      { number: 3, typeName: 'Snooker', typeIcon: 'snooker', typeBackground: null, typeBackgroundOpacity: 70, typeHourlyRateCents: 4000, status: 'maintenance' }
     ]);
+  });
+
+  test('exposes background and opacity without authentication', async () => {
+    const upload = 'upload:6cbcfbf5-58e7-44d8-a99a-80c1f8fd83fe';
+    prisma.poolTable.findMany.mockResolvedValue([
+      { id: 't1', tableTypeId: 'tt1', number: 1 },
+      { id: 't2', tableTypeId: 'tt2', number: 2 },
+      { id: 't3', tableTypeId: 'tt3', number: 3 },
+      { id: 't4', tableTypeId: 'missing', number: 4 },
+      { id: 't5', tableTypeId: 'tt4', number: 5 },
+    ]);
+    prisma.tableType.findMany.mockResolvedValue([
+      { id: 'tt1', name_en: 'Pool', background: 'preset-2', backgroundOpacity: 0 },
+      { id: 'tt2', name_en: 'Snooker', background: upload, backgroundOpacity: 100 },
+      { id: 'tt3', name_en: 'Carom', background: null, backgroundOpacity: 35 },
+      { id: 'tt4', name_en: 'Legacy' },
+    ]);
+    prisma.session.findMany.mockResolvedValue([]);
+    const res = await agent.get('/api/public/tables');
+    expect(res.status).toBe(200);
+    expect(res.body.map((table) => table.typeBackground)).toEqual(['preset-2', upload, null, null, null]);
+    expect(res.body.map((table) => table.typeBackgroundOpacity)).toEqual([0, 100, 35, 70, 70]);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(prisma.setting.findMany).not.toHaveBeenCalled();
+  });
+
+  test('does not add an alternate public status route', async () => {
+    const res = await agent.get('/api/public/status');
+    expect(res.status).toBe(404);
   });
 
   test('never exposes session ids, PINs, or tab data', async () => {

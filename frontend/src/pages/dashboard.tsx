@@ -7,6 +7,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import {
   apiAddTabItem,
+  apiCancelSession,
   apiCancelSessionPlayerSearch,
   apiCancelWaitlistEntry,
   apiDeleteTable,
@@ -50,9 +51,10 @@ import { useToast } from '@/components/toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
+import { cn, tableBackgroundStyle } from '@/lib/utils'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#e11d48', '#06b6d4']
 
@@ -71,6 +73,7 @@ type DialogState =
   | { kind: 'drink'; session: SessionRow }
   | { kind: 'transfer'; session: SessionRow }
   | { kind: 'checkout'; session: SessionRow }
+  | { kind: 'cancel'; session: SessionRow }
   | { kind: 'settle'; session: SessionRow }
   | { kind: 'add-player'; session: SessionRow }
   | { kind: 'fulfill-player-search'; session: SessionRow }
@@ -180,6 +183,7 @@ export function DashboardPage() {
         onTransfer={(s) => setDialog({ kind: 'transfer', session: s })}
         onQr={(pin) => setDialog({ kind: 'qr', tableNumber: tb.number, pin })}
         onCheckout={(s) => setDialog({ kind: 'checkout', session: s })}
+        onCancel={(s) => setDialog({ kind: 'cancel', session: s })}
         onSettle={(s) => setDialog({ kind: 'settle', session: s })}
         onAddPlayer={(s) => setDialog({ kind: 'add-player', session: s })}
         onFulfillPlayerSearch={(s) => setDialog({ kind: 'fulfill-player-search', session: s })}
@@ -427,6 +431,13 @@ export function DashboardPage() {
         onClose={() => setDialog(null)}
         onDone={() => void finishAction(t('Session transferred'))}
       />
+      {dialog?.kind === 'cancel' && (
+        <CancelSessionDialog
+          session={dialog.session}
+          onClose={() => setDialog(null)}
+          onRefresh={async () => { await Promise.all([load(), loadOrders(), loadWaitlist()]) }}
+        />
+      )}
       <QrDialog state={dialog} onClose={() => setDialog(null)} />
       <CheckoutDialog
         open={dialog?.kind === 'checkout'}
@@ -620,6 +631,7 @@ interface TableTileProps {
   onAddDrink: (session: SessionRow) => void
   onTransfer: (session: SessionRow) => void
   onCheckout: (session: SessionRow) => void
+  onCancel: (session: SessionRow) => void
   onSettle: (session: SessionRow) => void
   onQr: (pin?: string) => void
   onAddPlayer: (session: SessionRow) => void
@@ -638,6 +650,7 @@ function TableTile(props: TableTileProps) {
     type.maxUsedHours != null && type.maxUsedHours > 0 && ((table.usedSinceMaintenanceSeconds || 0) + (start ? (now - new Date(start).getTime()) / 1000 : 0)) >= type.maxUsedHours * 3600
 
   const qrSvg = occupied ? buildQrSvg(tableSessionUrl(table.number, session!.pin), 4, 2) : ''
+  const backgroundStyle = tableBackgroundStyle(type.background, type.backgroundOpacity, occupied)
 
   return (
     <Card
@@ -646,18 +659,20 @@ function TableTile(props: TableTileProps) {
         occupied
           ? 'border-l-red-500/70 bg-gradient-to-b from-red-500/10 to-red-600/[0.06]'
           : 'border-l-emerald-500/70 bg-gradient-to-b from-emerald-500/10 to-emerald-600/[0.06]',
+        backgroundStyle && 'text-white [&_button]:[text-shadow:none]',
       )}
+      style={backgroundStyle}
     >
       <div className="flex items-center justify-between">
         <div className="text-lg font-extrabold">
           #{table.number}
           {session?.pin && <span className="ml-2 font-mono text-sm font-bold opacity-70">({session.pin})</span>}
         </div>
-        <span className="rounded-md bg-background/70 px-2 py-1 text-xs font-semibold capitalize">{occupied ? t('Occupied') : t(table.status)}</span>
+        <span className={cn('rounded-md bg-background/70 px-2 py-1 text-xs font-semibold capitalize', backgroundStyle && 'bg-black/70 text-white')}>{occupied ? t('Occupied') : t(table.status)}</span>
       </div>
 
       {maintenanceDue && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1.5 text-xs font-bold text-amber-600">
+        <div className={cn('rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1.5 text-xs font-bold text-amber-600', backgroundStyle && 'bg-black/70 text-amber-200')}>
           {t('Maintenance due — {used}h / {max}h used', { used: (((table.usedSinceMaintenanceSeconds || 0) + (start ? (now - new Date(start).getTime()) / 1000 : 0)) / 3600).toFixed(1), max: type.maxUsedHours ?? '' })}
         </div>
       )}
@@ -670,10 +685,10 @@ function TableTile(props: TableTileProps) {
               {session.numberOfPlayers || 1} {(session.numberOfPlayers || 1) > 1 ? t('players') : t('player')}
             </span>
             <div className="ml-auto flex items-center gap-1">
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onSettle(session)} aria-label={t('Settle player')}>
+              <Button variant="outline" size="icon" className={cn('h-7 w-7', backgroundStyle && 'text-foreground')} onClick={() => props.onSettle(session)} aria-label={t('Settle player')}>
                 <Minus />
               </Button>
-              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => props.onAddPlayer(session)} aria-label={t('Add player')}>
+              <Button variant="outline" size="icon" className={cn('h-7 w-7', backgroundStyle && 'text-foreground')} onClick={() => props.onAddPlayer(session)} aria-label={t('Add player')}>
                 <Plus />
               </Button>
             </div>
@@ -683,20 +698,20 @@ function TableTile(props: TableTileProps) {
               <span className="text-xs font-semibold">
                 {lookingForPlayersLabel(session.lookingForPlayersCount, Boolean(session.lookingForPlayersUpTo), t)}
               </span>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => props.onFulfillPlayerSearch(session)}>
+              <Button size="sm" variant="outline" className={cn('h-7 text-xs', backgroundStyle && 'text-foreground')} onClick={() => props.onFulfillPlayerSearch(session)}>
                 <Check /> {t('Mark as fulfilled')}
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void props.onCancelPlayerSearch(session)}>
+              <Button size="sm" variant="outline" className={cn('h-7 text-xs', backgroundStyle && 'text-foreground')} onClick={() => void props.onCancelPlayerSearch(session)}>
                 <X /> {t('Cancel request')}
               </Button>
             </div>
           ) : null}
           <div className="flex items-center justify-between text-sm">
             <span className="font-mono font-semibold tabular-nums">{elapsedDuration(start, now)}</span>
-            <span className="text-xs text-muted-foreground">({chargedHours(start, now)}h charged)</span>
+            <span className={cn('text-xs text-muted-foreground', backgroundStyle && 'text-white')}>({chargedHours(start, now)}h charged)</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">{t('Open tab')}</span>
+            <span className={cn('text-xs text-muted-foreground', backgroundStyle && 'text-white')}>{t('Open tab')}</span>
             <span className="text-sm font-bold">{totalCents != null ? money(totalCents, currency) : '—'}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -707,28 +722,31 @@ function TableTile(props: TableTileProps) {
               className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-white p-1 shadow-sm transition-transform hover:scale-105 [&_svg]:h-full [&_svg]:w-full"
               dangerouslySetInnerHTML={{ __html: qrSvg }}
             />
-            <p className="text-[11px] leading-tight text-muted-foreground">Scan to track your time &amp; tab</p>
+            <p className={cn('text-[11px] leading-tight text-muted-foreground', backgroundStyle && 'text-white')}>Scan to track your time &amp; tab</p>
           </div>
           <div className="mt-auto flex flex-wrap gap-2 border-t pt-3">
-            <Button size="sm" variant="outline" className="flex-1" onClick={() => props.onAddDrink(session)}>
+            <Button size="sm" variant="outline" className={cn('flex-1', backgroundStyle && 'text-foreground')} onClick={() => props.onAddDrink(session)}>
               <Beer /> {t('Drink')}
             </Button>
-            <Button size="sm" variant="outline" className="flex-1" onClick={() => props.onTransfer(session)}>
+            <Button size="sm" variant="outline" className={cn('flex-1', backgroundStyle && 'text-foreground')} onClick={() => props.onTransfer(session)}>
               <ArrowLeftRight /> {t('Transfer')}
             </Button>
             <Button size="sm" className="flex-1" onClick={() => props.onCheckout(session)}>
               <CheckCircle2 /> {t('Checkout')}
             </Button>
           </div>
+          <Button size="sm" variant="destructive" className="w-full" onClick={() => props.onCancel(session)}>
+            <X /> {t('Cancel session')}
+          </Button>
         </>
       ) : (
         <>
-          <p className="text-sm text-muted-foreground">{t('Available')}</p>
+          <p className={cn('text-sm text-muted-foreground', backgroundStyle && 'text-white')}>{t('Available')}</p>
           <Button className="mt-auto w-full" onClick={props.onStart}>
             <Play /> {t('Start Session')}
           </Button>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" className="flex-1" onClick={() => void props.onMaintenance()}>
+            <Button size="sm" variant="outline" className={cn('flex-1', backgroundStyle && 'text-foreground')} onClick={() => void props.onMaintenance()}>
               <Wrench /> {t('Maintenance')}
             </Button>
             <Button size="sm" variant="outline" className="flex-1 text-destructive" onClick={() => void props.onDelete()}>
@@ -738,6 +756,63 @@ function TableTile(props: TableTileProps) {
         </>
       )}
     </Card>
+  )
+}
+
+function CancelSessionDialog({ session, onClose, onRefresh }: { session: SessionRow; onClose: () => void; onRefresh: () => Promise<void> }) {
+  const { t } = useI18n()
+  const { toast } = useToast()
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const inFlight = React.useRef(false)
+
+  const cancel = async () => {
+    if (inFlight.current) return
+    inFlight.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const result = await apiCancelSession(session.id)
+      if (!result.ok) {
+        const message = result.error === 'session_has_activity'
+          ? 'Cancellation blocked: this session has items, orders, settlements or payments. Use checkout instead.'
+          : result.error === 'session_not_active'
+            ? 'This session is no longer active.'
+            : result.error === 'session_not_found'
+              ? 'This session was not found.'
+              : 'Failed to cancel session. Please try again.'
+        setError(t(message))
+        if (result.status === 409 || result.status === 404) await onRefresh()
+        return
+      }
+      toast({ title: t('Session canceled') })
+      onClose()
+      await onRefresh()
+    } finally {
+      inFlight.current = false
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AlertDialog open onOpenChange={(open) => { if (!open && !inFlight.current) onClose() }}>
+      <AlertDialogContent aria-busy={busy}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('Cancel session')}</AlertDialogTitle>
+          <AlertDialogDescription>{t('Session ends without checkout charge; cancellation blocked if it has items, orders, settlements or payments')}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>{t('Keep session')}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" disabled={busy} onClick={(event) => {
+            event.preventDefault()
+            void cancel()
+          }}>
+            {busy ? t('Canceling…') : t('Cancel session')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

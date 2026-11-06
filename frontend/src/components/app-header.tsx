@@ -2,9 +2,12 @@ import * as React from 'react'
 import { NavLink, Link } from 'react-router-dom'
 import { LogOut, Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { BuildIdentifier } from '@/components/build-identifier'
 import { useSettings } from '@/components/settings/settings-context'
+import { useToast } from '@/components/toast'
 import { applyTheme, getStoredTheme, type Theme } from '@/lib/theme'
 import { playPoolBallSound } from '@/lib/audio'
+import { apiLogout } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { LanguageSelect, useI18n } from '@/lib/i18n'
 
@@ -17,8 +20,39 @@ const NAV = [
 export function AppHeader() {
   const { settings } = useSettings()
   const { t } = useI18n()
+  const { toast } = useToast()
   const [theme, setTheme] = React.useState<Theme>(getStoredTheme())
+  const [loggingOut, setLoggingOut] = React.useState(false)
+  const logoutPending = React.useRef(false)
   const title = settings.app_name?.trim() || 'Pool Tables Manager'
+
+  const handleLogout = async () => {
+    if (logoutPending.current) return
+    logoutPending.current = true
+    setLoggingOut(true)
+    let logoutSucceeded = false
+    try {
+      const result = await apiLogout()
+      if (!result.ok) throw new Error('Logout failed')
+      logoutSucceeded = true
+      const redirect = result.data?.redirect
+      if (typeof redirect !== 'string' || !redirect.trim()) throw new Error('Invalid logout redirect')
+      const target = new URL(redirect, window.location.origin)
+      if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) throw new Error('Invalid logout redirect')
+      window.location.href = target.href
+    } catch {
+      toast({
+        title: t('Failed to log out'),
+        description: logoutSucceeded
+          ? t('Could not complete logout. Please try again.')
+          : t('You are still signed in. Please try again.'),
+        variant: 'error',
+      })
+    } finally {
+      logoutPending.current = false
+      setLoggingOut(false)
+    }
+  }
 
   const toggleTheme = () => {
     const next: Theme = theme === 'dark' ? 'light' : 'dark'
@@ -28,8 +62,8 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
-      <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4 sm:gap-3 sm:px-6">
-        <Link to="/" className="flex min-w-0 items-center gap-2.5" onClick={() => playPoolBallSound()}>
+      <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-2 sm:gap-3 sm:px-6">
+        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2.5 sm:flex-initial" onClick={() => playPoolBallSound()}>
           <svg
             className="h-9 w-9 shrink-0 transition-transform duration-500 ease-in-out hover:rotate-[360deg] hover:scale-110"
             viewBox="0 0 100 100"
@@ -44,7 +78,7 @@ export function AppHeader() {
           </svg>
           <span className="truncate text-lg font-extrabold">{title}</span>
         </Link>
-        <nav className="ml-2 flex items-center gap-1">
+        <nav className="order-last flex w-full items-center gap-1 overflow-x-auto sm:order-none sm:ml-2 sm:w-auto">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
@@ -69,7 +103,7 @@ export function AppHeader() {
             {t('Public Status')}
           </a>
         </nav>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <LanguageSelect className="mr-1 hidden sm:flex" />
           <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label={t('Toggle theme')} title={t('Toggle theme')}>
             {theme === 'dark' ? <Sun /> : <Moon />}
@@ -79,11 +113,16 @@ export function AppHeader() {
             size="icon"
             aria-label={t('Log out')}
             title={t('Log out')}
-            onClick={() => { window.location.href = '/auth/logout' }}
+            disabled={loggingOut}
+            aria-busy={loggingOut}
+            onClick={handleLogout}
           >
             <LogOut />
           </Button>
         </div>
+      </div>
+      <div className="mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6">
+        <BuildIdentifier />
       </div>
     </header>
   )
