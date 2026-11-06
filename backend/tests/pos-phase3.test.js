@@ -87,7 +87,9 @@ describe('POS phase 3: credit notes, reconciliation, day close, CSV', () => {
     const now = new Date();
     prisma.state.payments.push(
       { id: 'p1', sessionId: 's1', method: 'cash', amountCents: 1800, refundedCents: 0, status: 'captured', createdAt: now },
-      { id: 'p2', sessionId: 's1', method: 'card', amountCents: 1200, refundedCents: 200, status: 'partially_refunded', createdAt: now }
+      { id: 'p2', sessionId: 's1', method: 'card', amountCents: 1200, refundedCents: 200, status: 'partially_refunded', createdAt: now },
+      { id: 'p3', sessionId: 's1', method: 'card', amountCents: 9900, refundedCents: 0, status: 'pending', createdAt: now },
+      { id: 'p4', sessionId: 's1', method: 'card', amountCents: 9900, refundedCents: 0, status: 'failed', createdAt: now }
     );
     prisma.state.creditNotes.push({ id: 'cn1', number: 1, year: 2026, receiptId: 'rec1', sessionId: 's1', itemsJson: '[]', subtotalHtCents: 0, vatCents: 0, totalTtcCents: 200, createdAt: now });
     prisma.state.cashShifts.push({ id: 'sh1', openingFloatCents: 5000, openedAt: now, closedAt: now, countedCents: 6700, expectedCents: 6800, varianceCents: -100 });
@@ -97,6 +99,7 @@ describe('POS phase 3: credit notes, reconciliation, day close, CSV', () => {
     expect(res.status).toBe(200);
     expect(res.body.payments.byMethod.cash.netCents).toBe(1800);
     expect(res.body.payments.byMethod.card.netCents).toBe(1000);
+    expect(res.body.payments.byMethod.card.count).toBe(1);
     expect(res.body.creditNotes.totalTtcCents).toBe(200);
     expect(res.body.cashShifts.varianceCents).toBe(-100);
     expect(res.body.closure).toBeNull();

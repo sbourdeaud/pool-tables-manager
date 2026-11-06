@@ -38,7 +38,7 @@ describe('Reports', () => {
     expect(res.body.utilizationByTableType.type1[0].slice(0, 2)).toEqual([60, 60]);
     expect(res.body.drinksByTableType.type1[1][13]).toBe(3);
     expect(prisma.session.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ startedAt: { lt: expect.any(Date) }, OR: expect.any(Array) }),
+      where: expect.objectContaining({ status: { not: 'cancelled' }, startedAt: { lt: expect.any(Date) }, OR: expect.any(Array) }),
     }));
     expect(orderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: { not: 'cancelled' } }),

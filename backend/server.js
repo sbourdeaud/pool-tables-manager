@@ -7,6 +7,7 @@ require('dotenv').config({ quiet: true });
 const session = require('express-session');
 const oidc = require('openid-client');
 const bcrypt = require('bcryptjs');
+const sharp = require('sharp');
 const prisma = require('./src/prismaClient');
 const { sendMail } = require('./src/mailer');
 const { getCardProvider, getPublicConfig } = require('./src/payments/provider');
@@ -17,10 +18,8 @@ const app = express();
 const TRUST_PROXY = process.env.TRUST_PROXY ?? '1';
 app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY === 'true' ? true : TRUST_PROXY === 'false' ? false : TRUST_PROXY);
 app.use(cors());
-// The Stripe webhook needs the raw body for signature verification; every other
-// request gets the usual JSON parser.
 app.use((req, res, next) => {
-  if (req.path === '/api/webhooks/stripe' || req.path === '/api/admin/backup/import') return next();
+  if (req.path === '/api/webhooks/stripe' || req.path === '/api/admin/backup/import' || req.path.replace(/\/$/, '').toLowerCase() === '/api/table-background-images') return next();
   return express.json()(req, res, next);
 });
 
@@ -75,15 +74,15 @@ async function getOidcSettings(){
   return obj;
 }
 
-async function getSettingValue(key){
-  const row = await prisma.setting.findUnique({ where: { key } }).catch(()=>null);
+async function getSettingValue(key, db = prisma){
+  const row = await db.setting.findUnique({ where: { key } }).catch(()=>null);
   return row ? row.value : null;
 }
 
 // The POS/payments feature is optional and disabled by default. Enable it in
 // Settings → General ("Payments (POS)") which stores `pos_enabled = 'true'`.
-async function isPosEnabled(){
-  return (await getSettingValue('pos_enabled')) === 'true';
+async function isPosEnabled(db = prisma){
+  return (await getSettingValue('pos_enabled', db)) === 'true';
 }
 
 // Simple helper to build the OIDC configuration (cached). openid-client v6
@@ -333,8 +332,8 @@ function getActorName(req){
 // (CGI art. 286-I-3 bis / ISCA) requires that recorded sales are never destroyed.
 // The row is kept with voidedAt/voidedBy/voidReason set, and all reporting/read
 // queries filter it out via `voidedAt: null`.
-async function voidTabLineItem(id, actor, reason){
-  return prisma.tabLineItem.update({
+async function voidTabLineItem(id, actor, reason, db = prisma){
+  return db.tabLineItem.update({
     where: { id },
     data: { voidedAt: new Date(), voidedBy: actor, voidReason: reason || 'voided' }
   });
@@ -401,8 +400,8 @@ app.get('/api/admin/oidc/test', requireAuth, async (req, res) => {
   try {
     const s = await getOidcSettings();
     if(!s || !s.oidc_issuer) return res.status(400).json({ error: 'oidc_not_configured' });
-    const issuer = await Issuer.discover(s.oidc_issuer);
-    return res.json({ issuer: issuer.metadata });
+    const config = await oidc.discovery(new URL(s.oidc_issuer), s.oidc_client_id || 'oidc-test', s.oidc_client_secret || undefined);
+    return res.json({ issuer: config.serverMetadata() });
   } catch (err) {
     console.error('OIDC test error', err);
     res.status(500).json({ error: 'oidc_test_failed', message: err.message });
@@ -905,11 +904,11 @@ app.get('/api/reports/financial', requireAuth, async (req, res) => {
     // Payment methods breakdown (only when the optional POS feature is enabled).
     let byPaymentMethod = null;
     if(await isPosEnabled()){
-      const paymentRows = (await prisma.payment.findMany({ where: { createdAt: { gte: startDate, lte: endDate } } })) || [];
+      const movements = await paymentMovementsBetween(startDate, endDate);
       byPaymentMethod = {};
-      for(const payment of paymentRows){
+      for(const { payment, capturedCents, refundedCents } of movements){
         const method = payment.method || 'cash';
-        byPaymentMethod[method] = (byPaymentMethod[method] || 0) + (payment.amountCents || 0) - (payment.refundedCents || 0);
+        byPaymentMethod[method] = (byPaymentMethod[method] || 0) + capturedCents - refundedCents;
       }
     }
 
@@ -958,7 +957,7 @@ app.get('/api/reports/operations', requireAuth, async (req, res) => {
 
     const [sessions, tables, tableTypes, orders] = await Promise.all([
       prisma.session.findMany({
-        where: { startedAt: { lt: endDate }, OR: [{ endedAt: null }, { endedAt: { gt: startDate } }] },
+        where: { status: { not: 'cancelled' }, startedAt: { lt: endDate }, OR: [{ endedAt: null }, { endedAt: { gt: startDate } }] },
         select: { id: true, tableId: true, startedAt: true, endedAt: true }
       }),
       prisma.poolTable.findMany({ select: { id: true, tableTypeId: true } }),
@@ -1271,19 +1270,21 @@ function dayRange(dateStr){
 }
 
 async function computeDayReconciliation(start, end){
-  const payments = (await prisma.payment.findMany({ where: { createdAt: { gte: start, lte: end } } })) || [];
+  const movements = await paymentMovementsBetween(start, end);
   const byMethod = {};
   let capturedCents = 0;
   let refundedCents = 0;
-  for(const payment of payments){
-    const method = payment.method || 'cash';
+  let count = 0;
+  for(const movement of movements){
+    const method = movement.payment.method || 'cash';
     if(!byMethod[method]) byMethod[method] = { capturedCents: 0, refundedCents: 0, netCents: 0, count: 0 };
-    byMethod[method].capturedCents += payment.amountCents || 0;
-    byMethod[method].refundedCents += payment.refundedCents || 0;
-    byMethod[method].netCents += (payment.amountCents || 0) - (payment.refundedCents || 0);
-    byMethod[method].count += 1;
-    capturedCents += payment.amountCents || 0;
-    refundedCents += payment.refundedCents || 0;
+    byMethod[method].capturedCents += movement.capturedCents;
+    byMethod[method].refundedCents += movement.refundedCents;
+    byMethod[method].netCents += movement.capturedCents - movement.refundedCents;
+    byMethod[method].count += movement.count;
+    count += movement.count;
+    capturedCents += movement.capturedCents;
+    refundedCents += movement.refundedCents;
   }
   const creditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: start, lte: end } } })) || [];
   const creditNotesTotalCents = creditNotes.reduce((sum, note) => sum + (note.totalTtcCents || 0), 0);
@@ -1307,7 +1308,7 @@ async function computeDayReconciliation(start, end){
     to: end,
     terminal,
     payments: {
-      count: payments.length,
+      count,
       capturedCents,
       refundedCents,
       netCents: capturedCents - refundedCents,
@@ -1381,7 +1382,8 @@ app.get('/api/reports/payments/export', requireAuth, async (req, res) => {
     if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
     const from = dayRange(req.query.from).start;
     const to = dayRange(req.query.to || req.query.from).end;
-    const payments = (await prisma.payment.findMany({ where: { createdAt: { gte: from, lte: to } }, orderBy: { createdAt: 'asc' } })) || [];
+    const movements = await paymentMovementsBetween(from, to);
+    const payments = movements.map(item => item.payment);
     const creditNotes = (await prisma.creditNote.findMany({ where: { createdAt: { gte: from, lte: to } } })) || [];
 
     const receipts = payments.some(p => p.receiptId) ? ((await prisma.receipt.findMany({ where: { id: { in: [...new Set(payments.map(p => p.receiptId).filter(Boolean))] } } })) || []) : [];
@@ -1398,10 +1400,11 @@ app.get('/api/reports/payments/export', requireAuth, async (req, res) => {
       return table ? `#${table.number}` : '';
     };
 
-    const rows = [['Date', 'Type', 'Receipt', 'Table', 'Method', 'Provider', 'Amount TTC (cents)', 'Refunded (cents)', 'Net (cents)', 'Status']];
-    for(const payment of payments){
+    const rows = [['Date', 'Type', 'Receipt', 'Table', 'Method', 'Provider', 'Amount TTC (cents)', 'Refunded (cents)', 'Net (cents)', 'Status', 'Timestamp source']];
+    for(const movement of movements){
+      const { payment } = movement;
       const receipt = payment.receiptId ? receiptById.get(payment.receiptId) : null;
-      rows.push([
+      if(movement.count) rows.push([
         new Date(payment.createdAt).toISOString(),
         'payment',
         receipt ? `${receipt.number}/${receipt.year}` : '',
@@ -1409,9 +1412,15 @@ app.get('/api/reports/payments/export', requireAuth, async (req, res) => {
         payment.method,
         payment.provider || '',
         payment.amountCents,
-        payment.refundedCents || 0,
-        (payment.amountCents || 0) - (payment.refundedCents || 0),
-        payment.status
+        0,
+        payment.amountCents,
+        payment.status,
+        'payment_creation'
+      ]);
+      for(const refund of movement.refunds) rows.push([
+        new Date(refund.completedAt).toISOString(), 'refund',
+        receipt ? `${receipt.number}/${receipt.year}` : '', tableForSession(payment.sessionId),
+        payment.method, payment.provider || '', 0, refund.amountCents, -refund.amountCents, 'refunded', refund.timestampSource
       ]);
     }
     for(const note of creditNotes){
@@ -1579,25 +1588,153 @@ function normalizeTableTypeIcon(icon, fallbackName) {
   return tableTypeIconForName(fallbackName);
 }
 
+const TABLE_BACKGROUND_PRESETS = new Set(['preset-1', 'preset-2', 'preset-3', 'preset-4']);
+const TABLE_BACKGROUND_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const TABLE_BACKGROUND_MAX_BYTES = 5 * 1024 * 1024;
+const TABLE_BACKGROUND_MAX_PIXELS = 16 * 1024 * 1024;
+const TABLE_BACKGROUND_MAX_DIMENSION = 8192;
+const TABLE_BACKGROUND_MAX_COUNT = 32;
+const TABLE_BACKGROUND_IMAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function normalizeTableBackgroundImage(bytes, contentType) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > TABLE_BACKGROUND_MAX_BYTES) return null;
+  try {
+    const image = sharp(bytes, { failOn: 'warning', limitInputPixels: TABLE_BACKGROUND_MAX_PIXELS });
+    const metadata = await image.metadata();
+    if (`image/${metadata.format}` !== contentType || !metadata.width || !metadata.height
+      || metadata.width > TABLE_BACKGROUND_MAX_DIMENSION || metadata.height > TABLE_BACKGROUND_MAX_DIMENSION
+      || (metadata.pages || 1) !== 1) return null;
+    return await image.rotate().toFormat(metadata.format).toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+async function withTableBackgroundImagesLock(operation) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`LOCK TABLE "TableBackgroundImage" IN EXCLUSIVE MODE`;
+    return operation(tx);
+  });
+}
+
+async function saveTableTypeWithBackground(background, operation) {
+  const normalizedBackground = typeof background === 'string' && background.startsWith('upload:') ? background.toLowerCase() : background;
+  const save = async (client) => {
+    const invalid = await validateTableTypeBackground(normalizedBackground, client);
+    return invalid ? { invalid } : { tableType: await operation(client, normalizedBackground) };
+  };
+  return typeof background === 'string' && background.startsWith('upload:')
+    ? withTableBackgroundImagesLock(save) : save(prisma);
+}
+
+async function validateTableTypeBackground(background, client) {
+  if (background === undefined || background === null || TABLE_BACKGROUND_PRESETS.has(background)) return null;
+  if (typeof background !== 'string' || !background.startsWith('upload:') || !TABLE_BACKGROUND_IMAGE_ID.test(background.slice(7))) {
+    return { status: 400, error: 'invalid_background' };
+  }
+  const image = await client.tableBackgroundImage.findUnique({ where: { id: background.slice(7) }, select: { id: true } });
+  return image ? null : { status: 404, error: 'background_image_not_found' };
+}
+
+const parseTableBackgroundImage = express.raw({ type: () => true, limit: TABLE_BACKGROUND_MAX_BYTES, inflate: false });
+
+app.get('/api/table-background-images', requireAuth, async (req, res) => {
+  try {
+    const images = await prisma.tableBackgroundImage.findMany({ select: { id: true, contentType: true }, orderBy: { createdAt: 'asc' } });
+    res.json(images.map(({ id, contentType }) => ({ id, contentType })));
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/table-background-images', requireAuth, (req, res, next) => {
+  const contentType = (req.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (!TABLE_BACKGROUND_CONTENT_TYPES.has(contentType)) return res.status(415).json({ error: 'unsupported_image_type' });
+  parseTableBackgroundImage(req, res, (err) => {
+    if (err) {
+      if (err.type === 'entity.too.large') return res.status(413).json({ error: 'image_too_large' });
+      return res.status(err.status === 415 ? 415 : 400).json({ error: 'invalid_image' });
+    }
+    next();
+  });
+}, async (req, res) => {
+  const contentType = req.get('Content-Type').split(';')[0].trim().toLowerCase();
+  const bytes = await normalizeTableBackgroundImage(req.body, contentType);
+  if (!bytes) return res.status(400).json({ error: 'invalid_image' });
+  if (bytes.length > TABLE_BACKGROUND_MAX_BYTES) return res.status(413).json({ error: 'image_too_large' });
+  try {
+    const image = await withTableBackgroundImagesLock(async (tx) => {
+      if (await tx.tableBackgroundImage.count() >= TABLE_BACKGROUND_MAX_COUNT) return null;
+      return tx.tableBackgroundImage.create({ data: { contentType, bytes }, select: { id: true, contentType: true } });
+    });
+    if (!image) return res.status(409).json({ error: 'background_image_limit_reached' });
+    res.status(201).json({ id: image.id, contentType: image.contentType });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.delete('/api/table-background-images/:id', requireAuth, async (req, res) => {
+  if (!TABLE_BACKGROUND_IMAGE_ID.test(req.params.id)) return res.status(400).json({ error: 'invalid_image_id' });
+  const id = req.params.id.toLowerCase();
+  try {
+    const invalid = await withTableBackgroundImagesLock(async (tx) => {
+      const image = await tx.tableBackgroundImage.findUnique({ where: { id }, select: { id: true } });
+      if (!image) return { status: 404, error: 'background_image_not_found' };
+      const referenced = await tx.tableType.findFirst({ where: { background: { equals: `upload:${id}`, mode: 'insensitive' } }, select: { id: true } });
+      if (referenced) return { status: 409, error: 'background_image_in_use' };
+      await tx.tableBackgroundImage.delete({ where: { id } });
+      return null;
+    });
+    if (invalid) return res.status(invalid.status).json({ error: invalid.error });
+    res.status(204).end();
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.get('/api/table-background-images/:id', async (req, res) => {
+  if (!TABLE_BACKGROUND_IMAGE_ID.test(req.params.id)) return res.status(400).json({ error: 'invalid_image_id' });
+  try {
+    const image = await prisma.tableBackgroundImage.findUnique({ where: { id: req.params.id } });
+    if (!image) return res.status(404).json({ error: 'background_image_not_found' });
+    const extension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[image.contentType];
+    if (!extension) return res.status(400).json({ error: 'invalid_image' });
+    res.set({
+      'Content-Type': image.contentType,
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'Content-Disposition': `inline; filename="background-${image.id}.${extension}"`,
+      'Cache-Control': 'public, no-cache',
+    });
+    res.send(Buffer.from(image.bytes));
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+});
+
 // Table types and tables
 app.get('/api/table-types', requireAuth, async (req, res) => {
   try { const types = await prisma.tableType.findMany({ orderBy: { createdAt: 'asc' } }); res.json(types); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 app.post('/api/table-types', requireAuth, async (req, res) => {
-  const { name_en, name_fr, icon, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
-  try { const t = await prisma.tableType.create({ data: { name_en, name_fr, icon: normalizeTableTypeIcon(icon, name_en || name_fr), base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20, maxUsedHours: parseMaxUsedHours(maxUsedHours) } }); res.status(201).json(t); } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
+  const { name_en, name_fr, icon, background, backgroundOpacity, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  if (backgroundOpacity !== undefined && (!Number.isInteger(backgroundOpacity) || backgroundOpacity < 0 || backgroundOpacity > 100)) return res.status(400).json({ error: 'invalid_background_opacity' });
+  try {
+    const result = await saveTableTypeWithBackground(background, (client, normalizedBackground) => client.tableType.create({ data: { name_en, name_fr, icon: normalizeTableTypeIcon(icon, name_en || name_fr), background: normalizedBackground ?? null, backgroundOpacity: backgroundOpacity ?? 70, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20, maxUsedHours: parseMaxUsedHours(maxUsedHours) } }));
+    if (result.invalid) return res.status(result.invalid.status).json({ error: result.invalid.error });
+    res.status(201).json(result.tableType);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Update table type
 app.put('/api/table-types/:id', requireAuth, async (req, res) => {
-  const { name_en, name_fr, icon, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  const { name_en, name_fr, icon, background, backgroundOpacity, base_hourly_cents, vatRatePercent, maxUsedHours } = req.body;
+  if (backgroundOpacity !== undefined && (!Number.isInteger(backgroundOpacity) || backgroundOpacity < 0 || backgroundOpacity > 100)) return res.status(400).json({ error: 'invalid_background_opacity' });
   try {
     const data = { name_en, name_fr, base_hourly_cents, vatRatePercent: Number(vatRatePercent) || 20 };
     if (typeof icon !== 'undefined') data.icon = normalizeTableTypeIcon(icon, name_en || name_fr);
+    if (typeof backgroundOpacity !== 'undefined') data.backgroundOpacity = backgroundOpacity;
     if (typeof maxUsedHours !== 'undefined') data.maxUsedHours = parseMaxUsedHours(maxUsedHours);
-    const updated = await prisma.tableType.update({ where: { id: req.params.id }, data });
-    res.json(updated);
+    const result = await saveTableTypeWithBackground(background, (client, normalizedBackground) => {
+      if (typeof normalizedBackground !== 'undefined') data.background = normalizedBackground;
+      return client.tableType.update({ where: { id: req.params.id }, data });
+    });
+    if (result.invalid) return res.status(result.invalid.status).json({ error: result.invalid.error });
+    res.json(result.tableType);
   } catch (e) { console.error(e); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -1801,30 +1938,35 @@ app.put('/api/tables/:id', requireAuth, async (req, res) => {
     console.log('[PUT /api/tables/:id] Request body:', req.body);
     console.log('[PUT /api/tables/:id] Table ID:', req.params.id);
     const { number, status, tableTypeId } = req.body;
-    const updates = [];
-    const params = [];
-    if (typeof number !== 'undefined') { params.push(number); updates.push(`number = $${params.length}`); }
-    if (typeof status !== 'undefined') { params.push(status); updates.push(`status = $${params.length}`); }
-
-    // Leaving maintenance starts a fresh "since maintenance" usage counter; the
-    // lifetime total is never reset.
-    if (typeof status !== 'undefined' && status === 'available') {
-      const current = await prisma.$queryRawUnsafe(`SELECT status FROM "PoolTable" WHERE id::text = $1`, req.params.id);
+    const r = await prisma.$transaction(async (tx) => {
+      const updates = [];
+      const params = [];
+      if (typeof number !== 'undefined') { params.push(number); updates.push(`number = $${params.length}`); }
+      const statusIndex = params.length;
+      if (typeof status !== 'undefined') { params.push(status); updates.push(`status = $${params.length}`); }
+      if (typeof tableTypeId !== 'undefined') { params.push(tableTypeId); updates.push(`table_type_id = $${params.length}::uuid`); }
+      if (updates.length === 0) throw requestError(400, 'no_updates');
+      const current = await lockPoolTables(tx, [req.params.id]);
       const prev = Array.isArray(current) ? current[0] : current;
-      if (prev && prev.status === 'maintenance') updates.push(`used_since_maintenance_seconds = 0`);
-    }
-
-    if (typeof tableTypeId !== 'undefined') { params.push(tableTypeId); updates.push(`table_type_id = $${params.length}::uuid`); }
-    if (updates.length === 0) return res.status(400).json({ error: 'no_updates' });
-    params.push(req.params.id);
-    const sql = `UPDATE "PoolTable" SET ${updates.join(', ')} WHERE id::text = $${params.length} RETURNING id, table_type_id, number, status, total_used_seconds, used_since_maintenance_seconds, created_at`;
-    console.log('[PUT /api/tables/:id] SQL:', sql);
-    console.log('[PUT /api/tables/:id] Params:', params);
-    const out = await prisma.$queryRawUnsafe(sql, ...params);
-    const r = Array.isArray(out) ? out[0] : out;
+      if (!prev) throw requestError(404, 'table_not_found');
+      if (status === 'available' || status === 'maintenance') {
+        if (await tableHasActiveSession(tx, req.params.id)) {
+          if (status === 'available' && prev.status === 'maintenance') params[statusIndex] = 'occupied';
+          else throw requestError(409, 'table_unavailable');
+        }
+        if (status === 'available' && prev.status === 'maintenance') updates.push(`used_since_maintenance_seconds = 0`);
+      }
+      params.push(req.params.id);
+      const sql = `UPDATE "PoolTable" SET ${updates.join(', ')} WHERE id::text = $${params.length} RETURNING id, table_type_id, number, status, total_used_seconds, used_since_maintenance_seconds, created_at`;
+      console.log('[PUT /api/tables/:id] SQL:', sql);
+      console.log('[PUT /api/tables/:id] Params:', params);
+      const out = await tx.$queryRawUnsafe(sql, ...params);
+      return Array.isArray(out) ? out[0] : out;
+    });
     console.log('[PUT /api/tables/:id] Result:', r);
     res.json({ id: r.id, tableTypeId: r.table_type_id, number: r.number, status: r.status, totalUsedSeconds: r.total_used_seconds || 0, usedSinceMaintenanceSeconds: r.used_since_maintenance_seconds || 0, createdAt: r.created_at });
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
     if(e && (e.code === 'P2002' || (e.meta && e.meta.code === '23505'))) {
       return res.status(409).json({ error: 'number_in_use' });
     }
@@ -1842,6 +1984,73 @@ app.delete('/api/tables/:id', requireAuth, async (req, res) => {
 });
 
 // Sessions: start, end
+function requestError(status, error, details = {}) {
+  const err = new Error(error);
+  err.status = status;
+  err.details = details;
+  return err;
+}
+
+const INTERNAL_ZERO_META_DESCRIPTIONS = ['subscriber_count', 'non_subscriber_started_at'];
+
+function sessionActivityLineItemWhere(sessionId) {
+  return {
+    sessionId,
+    OR: [
+      { type: { not: 'meta' } },
+      { description: null },
+      { description: { notIn: INTERNAL_ZERO_META_DESCRIPTIONS } },
+      { unitPrice: { not: 0 } },
+      { totalCents: { not: 0 } },
+      { vatAmountCents: { not: 0 } },
+      { correctedFromId: { not: null } },
+    ],
+  };
+}
+
+function refundOperations(payment) {
+  return JSON.parse(payment.refundOperationsJson || '[]');
+}
+
+function refundUnresolved(refund) {
+  return ['pending', 'unknown'].includes(refund.status);
+}
+
+function cardPaymentUnresolved(payment) {
+  return !['captured', 'partially_refunded', 'refunded', 'canceled', 'creation_rejected'].includes(payment.status) || refundOperations(payment).some(refundUnresolved);
+}
+
+async function sessionCardPayments(db, sessionId) {
+  return (await db.payment.findMany({ where: { sessionId, method: 'card' } })) || [];
+}
+
+async function withSessionWriteLock(sessionId, operation) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('pool_tables_session'), hashtext($1::text))`, String(sessionId));
+    const session = await tx.session.findUnique({ where: { id: sessionId } });
+    return operation(tx, session);
+  }, { maxWait: 10000, timeout: 600000 });
+}
+
+async function lockPoolTables(tx, tableIds) {
+  return tx.$queryRawUnsafe(
+    `SELECT id, table_type_id, number, status FROM "PoolTable" WHERE id::text = ANY($1::text[]) ORDER BY id FOR UPDATE`,
+    tableIds
+  );
+}
+
+async function tableHasActiveSession(tx, tableId) {
+  const sessions = await tx.session.findMany({ where: { tableId, status: 'active' }, select: { id: true }, take: 1 });
+  return Boolean(sessions && sessions.length);
+}
+
+async function releaseSessionTable(tx, tableId) {
+  await tx.$executeRawUnsafe(
+    `UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1 AND status = 'occupied' AND NOT EXISTS (SELECT 1 FROM "Session" WHERE table_id = "PoolTable".id AND status = 'active')`,
+    tableId
+  );
+}
+
 async function createSessionPlayersInTx(tx, sessionId, numberOfPlayers, subscriberCount){
   const players = Math.max(0, Math.min(Number(numberOfPlayers) || 0, 50));
   const subscribers = Math.max(0, Math.min(Number(subscriberCount) || 0, players));
@@ -1866,10 +2075,10 @@ app.post('/api/sessions', requireAuth, async (req, res) => {
     
     // mark table occupied and create session in transaction using raw SQL (snake_case DB)
     const result = await prisma.$transaction(async (tx) => {
-      const tbl = await tx.$queryRawUnsafe(`SELECT id, table_type_id, number, status FROM "PoolTable" WHERE id::text = $1 FOR UPDATE`, tableId);
+      const tbl = await lockPoolTables(tx, [tableId]);
       const table = Array.isArray(tbl) ? tbl[0] : tbl;
       if (!table) throw new Error('table_not_found');
-      if (table.status === 'occupied') throw new Error('table_unavailable');
+      if (table.status !== 'available' || await tableHasActiveSession(tx, tableId)) throw new Error('table_unavailable');
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id::text = $1`, tableId);
       const sessionId = crypto.randomUUID();
       const sess = await tx.$queryRawUnsafe(`INSERT INTO "Session" (id, table_id, patron_id, number_of_players, pin, started_at, status, created_at) VALUES ($1::uuid, $2::uuid, $3, $4, $5, now(), 'active', now()) RETURNING id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, pin`, sessionId, tableId, patronId, numberOfPlayers || 1, pin);
@@ -1903,18 +2112,71 @@ app.post('/api/sessions', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/api/sessions/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    const result = await withSessionWriteLock(req.params.id, async (tx, session) => {
+      if (!session) throw requestError(404, 'session_not_found');
+      if (session.status !== 'active') throw requestError(409, 'session_not_active');
+
+      const sale = await tx.tabLineItem.findFirst({ where: sessionActivityLineItemWhere(session.id), select: { id: true } });
+      if (sale) throw requestError(409, 'session_has_activity');
+      const order = await tx.pendingOrder.findFirst({ where: { sessionId: session.id, status: { in: ['pending', 'fulfilled'] } }, select: { id: true } });
+      if (order) throw requestError(409, 'session_has_activity');
+      const settledPlayer = await tx.sessionPlayer.findFirst({
+        where: {
+          sessionId: session.id,
+          OR: [{ status: 'settled' }, { settledAt: { not: null } }, { settledBy: { not: null } }, { settledTableCents: { gt: 0 } }],
+        },
+        select: { id: true },
+      });
+      if (settledPlayer) throw requestError(409, 'session_has_activity');
+      const receipt = await tx.receipt.findFirst({ where: { sessionId: session.id }, select: { id: true } });
+      if (receipt) throw requestError(409, 'session_has_activity');
+      const transaction = await tx.transaction.findFirst({ where: { sessionId: session.id }, select: { id: true } });
+      if (transaction) throw requestError(409, 'session_has_activity');
+      const payment = await tx.payment.findFirst({ where: { sessionId: session.id }, select: { id: true } });
+      if (payment) throw requestError(409, 'session_has_activity');
+
+      await lockPoolTables(tx, [session.tableId]);
+      const cancelledAt = new Date(Math.max(Date.now(), session.startedAt ? new Date(session.startedAt).getTime() : 0));
+      await tx.session.update({
+        where: { id: session.id },
+        data: { status: 'cancelled', endedAt: cancelledAt, pin: null, lookingForPlayersCount: null, lookingForPlayersUpTo: false },
+      });
+      await releaseSessionTable(tx, session.tableId);
+      return { success: true, id: session.id, status: 'cancelled' };
+    });
+    res.json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error(err);
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
 app.patch('/api/sessions/:id/end', requireAuth, async (req, res) => {
   try {
-    // end session and free table using raw SQL
-    const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET ended_at = now(), status = 'ended' WHERE id::text = $1 RETURNING id, table_id, started_at`, req.params.id);
-    const row = Array.isArray(out) ? out[0] : out;
-    if(!row) return res.status(404).json({ error: 'not_found' });
-    await prisma.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, row.table_id);
-    const elapsedSeconds = row.started_at ? (Date.now() - new Date(row.started_at).getTime()) / 1000 : 0;
-    await addTableUsage(prisma, row.table_id, elapsedSeconds);
-    await checkAndSendMaintenanceAlert(row.table_id, elapsedSeconds);
-    res.json({ id: row.id });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+    const result = await withSessionWriteLock(req.params.id, async (tx, session) => {
+      if (!session) throw requestError(404, 'not_found');
+      if (session.status !== 'active') throw requestError(409, 'session_not_active');
+      const pendingPayment = (await sessionCardPayments(tx, session.id)).find(p => cardPaymentUnresolved(p) || (!p.receiptId && ['captured', 'partially_refunded'].includes(p.status)));
+      if (pendingPayment) throw requestError(409, 'session_has_activity');
+      await lockPoolTables(tx, [session.tableId]);
+      const out = await tx.$queryRawUnsafe(`UPDATE "Session" SET ended_at = GREATEST(started_at, clock_timestamp()), status = 'ended' WHERE id::text = $1 AND status = 'active' RETURNING id, table_id, started_at, ended_at`, req.params.id);
+      const row = Array.isArray(out) ? out[0] : out;
+      if (!row) throw requestError(409, 'session_not_active');
+      await releaseSessionTable(tx, row.table_id);
+      const elapsedSeconds = row.started_at ? Math.max(0, (new Date(row.ended_at || Date.now()).getTime() - new Date(row.started_at).getTime()) / 1000) : 0;
+      await addTableUsage(tx, row.table_id, elapsedSeconds);
+      return { row, elapsedSeconds };
+    });
+    await checkAndSendMaintenanceAlert(result.row.table_id, result.elapsedSeconds);
+    res.json({ id: result.row.id });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error(err);
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 function getNonSubscriberChargeStart(startedAt, startMeta){
@@ -2045,9 +2307,9 @@ function calculateHourlyPlayerBilling({ players, baseHourlyCents, subscriberDisc
   return { shares, slots, billableSlotCount: slots.length };
 }
 
-async function listSessionPlayers(sessionId){
+async function listSessionPlayers(sessionId, db = prisma){
   try {
-    return (await prisma.sessionPlayer.findMany({
+    return (await db.sessionPlayer.findMany({
       where: { sessionId },
       orderBy: { playerNumber: 'asc' },
     })) || [];
@@ -2076,8 +2338,8 @@ function mapSessionPlayer(player, shareCents = 0){
 // Compute the live table-time charge (and the table type's VAT rate) for an active session.
 // Sessions with a seat ledger use whole-hour slots split between non-subscribers who were
 // active at each slot start. Sessions without seats keep the legacy aggregate calculation.
-async function getTableChargeForSession(session, asOf = new Date()){
-  const tableRows = await prisma.$queryRawUnsafe(`
+async function getTableChargeForSession(session, asOf = new Date(), db = prisma){
+  const tableRows = await db.$queryRawUnsafe(`
     SELECT tt.base_hourly_cents, tt.vat_rate_percent
     FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id
     WHERE p.id::text = $1
@@ -2085,9 +2347,9 @@ async function getTableChargeForSession(session, asOf = new Date()){
   const table = Array.isArray(tableRows) ? tableRows[0] : tableRows;
   if(!table || !session.startedAt) return { tableCharge: 0, hoursCharged: 0, vatRatePercent: 20, players: [], playerShares: [] };
 
-  const discountSetting = await prisma.setting.findUnique({ where: { key: 'subscriber_discount' } });
+  const discountSetting = await db.setting.findUnique({ where: { key: 'subscriber_discount' } });
   const subscriberDiscountPercent = discountSetting ? parseFloat(discountSetting.value) : 50;
-  const players = await listSessionPlayers(session.id);
+  const players = await listSessionPlayers(session.id, db);
 
   if (players.length > 0) {
     const billing = calculateHourlyPlayerBilling({
@@ -2115,7 +2377,7 @@ async function getTableChargeForSession(session, asOf = new Date()){
     };
   }
 
-  const items = await prisma.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
+  const items = await db.tabLineItem.findMany({ where: { sessionId: session.id, voidedAt: null } });
   const subscriberMeta = items.find(i => i.type === 'meta' && i.description === 'subscriber_count');
   const nonSubscriberStartMeta = items.find(i => i.type === 'meta' && i.description === 'non_subscriber_started_at');
   const subscriberCount = subscriberMeta ? subscriberMeta.quantity : 0;
@@ -2147,9 +2409,9 @@ async function getTableChargeForSession(session, asOf = new Date()){
 
 // Gross amount due for an active session (table time + non-voided sale items),
 // before any checkout discount. Used to validate card payment amounts.
-async function computeSessionGrossCents(session){
-  const { tableCharge } = await getTableChargeForSession(session);
-  const items = (await prisma.tabLineItem.findMany({
+async function computeSessionGrossCents(session, db = prisma){
+  const { tableCharge } = await getTableChargeForSession(session, new Date(), db);
+  const items = (await db.tabLineItem.findMany({
     where: { sessionId: session.id, voidedAt: null, type: { notIn: ['meta', 'table_settlement', 'settlement'] } }
   })) || [];
   const itemsTotal = items.reduce((sum, item) => sum + (item.totalCents || 0), 0);
@@ -2223,14 +2485,17 @@ async function createCreditNoteForRefund(tx, { payment, amountCents, reason, act
 // receipt (required for French anti-fraud compliance), then ends the session.
 app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
   try {
-    const session = await prisma.session.findUnique({ where: { id: req.params.id } });
-    if(!session) return res.status(404).json({ error: 'not_found' });
-    if(session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
+    const { result, session, elapsedSeconds } = await withSessionWriteLock(req.params.id, async (tx, session) => {
+      if(!session) throw requestError(404, 'not_found');
+      if(session.status !== 'active') throw requestError(409, 'session_not_active');
+      const cardPayments = await sessionCardPayments(tx, session.id);
+      if(cardPayments.some(cardPaymentUnresolved)) throw requestError(409, 'payment_reconciliation_required');
+      await lockPoolTables(tx, [session.tableId]);
 
     const discountCentsRequested = Math.max(0, Math.round(Number(req.body.discountCents) || 0));
 
-    const { tableCharge, vatRatePercent: tableVatRate } = await getTableChargeForSession(session);
-    const saleItems = await prisma.tabLineItem.findMany({
+    const { tableCharge, vatRatePercent: tableVatRate } = await getTableChargeForSession(session, new Date(), tx);
+    const saleItems = await tx.tabLineItem.findMany({
       where: { sessionId: session.id, voidedAt: null, type: { notIn: ['meta', 'table_settlement', 'settlement'] } }
     });
 
@@ -2248,25 +2513,28 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     const discountCents = Math.min(discountCentsRequested, grossTotalCents);
 
     // Optional payment collection (POS phase 1: cash, split across payers).
-    const posEnabled = await isPosEnabled();
+    const posEnabled = await isPosEnabled(tx);
     const totalDueCents = grossTotalCents - discountCents;
     let paymentPlan = null;
     if(posEnabled){
       const requested = Array.isArray(req.body.payments) && req.body.payments.length > 0
         ? req.body.payments
         : [{ method: 'cash', amountCents: totalDueCents }];
-      const currency = (await getSettingValue('currency')) || 'EUR';
+      const currency = (await getSettingValue('currency', tx)) || 'EUR';
       const rows = [];
+      const cardIds = new Set();
       for (const p of requested) {
         if (p && p.method === 'card') {
           // Cards are captured by the provider first; checkout attaches the payment.
           const paymentId = p.paymentId ? String(p.paymentId) : '';
-          if (!paymentId) return res.status(400).json({ error: 'payment_id_required' });
-          const existing = await prisma.payment.findUnique({ where: { id: paymentId } });
-          if (!existing || existing.sessionId !== session.id) return res.status(400).json({ error: 'invalid_payment' });
-          if (existing.status !== 'captured') return res.status(400).json({ error: 'payment_not_captured' });
-          if (existing.receiptId) return res.status(400).json({ error: 'payment_already_used' });
-          rows.push({ method: 'card', amountCents: existing.amountCents, paymentId: existing.id });
+          if (!paymentId) throw requestError(400, 'payment_id_required');
+          if (cardIds.has(paymentId)) throw requestError(400, 'duplicate_payment');
+          cardIds.add(paymentId);
+          const existing = await tx.payment.findUnique({ where: { id: paymentId } });
+          if (!existing || existing.sessionId !== session.id || existing.method !== 'card') throw requestError(400, 'invalid_payment');
+           if (!['captured', 'partially_refunded'].includes(existing.status)) throw requestError(400, 'payment_not_captured');
+           if (existing.receiptId) throw requestError(400, 'payment_already_used');
+           rows.push({ method: 'card', amountCents: existing.amountCents - (existing.refundedCents || 0), paymentId: existing.id });
         } else {
           rows.push({
             method: 'cash',
@@ -2275,14 +2543,19 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
           });
         }
       }
+      if(cardPayments.some(p => !p.receiptId && ['captured', 'partially_refunded'].includes(p.status) && !cardIds.has(p.id))) {
+        throw requestError(409, 'card_payment_not_attached');
+      }
       if(rows.some(r => r.amountCents <= 0)){
-        return res.status(400).json({ error: 'invalid_payment_amount' });
+        throw requestError(400, 'invalid_payment_amount');
       }
       const paidCents = rows.reduce((sum, r) => sum + r.amountCents, 0);
       if(paidCents !== totalDueCents){
-        return res.status(400).json({ error: 'payment_mismatch', expectedCents: totalDueCents, receivedCents: paidCents });
+        throw requestError(400, 'payment_mismatch', { expectedCents: totalDueCents, receivedCents: paidCents });
       }
       paymentPlan = { rows, currency };
+    } else if(cardPayments.some(p => !p.receiptId && ['captured', 'partially_refunded'].includes(p.status))) {
+      throw requestError(409, 'card_payment_not_attached');
     }
 
     const receiptItems = saleItems.map(i => ({ description: i.description, quantity: i.quantity, unitPrice: i.unitPrice, totalCents: i.totalCents, vatRatePercent: i.vatRatePercent }));
@@ -2291,7 +2564,6 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
     const sessionEndedAt = new Date();
     const elapsedSeconds = session.startedAt ? (sessionEndedAt.getTime() - new Date(session.startedAt).getTime()) / 1000 : 0;
 
-    const result = await prisma.$transaction(async (tx) => {
       // Persist the table-time charge as a durable, VAT-tagged sale record
       if(tableCharge > 0){
         await tx.tabLineItem.create({ data: {
@@ -2345,6 +2617,7 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
 
       const payments = [];
       if(paymentPlan){
+        if(paymentPlan.rows.some(row => row.method === 'cash')) await lockCashMovements(tx);
         for(const row of paymentPlan.rows){
           if(row.paymentId){
             payments.push(await tx.payment.update({ where: { id: row.paymentId }, data: { receiptId: receipt.id } }));
@@ -2357,6 +2630,7 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
             method: row.method,
             amountCents: row.amountCents,
             currency: paymentPlan.currency,
+            createdAt: new Date(),
             status: 'captured',
             idempotencyKey: crypto.randomUUID(),
             detailsJson: row.tenderedCents != null
@@ -2368,12 +2642,12 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
       }
 
       await tx.$executeRawUnsafe(`UPDATE "Session" SET ended_at = $2, status = 'ended' WHERE id::text = $1`, session.id, sessionEndedAt);
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id::text = $1`, session.tableId);
+      await releaseSessionTable(tx, session.tableId);
 
       // Record this session's duration against the table's usage counters
       await addTableUsage(tx, session.tableId, elapsedSeconds);
 
-      return { receipt, payments };
+      return { result: { receipt, payments }, session, elapsedSeconds };
     });
 
     await checkAndSendMaintenanceAlert(session.tableId, elapsedSeconds);
@@ -2389,25 +2663,68 @@ app.post('/api/sessions/:id/checkout', requireAuth, async (req, res) => {
       payments: (result.payments || []).map(payment => ({
         id: payment.id,
         method: payment.method,
-        amountCents: payment.amountCents,
+        amountCents: payment.amountCents - (payment.refundedCents || 0),
         currency: payment.currency,
         status: payment.status,
         details: payment.detailsJson ? JSON.parse(payment.detailsJson) : null
       }))
     });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'checkout_failed' }); }
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error(err);
+    res.status(500).json({ error: 'checkout_failed' });
+  }
 });
 
 // ---------------------------------------------------------------------------
 // Payments & cash shifts (optional POS feature, gated by the pos_enabled setting)
 // ---------------------------------------------------------------------------
 
+function isSuccessfulPayment(payment) {
+  return ['captured', 'partially_refunded', 'refunded'].includes(payment.status);
+}
+
 // Net cash movement between two instants, used for cash-shift reconciliation.
-async function cashTotalsBetween(start, end){
-  const rows = (await prisma.payment.findMany({ where: { method: 'cash', createdAt: { gte: start, lte: end } } })) || [];
-  const capturedCents = rows.reduce((sum, p) => sum + (p.amountCents || 0), 0);
-  const refundedCents = rows.reduce((sum, p) => sum + (p.refundedCents || 0), 0);
-  return { capturedCents, refundedCents, netCents: capturedCents - refundedCents, count: rows.length };
+function recordedRefunds(payment) {
+  const operations = refundOperations(payment).filter(item => item.status === 'refunded').map(item => ({
+    ...item,
+    completedAt: item.completedAt || payment.createdAt,
+    timestampSource: item.completedAt ? item.timestampSource || 'confirmation' : 'legacy_payment_time',
+  }));
+  const residual = (payment.refundedCents || 0) - operations.reduce((sum, item) => sum + item.amountCents, 0);
+  if(residual > 0) operations.push({ reference: `legacy-${payment.id}`, amountCents: residual, status: 'refunded', completedAt: payment.createdAt, timestampSource: 'legacy_payment_time' });
+  return operations;
+}
+
+async function paymentMovementsBetween(start, end, db = prisma, method) {
+  const rows = (await db.payment.findMany({ where: { ...(method ? { method } : {}), OR: [{ createdAt: { gte: start, lte: end } }, { refundedCents: { gt: 0 } }] } })) || [];
+  const inRange = value => new Date(value) >= start && new Date(value) <= end;
+  return rows.filter(isSuccessfulPayment).map(payment => {
+    const refunds = recordedRefunds(payment).filter(item => inRange(item.completedAt));
+    const count = inRange(payment.createdAt) ? 1 : 0;
+    return { payment, count, capturedCents: count ? payment.amountCents || 0 : 0, refundedCents: refunds.reduce((sum, item) => sum + item.amountCents, 0), refunds };
+  }).filter(item => item.count || item.refundedCents);
+}
+
+async function lockCashMovements(tx) {
+  await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('pool_cash_movements'))`);
+}
+
+async function cashTotalsBetween(start, end, db = prisma){
+  const rows = await paymentMovementsBetween(start, end, db, 'cash');
+  const capturedCents = rows.reduce((sum, p) => sum + p.capturedCents, 0);
+  const refundedCents = rows.reduce((sum, p) => sum + p.refundedCents, 0);
+  return { capturedCents, refundedCents, netCents: capturedCents - refundedCents, count: rows.reduce((sum, p) => sum + p.count, 0) };
+}
+
+async function recordLiveCardStatus(payment, status) {
+  if(!['captured', 'canceled', 'presenting', 'pending'].includes(status)) return payment;
+  return withSessionWriteLock(payment.sessionId, async (tx) => {
+    const current = await tx.payment.findUnique({ where: { id: payment.id } });
+    if(!current || isSuccessfulPayment(current) || current.status === 'creation_rejected' || !cardPaymentUnresolved(current) || !current.providerRef || current.providerRef !== payment.providerRef) return current || payment;
+    if(current.status === status) return current;
+    return tx.payment.update({ where: { id: current.id }, data: { status } });
+  });
 }
 
 function mapPayment(payment){
@@ -2419,6 +2736,8 @@ function mapPayment(payment){
     provider: payment.provider,
     amountCents: payment.amountCents,
     refundedCents: payment.refundedCents || 0,
+    refunds: refundOperations(payment),
+    refundPending: refundOperations(payment).some(refundUnresolved),
     currency: payment.currency,
     status: payment.status,
     createdAt: payment.createdAt,
@@ -2444,45 +2763,74 @@ app.post('/api/payments/card', requireAuth, async (req, res) => {
 
     const sessionId = req.body && req.body.sessionId ? String(req.body.sessionId) : '';
     const amountCents = Math.round(Number(req.body && req.body.amountCents) || 0);
-    if(!sessionId || amountCents <= 0) return res.status(400).json({ error: 'invalid_request' });
+    if(!sessionId || !Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 2147483647) return res.status(400).json({ error: 'invalid_request' });
+    const suppliedKey = req.body && req.body.idempotencyKey;
+    if(suppliedKey !== undefined && (typeof suppliedKey !== 'string' || !suppliedKey.trim() || suppliedKey.length > 255)) return res.status(400).json({ error: 'invalid_idempotency_key' });
+    const idempotencyKey = suppliedKey || crypto.randomUUID();
 
-    const session = await prisma.session.findUnique({ where: { id: sessionId } });
-    if(!session) return res.status(404).json({ error: 'not_found' });
-    if(session.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
+    const reservation = await withSessionWriteLock(sessionId, async (tx, session) => {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('pool_payment_idempotency'), hashtext($1::text))`, idempotencyKey);
+      const duplicate = await tx.payment.findFirst({ where: { idempotencyKey } });
+      if(duplicate){
+        if (duplicate.sessionId !== sessionId || duplicate.method !== 'card' || duplicate.amountCents !== amountCents) {
+          return { status: 409, body: { error: 'idempotency_conflict' } };
+        }
+        return { status: 200, body: { paymentId: duplicate.id, status: duplicate.status, provider: duplicate.provider, duplicate: true } };
+      }
+      if(!session) return { status: 404, body: { error: 'not_found' } };
+      if(session.status !== 'active') return { status: 409, body: { error: 'session_not_active' } };
 
-    // Never allow charging more than the server-computed amount due.
-    const grossCents = await computeSessionGrossCents(session);
-    if(amountCents > grossCents) return res.status(400).json({ error: 'amount_exceeds_total', maxCents: grossCents });
+      const cards = await sessionCardPayments(tx, session.id);
+      if(cards.some(cardPaymentUnresolved)) return { status: 409, body: { error: 'payment_reconciliation_required' } };
+      const grossCents = await computeSessionGrossCents(session, tx);
+      const alreadyPaid = cards.filter(p => !p.receiptId && ['captured', 'partially_refunded'].includes(p.status))
+        .reduce((sum, p) => sum + Math.max(0, p.amountCents - (p.refundedCents || 0)), 0);
+      const remainingCents = Math.max(0, grossCents - alreadyPaid);
+      if(amountCents > remainingCents) return { status: 400, body: { error: 'amount_exceeds_total', maxCents: remainingCents } };
 
-    const currency = (await getSettingValue('currency')) || 'EUR';
-    const idempotencyKey = req.body && req.body.idempotencyKey ? String(req.body.idempotencyKey) : crypto.randomUUID();
+      const currency = (await getSettingValue('currency', tx)) || 'EUR';
+      const payment = await tx.payment.create({ data: {
+        sessionId: session.id,
+        provider: provider.name,
+        method: 'card',
+        amountCents,
+        currency,
+        status: 'pending',
+        idempotencyKey,
+        createdBy: getActorName(req)
+      }});
+      return { payment, currency, idempotencyKey };
+    });
 
-    // Idempotent creation: a retried request returns the existing payment.
-    const duplicate = await prisma.payment.findFirst({ where: { idempotencyKey } });
-    if(duplicate){
-      return res.status(200).json({ paymentId: duplicate.id, status: duplicate.status, provider: duplicate.provider, duplicate: true });
-    }
+    if (!reservation.payment) return res.status(reservation.status).json(reservation.body);
 
     let intent;
     try {
-      intent = await provider.createCardPayment({ amountCents, currency, reference: idempotencyKey });
+      intent = await provider.createCardPayment({ amountCents, currency: reservation.currency, reference: reservation.idempotencyKey });
     } catch (err) {
       console.error('card payment provider error', err);
-      return res.status(502).json({ error: err.code || 'card_payment_failed' });
+      const providerRef = typeof err?.providerRef === 'string' && err.providerRef.trim() ? err.providerRef : null;
+      await withSessionWriteLock(sessionId, async (tx) => {
+        const current = await tx.payment.findUnique({ where: { id: reservation.payment.id } });
+        if(current && current.status === 'pending' && !current.providerRef) await tx.payment.update({ where: { id: current.id }, data: { status: err.noRemoteObject === true && !providerRef ? 'creation_rejected' : 'unknown', providerRef } });
+      }).catch((updateError) => console.error('card failure recording failed', updateError));
+      return res.status(502).json({ error: err?.code || 'card_payment_failed', paymentId: reservation.payment.id, ...(providerRef ? { providerRef } : {}) });
     }
 
-    const payment = await prisma.payment.create({ data: {
-      sessionId: session.id,
-      provider: provider.name,
-      method: 'card',
-      amountCents,
-      currency,
-      status: intent.status || 'presenting',
-      providerRef: intent.providerRef,
-      idempotencyKey,
-      createdBy: getActorName(req)
-    }});
-    res.status(201).json({ paymentId: payment.id, status: payment.status, provider: provider.name });
+    try {
+      const providerRef = typeof intent?.providerRef === 'string' && intent.providerRef ? intent.providerRef : null;
+      const status = providerRef && ['captured', 'canceled', 'presenting', 'pending'].includes(intent.status) ? intent.status : 'unknown';
+      const payment = await withSessionWriteLock(sessionId, async (tx) => {
+        const current = await tx.payment.findUnique({ where: { id: reservation.payment.id } });
+        if(!current || current.status !== 'pending' || current.providerRef) return current;
+        return tx.payment.update({ where: { id: current.id }, data: { status, providerRef } });
+      });
+      if(!payment || payment.status === 'unknown') return res.status(502).json({ error: 'payment_reconciliation_required', paymentId: reservation.payment.id });
+      return res.status(201).json({ paymentId: payment.id, status: payment.status, provider: provider.name });
+    } catch (err) {
+      console.error('card payment recording failed', err);
+      return res.status(500).json({ error: 'payment_record_failed', paymentId: reservation.payment.id });
+    }
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
@@ -2497,16 +2845,24 @@ app.get('/api/payments', requireAuth, async (req, res) => {
     // when the cash screen loads (bounded to a handful of rows).
     const cardProvider = getCardProvider();
     if(cardProvider){
-      const stale = payments.filter(p => p.method === 'card' && ['presenting', 'pending'].includes(p.status) && p.providerRef && p.provider === cardProvider.name).slice(0, 10);
+      const stale = payments.filter(p => p.method === 'card' && cardPaymentUnresolved(p) && p.providerRef && p.provider === cardProvider.name).slice(0, 10);
       for(const payment of stale){
         try {
           const live = await cardProvider.getStatus(payment.providerRef);
-          if(live && live.status && live.status !== payment.status){
-            const updated = await prisma.payment.update({ where: { id: payment.id }, data: { status: live.status } });
+          if(live && live.status){
+            const updated = await recordLiveCardStatus(payment, live.status);
             payments = payments.map(p => (p.id === payment.id ? { ...p, status: updated.status } : p));
           }
         } catch (err) { console.warn('payment status sync failed', err.message); }
       }
+    }
+    const pendingRefunds = payments.filter(payment => refundOperations(payment).some(refundUnresolved)).slice(0, 10);
+    for(const payment of pendingRefunds) {
+      const operation = refundOperations(payment).find(refundUnresolved);
+      try {
+        const updated = await reconcileRefund(payment, operation.reference);
+        if(!updated.error) payments = payments.map(item => item.id === payment.id ? updated : item);
+      } catch (err) { console.warn('refund status sync failed', err.message); }
     }
     const sessionIds = [...new Set(payments.map(p => p.sessionId))];
     const sessions = sessionIds.length ? ((await prisma.session.findMany({ where: { id: { in: sessionIds } } })) || []) : [];
@@ -2524,6 +2880,8 @@ app.get('/api/payments', requireAuth, async (req, res) => {
         method: payment.method,
         amountCents: payment.amountCents,
         refundedCents: payment.refundedCents || 0,
+        refunds: refundOperations(payment),
+        refundPending: refundOperations(payment).some(refundUnresolved),
         currency: payment.currency,
         status: payment.status,
         createdAt: payment.createdAt,
@@ -2540,19 +2898,56 @@ app.get('/api/payments/:id', requireAuth, async (req, res) => {
     if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
     let payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
     if(!payment) return res.status(404).json({ error: 'not_found' });
-    if(['presenting', 'pending'].includes(payment.status) && payment.providerRef){
+    if(payment.method === 'card' && cardPaymentUnresolved(payment) && payment.providerRef){
       const provider = getCardProvider();
       if(provider && payment.provider === provider.name && (!provider.isConfigured || provider.isConfigured())){
         try {
           const live = await provider.getStatus(payment.providerRef);
-          if(live && live.status && live.status !== payment.status){
-            payment = await prisma.payment.update({ where: { id: payment.id }, data: { status: live.status } });
+          if(live && live.status){
+            payment = await recordLiveCardStatus(payment, live.status);
           }
         } catch (err) { console.warn('card status check failed', err.message); }
       }
     }
+    for(const operation of refundOperations(payment).filter(refundUnresolved)) {
+      try {
+        const updated = await reconcileRefund(payment, operation.reference);
+        if(!updated.error) payment = updated;
+      } catch (err) { console.warn('refund status check failed', err.message); }
+    }
     res.json(mapPayment(payment));
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+});
+
+app.post('/api/payments/:id/reconcile', requireAuth, async (req, res) => {
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const existing = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if(!existing) throw requestError(404, 'not_found');
+    const suppliedRef = req.body?.providerRef;
+    if(suppliedRef !== undefined && (typeof suppliedRef !== 'string' || !suppliedRef.trim())) throw requestError(400, 'invalid_provider_ref');
+    const payment = await withSessionWriteLock(existing.sessionId, async tx => {
+      const current = await tx.payment.findUnique({ where: { id: existing.id } });
+      if(current.method !== 'card') throw requestError(400, 'not_a_card_payment');
+      if(suppliedRef && current.providerRef && suppliedRef !== current.providerRef) throw requestError(409, 'payment_reconciliation_required');
+      if(!cardPaymentUnresolved(current) || isSuccessfulPayment(current)) return current;
+      const provider = getCardProvider();
+      if(!provider || provider.name !== current.provider || !provider.reconcileCardPayment) throw requestError(409, 'payment_reconciliation_required');
+      let live;
+      try {
+        live = await provider.reconcileCardPayment({ amountCents: current.amountCents, currency: current.currency, reference: current.idempotencyKey, createdAt: current.createdAt, providerRef: current.providerRef || suppliedRef });
+      } catch {
+        throw requestError(409, 'payment_reconciliation_required');
+      }
+      if(!live?.providerRef || !['captured', 'canceled', 'presenting', 'pending'].includes(live.status)) throw requestError(409, 'payment_reconciliation_required');
+      return tx.payment.update({ where: { id: current.id }, data: { providerRef: live.providerRef, status: live.status } });
+    });
+    return res.status(cardPaymentUnresolved(payment) ? 409 : 200).json({ ...mapPayment(payment), ...(cardPaymentUnresolved(payment) ? { error: 'payment_reconciliation_required' } : {}) });
+  } catch (err) {
+    if(err.status) return res.status(err.status).json({ error: err.message });
+    console.error('payment reconciliation failed', err);
+    return res.status(500).json({ error: 'payment_reconciliation_required' });
+  }
 });
 
 // Cancel a pending/in-progress card payment.
@@ -2562,79 +2957,140 @@ app.post('/api/payments/:id/cancel', requireAuth, async (req, res) => {
     const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
     if(!payment) return res.status(404).json({ error: 'not_found' });
     if(payment.method !== 'card') return res.status(400).json({ error: 'not_a_card_payment' });
-    if(payment.status !== 'presenting' && payment.status !== 'pending') {
+    if(!cardPaymentUnresolved(payment) || isSuccessfulPayment(payment)) {
       return res.status(409).json({ error: 'not_cancellable', status: payment.status });
     }
     const provider = getCardProvider();
-    let status = 'canceled';
-    if(provider && payment.provider === provider.name && payment.providerRef){
-      try {
-        await provider.cancel(payment.providerRef);
-      } catch (err) {
-        console.warn('cancel failed', err.message);
-      }
-      try {
-        const live = await provider.getStatus(payment.providerRef);
-        status = live && live.status ? live.status : status;
-      } catch { /* keep canceled */ }
+    if(!payment.providerRef || !provider || payment.provider !== provider.name || (provider.isConfigured && !provider.isConfigured())) {
+      return res.status(409).json({ error: 'payment_reconciliation_required' });
     }
-    const updated = await prisma.payment.update({ where: { id: payment.id }, data: { status } });
+    try {
+      await provider.cancel(payment.providerRef);
+    } catch (err) {
+      console.warn('cancel failed', err.message);
+    }
+    let live;
+    try {
+      live = await provider.getStatus(payment.providerRef);
+    } catch (err) {
+      console.warn('cancel status check failed', err.message);
+      return res.status(502).json({ error: 'payment_reconciliation_required' });
+    }
+    const updated = await recordLiveCardStatus(payment, live && live.status);
+    if(cardPaymentUnresolved(updated)) return res.status(409).json({ error: 'payment_reconciliation_required', status: updated.status });
     res.json(mapPayment(updated));
   } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
 });
 
 // Record a refund against a payment (cash reconciliation). VAT credit notes (avoir)
 // are handled separately in the accounting phase — see docs/POS-INTEGRATION-PLAN.md.
+async function applyRefundResult(tx, payment, operation, live) {
+  if(!refundUnresolved(operation)) return payment;
+  if(live?.amountCents != null && live.amountCents !== operation.amountCents) throw requestError(409, 'refund_amount_mismatch');
+  if(live?.providerRef && live.providerRef !== payment.providerRef) throw requestError(409, 'refund_payment_mismatch');
+  if(live?.reference && live.reference !== operation.reference) throw requestError(409, 'refund_reference_mismatch');
+  if(operation.providerRefundRef && live?.providerRefundRef && operation.providerRefundRef !== live.providerRefundRef) throw requestError(409, 'refund_reference_mismatch');
+  const operations = refundOperations(payment);
+  const next = { ...operation, status: ['pending', 'failed', 'refunded'].includes(live?.status) ? live.status : 'unknown', providerRefundRef: live?.providerRefundRef || operation.providerRefundRef || null };
+  let refundedCents = payment.refundedCents || 0;
+  let status = payment.status;
+  if(next.status === 'refunded') {
+    if(payment.method === 'cash') await lockCashMovements(tx);
+    next.completedAt = new Date().toISOString();
+    next.timestampSource = 'confirmation';
+    refundedCents += operation.amountCents;
+    if(refundedCents > payment.amountCents) throw requestError(409, 'refund_amount_mismatch');
+    const note = await createCreditNoteForRefund(tx, { payment, amountCents: operation.amountCents, reason: operation.reason, actor: operation.actor });
+    next.creditNote = note ? { id: note.id, number: note.number, year: note.year, totalTtcCents: note.totalTtcCents, vatCents: note.vatCents } : null;
+    status = refundedCents >= payment.amountCents ? 'refunded' : 'partially_refunded';
+  }
+  return tx.payment.update({ where: { id: payment.id }, data: { status, refundedCents, refundOperationsJson: JSON.stringify(operations.map(item => item.reference === operation.reference ? next : item)) } });
+}
+
+async function reconcileRefund(payment, reference, retry = false) {
+  return withSessionWriteLock(payment.sessionId, async (tx) => {
+    const current = await tx.payment.findUnique({ where: { id: payment.id } });
+    const operation = refundOperations(current).find(item => item.reference === reference);
+    if(!operation) throw requestError(404, 'refund_not_found');
+    if(!refundUnresolved(operation)) return current;
+    if(current.method === 'cash') return applyRefundResult(tx, current, operation, { status: 'refunded' });
+    const provider = getCardProvider();
+    if(!provider || provider.name !== current.provider || !current.providerRef) throw requestError(409, 'payment_reconciliation_required');
+    let live;
+    try {
+      const args = { providerRef: current.providerRef, amountCents: operation.amountCents, reference: operation.reference, createdAt: operation.createdAt, providerRefundRef: operation.providerRefundRef };
+      live = operation.providerRefundRef || !retry ? await provider.getRefund(args) : await provider.refund(args);
+    } catch (err) {
+      const definitive = retry && !operation.providerRefundRef && err.noRemoteObject === true;
+      const updated = await applyRefundResult(tx, current, operation, { status: definitive ? 'failed' : 'unknown' });
+      return definitive ? updated : { error: 'refund_reconciliation_required', paymentId: current.id, refundId: reference };
+    }
+    return live ? applyRefundResult(tx, current, operation, live) : current;
+  });
+}
+
+function sendRefundResponse(res, payment, reference) {
+  const operation = refundOperations(payment).find(item => item.reference === reference);
+  const error = operation.status === 'refunded' ? null : operation.status === 'failed' ? 'refund_failed' : operation.status === 'pending' ? 'refund_pending' : 'refund_reconciliation_required';
+  return res.status(error ? operation.status === 'failed' ? 502 : 409 : 200).json({ ...mapPayment(payment), refundId: reference, refundStatus: operation.status, creditNote: operation.creditNote || null, ...(error ? { error } : {}) });
+}
+
 app.post('/api/payments/:id/refund', requireAuth, async (req, res) => {
+  let reference;
+  try {
+    if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
+    const existing = await prisma.payment.findUnique({ where: { id: req.params.id } });
+    if(!existing) return res.status(404).json({ error: 'not_found' });
+    const key = req.body?.idempotencyKey;
+    if(key !== undefined && (typeof key !== 'string' || !key.trim() || key.length > 255)) throw requestError(400, 'invalid_idempotency_key');
+    const reservation = await withSessionWriteLock(existing.sessionId, async (tx) => {
+      const payment = await tx.payment.findUnique({ where: { id: existing.id } });
+      const operations = refundOperations(payment);
+      const duplicate = key && operations.find(item => item.idempotencyKey === key);
+      if(duplicate) {
+        if((req.body?.amountCents != null && Number(req.body.amountCents) !== duplicate.amountCents) || (req.body?.reason != null && String(req.body.reason) !== duplicate.reason)) throw requestError(409, 'idempotency_conflict');
+        return { payment, operation: duplicate };
+      }
+      const active = operations.find(refundUnresolved);
+      if(active) throw requestError(409, 'refund_reconciliation_required', { refundId: active.reference });
+      if(payment.status === 'refunded') throw requestError(409, 'already_refunded');
+      if(!['captured', 'partially_refunded'].includes(payment.status)) throw requestError(409, 'payment_not_captured');
+      const remainingCents = payment.amountCents - (payment.refundedCents || 0);
+      const amountCents = req.body?.amountCents != null ? Number(req.body.amountCents) : remainingCents;
+      if(!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > remainingCents) throw requestError(400, 'invalid_amount', { remainingCents });
+      if(payment.method !== 'cash') {
+        const provider = getCardProvider();
+        if(!provider || payment.provider !== provider.name) throw requestError(409, 'card_not_configured');
+        if(!payment.providerRef) throw requestError(409, 'payment_reconciliation_required');
+      }
+      const operation = { reference: crypto.randomUUID(), idempotencyKey: key || null, amountCents, status: 'unknown', createdAt: new Date().toISOString(), reason: req.body?.reason ? String(req.body.reason) : null, actor: getActorName(req) };
+      const updated = await tx.payment.update({ where: { id: payment.id }, data: { refundOperationsJson: JSON.stringify([...operations, operation]) } });
+      return { payment: updated, operation };
+    });
+    reference = reservation.operation.reference;
+    const updated = await reconcileRefund(reservation.payment, reference, true);
+    if(updated.error) return res.status(502).json(updated);
+    return sendRefundResponse(res, updated, reference);
+  } catch (err) {
+    if(err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error('refund record failed', err);
+    res.status(500).json({ error: 'refund_record_failed', ...(reference ? { refundId: reference } : {}) });
+  }
+});
+
+app.post('/api/payments/:id/refunds/:reference/reconcile', requireAuth, async (req, res) => {
   try {
     if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
     const payment = await prisma.payment.findUnique({ where: { id: req.params.id } });
-    if(!payment) return res.status(404).json({ error: 'not_found' });
-    if(payment.status === 'refunded') return res.status(409).json({ error: 'already_refunded' });
-    const remainingCents = (payment.amountCents || 0) - (payment.refundedCents || 0);
-    const requested = req.body && req.body.amountCents != null
-      ? Math.round(Number(req.body.amountCents) || 0)
-      : remainingCents;
-    if(!(requested > 0) || requested > remainingCents){
-      return res.status(400).json({ error: 'invalid_amount', remainingCents });
-    }
-    if(payment.method !== 'cash'){
-      const provider = getCardProvider();
-      if(!provider || payment.provider !== provider.name) return res.status(409).json({ error: 'card_not_configured' });
-      try {
-        await provider.refund({ providerRef: payment.providerRef, amountCents: requested });
-      } catch (err) {
-        console.error('card refund failed', err);
-        return res.status(502).json({ error: 'refund_failed', message: err.message });
-      }
-    }
-    const refundedCents = (payment.refundedCents || 0) + requested;
-    let updated;
-    let creditNote = null;
-    try {
-      await prisma.$transaction(async (tx) => {
-        creditNote = await createCreditNoteForRefund(tx, {
-          payment,
-          amountCents: requested,
-          reason: req.body && req.body.reason,
-          actor: getActorName(req)
-        });
-        updated = await tx.payment.update({
-          where: { id: payment.id },
-          data: { refundedCents, status: refundedCents >= payment.amountCents ? 'refunded' : 'partially_refunded' }
-        });
-      });
-    } catch (err) {
-      console.error('refund record failed', err);
-      return res.status(500).json({ error: 'refund_record_failed' });
-    }
-    res.json({
-      ...mapPayment(updated),
-      creditNote: creditNote
-        ? { id: creditNote.id, number: creditNote.number, year: creditNote.year, totalTtcCents: creditNote.totalTtcCents, vatCents: creditNote.vatCents }
-        : null
-    });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+    if(!payment) throw requestError(404, 'not_found');
+    const updated = await reconcileRefund(payment, req.params.reference, true);
+    if(updated.error) return res.status(502).json(updated);
+    return sendRefundResponse(res, updated, req.params.reference);
+  } catch (err) {
+    if(err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error('refund reconciliation failed', err);
+    res.status(500).json({ error: 'refund_record_failed' });
+  }
 });
 
 // Credit notes (avoir) issued for refunds, with receipt/table references.
@@ -2702,22 +3158,26 @@ app.post('/api/cash-shifts/open', requireAuth, async (req, res) => {
 app.post('/api/cash-shifts/:id/close', requireAuth, async (req, res) => {
   try {
     if(!(await isPosEnabled())) return res.status(409).json({ error: 'pos_disabled' });
-    const shift = await prisma.cashShift.findUnique({ where: { id: req.params.id } });
-    if(!shift) return res.status(404).json({ error: 'not_found' });
-    if(shift.closedAt) return res.status(409).json({ error: 'shift_closed' });
     const countedCents = Math.max(0, Math.round(Number(req.body && req.body.countedCents) || 0));
-    const totals = await cashTotalsBetween(shift.openedAt, new Date());
-    const expectedCents = (shift.openingFloatCents || 0) + totals.netCents;
-    const updated = await prisma.cashShift.update({
-      where: { id: shift.id },
-      data: {
-        countedCents,
-        expectedCents,
-        varianceCents: countedCents - expectedCents,
-        closedBy: getActorName(req),
-        closedAt: new Date(),
-        notes: req.body && req.body.notes ? String(req.body.notes) : null
-      }
+    const updated = await prisma.$transaction(async tx => {
+      await lockCashMovements(tx);
+      const shift = await tx.cashShift.findUnique({ where: { id: req.params.id } });
+      if(!shift) throw requestError(404, 'not_found');
+      if(shift.closedAt) throw requestError(409, 'shift_closed');
+      const closedAt = new Date();
+      const totals = await cashTotalsBetween(shift.openedAt, closedAt, tx);
+      const expectedCents = (shift.openingFloatCents || 0) + totals.netCents;
+      return tx.cashShift.update({
+        where: { id: shift.id },
+        data: {
+          countedCents,
+          expectedCents,
+          varianceCents: countedCents - expectedCents,
+          closedBy: getActorName(req),
+          closedAt,
+          notes: req.body && req.body.notes ? String(req.body.notes) : null
+        }
+      });
     });
     // Best-effort variance alert: email the configured maintenance address.
     if(updated.varianceCents !== 0){
@@ -2736,7 +3196,10 @@ app.post('/api/cash-shifts/:id/close', requireAuth, async (req, res) => {
       } catch (err) { console.warn('cash variance alert failed', err.message); }
     }
     res.json(updated);
-  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+  } catch (err) {
+    if(err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err); res.status(500).json({ error: 'db_error' });
+  }
 });
 
 app.get('/api/cash-shifts', requireAuth, async (req, res) => {
@@ -2760,24 +3223,52 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     }
     if(!event) return res.status(400).json({ error: 'invalid_signature' });
 
-    const existing = await prisma.paymentEvent.findUnique({ where: { eventId: event.id } });
-    if(existing) return res.json({ received: true, duplicate: true });
-    await prisma.paymentEvent.create({ data: {
-      provider: 'stripe', eventId: event.id, type: event.type, payloadJson: JSON.stringify(event)
-    }});
-
     const object = event.data && event.data.object;
-    if(object && object.object === 'payment_intent'){
-      const payment = await prisma.payment.findFirst({ where: { providerRef: object.id } });
-      if(payment){
-        const statusMap = { succeeded: 'captured', canceled: 'canceled', payment_failed: 'failed' };
-        const next = statusMap[object.status];
-        if(next && payment.status !== next && payment.status !== 'refunded'){
-          await prisma.payment.update({ where: { id: payment.id }, data: { status: next } });
-        }
+    if(object?.object === 'refund' && ['refund.created', 'refund.updated', 'refund.failed'].includes(event.type)) {
+      const providerRef = typeof object.payment_intent === 'string' ? object.payment_intent : object.payment_intent?.id;
+      const payment = providerRef ? await prisma.payment.findFirst({ where: { providerRef } }) : null;
+      if(payment?.provider === 'stripe') {
+        const duplicate = await withSessionWriteLock(payment.sessionId, async (tx) => {
+          await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('pool_payment_event'), hashtext($1::text))`, String(event.id));
+          if(await tx.paymentEvent.findUnique({ where: { eventId: event.id } })) return true;
+          const current = await tx.payment.findUnique({ where: { id: payment.id } });
+          const operation = refundOperations(current).find(item => item.providerRefundRef === object.id || (!item.providerRefundRef && item.reference === object.metadata?.reference));
+          if(operation && refundUnresolved(operation)) {
+            const live = await provider.getRefund({ providerRef, providerRefundRef: object.id, reference: operation.reference, amountCents: operation.amountCents });
+            if(!live) throw new Error('refund_reconciliation_required');
+            await applyRefundResult(tx, current, operation, live);
+          }
+          await tx.paymentEvent.create({ data: { provider: 'stripe', eventId: event.id, type: event.type, payloadJson: JSON.stringify(event) } });
+          return false;
+        });
+        return res.json(duplicate ? { received: true, duplicate: true } : { received: true });
       }
     }
-    res.json({ received: true });
+    const next = object && object.object === 'payment_intent' ? { succeeded: 'captured', canceled: 'canceled' }[object.status] : null;
+    let payment = next && object.id ? await prisma.payment.findFirst({ where: { providerRef: object.id } }) : null;
+    if(!payment && next && object.metadata?.reference){
+      const candidate = await prisma.payment.findFirst({ where: { idempotencyKey: object.metadata.reference } });
+      if(candidate && candidate.provider === 'stripe' && candidate.method === 'card' && candidate.amountCents === object.amount && !candidate.providerRef) payment = candidate;
+    }
+    const recordEvent = async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext('pool_payment_event'), hashtext($1::text))`, String(event.id));
+      const existing = await tx.paymentEvent.findUnique({ where: { eventId: event.id } });
+      if(existing) return true;
+      await tx.paymentEvent.create({ data: {
+        provider: 'stripe', eventId: event.id, type: event.type, payloadJson: JSON.stringify(event)
+      }});
+      if(payment){
+        const current = await tx.payment.findUnique({ where: { id: payment.id } });
+        if(current && !isSuccessfulPayment(current) && current.status !== 'creation_rejected' && cardPaymentUnresolved(current) && (current.providerRef === object.id || (!current.providerRef && current.idempotencyKey === object.metadata?.reference && current.amountCents === object.amount))){
+          await tx.payment.update({ where: { id: current.id }, data: { status: next, providerRef: object.id } });
+        }
+      }
+      return false;
+    };
+    const duplicate = payment
+      ? await withSessionWriteLock(payment.sessionId, recordEvent)
+      : await prisma.$transaction(recordEvent);
+    res.json(duplicate ? { received: true, duplicate: true } : { received: true });
   } catch (err) { console.error('webhook error', err); res.status(500).json({ error: 'webhook_error' }); }
 });
 
@@ -2789,19 +3280,22 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'no_updates' });
     }
 
-    const previousSessionRows = await prisma.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+    const result = await withSessionWriteLock(req.params.id, async (tx, lockedSession) => {
+      if (!lockedSession) throw requestError(404, 'not_found');
+      if (lockedSession.status !== 'active') throw requestError(409, 'session_not_active');
+      const previousSessionRows = await tx.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
     const previousSession = Array.isArray(previousSessionRows) ? previousSessionRows[0] : previousSessionRows;
-    if (!previousSession) return res.status(404).json({ error: 'not_found' });
-    const previousSubscriberMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+      if (!previousSession) throw requestError(404, 'not_found');
+    const previousSubscriberMeta = await tx.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
     const previousSubscriberCount = Number(previousSubscriberMeta?.quantity) || 0;
     const previousNonSubscriberCount = (Number(previousSession.number_of_players) || 1) - previousSubscriberCount;
-    const existingPlayers = await listSessionPlayers(req.params.id);
+    const existingPlayers = await listSessionPlayers(req.params.id, tx);
     const nextPlayerNumber = existingPlayers.reduce((max, player) => Math.max(max, Number(player.playerNumber) || 0), 0) + 1;
 
     if (typeof numberOfPlayers !== 'undefined') {
-      const out = await prisma.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
+      const out = await tx.$queryRawUnsafe(`UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2 RETURNING id`, numberOfPlayers, req.params.id);
       const row = Array.isArray(out) ? out[0] : out;
-      if (!row) return res.status(404).json({ error: 'not_found' });
+        if (!row) throw requestError(404, 'not_found');
 
       const nextPlayerCount = Math.max(0, Math.min(Math.round(Number(numberOfPlayers) || 0), 50));
       const activePlayerCount = activeSessionPlayers(existingPlayers).length;
@@ -2811,7 +3305,7 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
         : 0;
       const subscribersToAdd = Math.max(0, Math.min(subscriberDelta, playersToAdd));
       for (let offset = 0; offset < playersToAdd; offset += 1) {
-        await prisma.sessionPlayer.create({
+        await tx.sessionPlayer.create({
           data: {
             sessionId: req.params.id,
             playerNumber: nextPlayerNumber + offset,
@@ -2825,32 +3319,32 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
 
     // Subscriber count is stored as a meta tab line item; clamp to the player count.
     if (typeof subscriberCount !== 'undefined') {
-      const playerRows = await prisma.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
+      const playerRows = await tx.$queryRawUnsafe(`SELECT number_of_players FROM "Session" WHERE id::text = $1`, req.params.id);
       const playerRow = Array.isArray(playerRows) ? playerRows[0] : playerRows;
-      if (!playerRow) return res.status(404).json({ error: 'not_found' });
+      if (!playerRow) throw requestError(404, 'not_found');
       const players = Number(playerRow.number_of_players) || 0;
       const desired = Math.max(0, Math.min(Math.round(Number(subscriberCount) || 0), players));
-      const existing = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+      const existing = await tx.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
       if (existing) {
-        await prisma.tabLineItem.update({ where: { id: existing.id }, data: { quantity: desired } });
+        await tx.tabLineItem.update({ where: { id: existing.id }, data: { quantity: desired } });
       } else if (desired > 0) {
-        await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count', quantity: desired, unitPrice: 0, totalCents: 0 } });
+        await tx.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count', quantity: desired, unitPrice: 0, totalCents: 0 } });
       }
     }
 
-    const rows = await prisma.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, looking_for_players_count, looking_for_players_up_to FROM "Session" WHERE id::text = $1`, req.params.id);
+    const rows = await tx.$queryRawUnsafe(`SELECT id, table_id, patron_id, started_at, ended_at, status, created_at, number_of_players, looking_for_players_count, looking_for_players_up_to FROM "Session" WHERE id::text = $1`, req.params.id);
     const row = Array.isArray(rows) ? rows[0] : rows;
-    if (!row) return res.status(404).json({ error: 'not_found' });
-    const meta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
+    if (!row) throw requestError(404, 'not_found');
+    const meta = await tx.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'subscriber_count' } });
     const nextNonSubscriberCount = (Number(row.number_of_players) || 1) - (Number(meta?.quantity) || 0);
-    const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at' } });
+    const nonSubscriberStartMeta = await tx.tabLineItem.findFirst({ where: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at' } });
     if (nextNonSubscriberCount <= 0 || previousNonSubscriberCount <= 0) {
-      if (nonSubscriberStartMeta) await prisma.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+        if (nonSubscriberStartMeta) await tx.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
       if (previousNonSubscriberCount <= 0 && nextNonSubscriberCount > 0) {
-        await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at', quantity: 1, unitPrice: 0, totalCents: 0 } });
+        await tx.tabLineItem.create({ data: { sessionId: req.params.id, type: 'meta', description: 'non_subscriber_started_at', quantity: 1, unitPrice: 0, totalCents: 0 } });
       }
     }
-    res.json({
+    return {
       id: row.id,
       tableId: row.table_id,
       patronId: row.patron_id,
@@ -2862,8 +3356,14 @@ app.patch('/api/sessions/:id', requireAuth, async (req, res) => {
       subscriberCount: meta ? Number(meta.quantity) || 0 : 0,
       lookingForPlayersCount: row.looking_for_players_count ?? null,
       lookingForPlayersUpTo: Boolean(row.looking_for_players_up_to)
+    };
     });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'db_error' }); }
+    res.json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error(err);
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 app.delete('/api/sessions/:id/looking-for-players', requireAuth, async (req, res) => {
@@ -2892,6 +3392,7 @@ app.post('/api/sessions/:id/looking-for-players/fulfill', requireAuth, async (re
   } catch (e) {
     if (e.message === 'invalid_player_count') return res.status(400).json({ error: e.message });
     if (e.message === 'session_not_found') return res.status(404).json({ error: e.message });
+    if (e.message === 'invalid_pin') return res.status(403).json({ error: e.message });
     if (e.message === 'no_player_search' || e.message === 'player_search_changed') return res.status(409).json({ error: e.message });
     console.error(e);
     res.status(500).json({ error: 'db_error' });
@@ -2904,25 +3405,27 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
     const { tableSettlementCents, items, isSubscriber, playerId } = req.body;
     const sessionId = req.params.id;
     const actor = getActorName(req);
-    let settledPlayer = null;
+    const result = await withSessionWriteLock(sessionId, async (tx, lockedSession) => {
+      if (!lockedSession || lockedSession.status !== 'active') throw requestError(409, 'session_not_active');
+      let settledPlayer = null;
     let effectiveTableSettlementCents = Math.max(0, Math.round(Number(tableSettlementCents) || 0));
 
     if (playerId) {
-      const sessionRow = await prisma.session.findUnique({ where: { id: sessionId } });
-      if (!sessionRow || sessionRow.status !== 'active') return res.status(409).json({ error: 'session_not_active' });
-      const player = await prisma.sessionPlayer.findUnique({ where: { id: playerId } });
+      const sessionRow = await tx.session.findUnique({ where: { id: sessionId } });
+      if (!sessionRow || sessionRow.status !== 'active') throw requestError(409, 'session_not_active');
+      const player = await tx.sessionPlayer.findUnique({ where: { id: playerId } });
       if (!player || player.sessionId !== sessionId || player.status !== 'active' || player.leftAt) {
-        return res.status(404).json({ error: 'player_not_found' });
+        throw requestError(404, 'player_not_found');
       }
 
-      const chargeInfo = await getTableChargeForSession(sessionRow);
+      const chargeInfo = await getTableChargeForSession(sessionRow, new Date(), tx);
       const calculatedShare = chargeInfo.playerShares?.find((share) => share.id === playerId)?.shareCents || 0;
       if (typeof tableSettlementCents === 'undefined') {
         effectiveTableSettlementCents = calculatedShare;
       } else {
         const requested = Math.round(Number(tableSettlementCents));
         if (!Number.isFinite(requested) || requested < 0 || requested > (chargeInfo.tableCharge || 0)) {
-          return res.status(400).json({ error: 'invalid_table_settlement' });
+          throw requestError(400, 'invalid_table_settlement');
         }
         effectiveTableSettlementCents = requested;
       }
@@ -2932,16 +3435,16 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
     // If table settlement amount is provided, add a negative line item for it,
     // snapshotting the table type's current VAT rate.
     if (effectiveTableSettlementCents > 0) {
-      const sessionRow = await prisma.session.findUnique({ where: { id: sessionId } });
+      const sessionRow = await tx.session.findUnique({ where: { id: sessionId } });
       let tableVatRate = 20;
       if(sessionRow){
-        const tableTypeRows = await prisma.$queryRawUnsafe(`
+        const tableTypeRows = await tx.$queryRawUnsafe(`
           SELECT tt.vat_rate_percent FROM "PoolTable" p JOIN "TableType" tt ON tt.id = p.table_type_id WHERE p.id::text = $1
         `, sessionRow.tableId);
         const tt = Array.isArray(tableTypeRows) ? tableTypeRows[0] : tableTypeRows;
         if(tt && tt.vat_rate_percent != null) tableVatRate = tt.vat_rate_percent;
       }
-      await prisma.$queryRawUnsafe(
+      await tx.$queryRawUnsafe(
         `INSERT INTO "TabLineItem" (id, session_id, type, description, quantity, unit_price, total_cents, vat_rate_percent, vat_amount_cents, created_at) 
          VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, NOW())`,
         crypto.randomUUID(),
@@ -2958,7 +3461,7 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
 
     if (settledPlayer) {
       const settledAt = new Date();
-      await prisma.sessionPlayer.update({
+      await tx.sessionPlayer.update({
         where: { id: settledPlayer.id },
         data: {
           leftAt: settledAt,
@@ -2969,50 +3472,50 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
         },
       });
 
-      const remainingPlayers = await listSessionPlayers(sessionId);
+      const remainingPlayers = await listSessionPlayers(sessionId, tx);
       const remainingActivePlayers = activeSessionPlayers(remainingPlayers);
       const nextPlayers = remainingActivePlayers.length;
       const nextSubscribers = remainingActivePlayers.filter((player) => player.isSubscriber).length;
-      await prisma.$executeRawUnsafe(
+      await tx.$executeRawUnsafe(
         `UPDATE "Session" SET number_of_players = $1 WHERE id::text = $2`,
         nextPlayers,
         sessionId
       );
 
-      const subscriberMeta = await prisma.tabLineItem.findFirst({
+      const subscriberMeta = await tx.tabLineItem.findFirst({
         where: { sessionId, type: 'meta', description: 'subscriber_count' }
       });
       if (nextSubscribers > 0) {
         if (subscriberMeta) {
-          await prisma.tabLineItem.update({ where: { id: subscriberMeta.id }, data: { quantity: nextSubscribers } });
+          await tx.tabLineItem.update({ where: { id: subscriberMeta.id }, data: { quantity: nextSubscribers } });
         } else {
-          await prisma.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'subscriber_count', quantity: nextSubscribers, unitPrice: 0, totalCents: 0 } });
+          await tx.tabLineItem.create({ data: { sessionId, type: 'meta', description: 'subscriber_count', quantity: nextSubscribers, unitPrice: 0, totalCents: 0 } });
         }
       } else if (subscriberMeta) {
-        await prisma.tabLineItem.delete({ where: { id: subscriberMeta.id } });
+        await tx.tabLineItem.delete({ where: { id: subscriberMeta.id } });
       }
 
       if (!remainingActivePlayers.some((player) => !player.isSubscriber)) {
-        const nonSubscriberStartMeta = await prisma.tabLineItem.findFirst({
+        const nonSubscriberStartMeta = await tx.tabLineItem.findFirst({
           where: { sessionId, type: 'meta', description: 'non_subscriber_started_at' }
         });
-        if (nonSubscriberStartMeta) await prisma.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
+      if (nonSubscriberStartMeta) await tx.tabLineItem.delete({ where: { id: nonSubscriberStartMeta.id } });
       }
     } else if (isSubscriber) {
       // Legacy sessions without a seat ledger still decrement the aggregate count.
-      const subscriberMeta = await prisma.tabLineItem.findFirst({
+      const subscriberMeta = await tx.tabLineItem.findFirst({
         where: { sessionId, type: 'meta', description: 'subscriber_count' }
       });
 
       if(subscriberMeta){
         const newSubscriberCount = Math.max(0, subscriberMeta.quantity - 1);
         if(newSubscriberCount > 0){
-          await prisma.tabLineItem.update({
+          await tx.tabLineItem.update({
             where: { id: subscriberMeta.id },
             data: { quantity: newSubscriberCount }
           });
         } else {
-          await prisma.tabLineItem.delete({ where: { id: subscriberMeta.id } });
+          await tx.tabLineItem.delete({ where: { id: subscriberMeta.id } });
         }
       }
     }
@@ -3027,14 +3530,14 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
         
         if(settleQty <= 0) continue;
         
-        const item = await prisma.tabLineItem.findUnique({ where: { id: itemId } });
+        const item = await tx.tabLineItem.findUnique({ where: { id: itemId } });
         
         if (item && item.sessionId === sessionId && !item.voidedAt && settleQty <= item.quantity) {
           const settledAmount = Math.round(item.unitPrice * settleQty);
           const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
           
           // Add negative line item to record this settlement
-          await prisma.tabLineItem.create({
+          await tx.tabLineItem.create({
             data: {
               sessionId,
               type: 'settlement',
@@ -3048,11 +3551,11 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
           });
           
           // Void the original item, replacing it with the remaining quantity (if any)
-          await voidTabLineItem(item.id, actor, 'settled (partial payment)');
+          await voidTabLineItem(item.id, actor, 'settled (partial payment)', tx);
           const remainingQty = item.quantity - settleQty;
           if(remainingQty > 0){
             const remainingTotal = Math.round(item.unitPrice * remainingQty);
-            await prisma.tabLineItem.create({
+            await tx.tabLineItem.create({
               data: {
                 sessionId,
                 type: item.type,
@@ -3070,14 +3573,17 @@ app.post('/api/sessions/:id/settle', requireAuth, async (req, res) => {
       }
     }
     
-    res.json({
+    return {
       success: true,
       tableSettlementCents: effectiveTableSettlementCents,
       player: settledPlayer ? mapSessionPlayer(settledPlayer, effectiveTableSettlementCents) : null,
+    };
     });
-  } catch (err) { 
-    console.error(err); 
-    res.status(500).json({ error: 'settlement_failed' }); 
+    res.json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, ...err.details });
+    console.error(err);
+    res.status(500).json({ error: 'settlement_failed' });
   }
 });
 
@@ -3111,21 +3617,46 @@ app.get('/api/sessions/:id', requireAuth, async (req, res) => {
 // Add tab line item (menu item or custom)
 app.post('/api/sessions/:id/items', requireAuth, async (req, res) => {
   try{
-    const { type, description, quantity, unitPrice, vatRatePercent } = req.body; // unitPrice in cents
-    const qty = Number(quantity) || 1;
-    const totalCents = Math.round((Number(unitPrice)||0)*qty);
-    const rate = Number(vatRatePercent) || 20;
-    const item = await prisma.tabLineItem.create({ data: { sessionId: req.params.id, type: type||'custom', description, quantity: qty, unitPrice: Number(unitPrice)||0, totalCents, vatRatePercent: rate, vatAmountCents: vatAmountFromTotal(totalCents, rate) } });
+    const item = await withSessionWriteLock(req.params.id, async (tx, session) => {
+      if (!session) throw requestError(404, 'not_found');
+      if (session.status !== 'active') throw requestError(409, 'session_not_active');
+      const { type, description, quantity, unitPrice, vatRatePercent } = req.body;
+      const qty = Number(quantity) || 1;
+      const totalCents = Math.round((Number(unitPrice)||0)*qty);
+      const rate = Number(vatRatePercent) || 20;
+      return tx.tabLineItem.create({ data: { sessionId: req.params.id, type: type||'custom', description, quantity: qty, unitPrice: Number(unitPrice)||0, totalCents, vatRatePercent: rate, vatAmountCents: vatAmountFromTotal(totalCents, rate) } });
+    });
     res.status(201).json(item);
-  }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
+  }catch(e){
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
+    console.error(e);
+    res.status(500).json({ error: 'db_error' });
+  }
 });
+
+async function withSessionItemWriteLock(itemId, expectedSessionId, operation) {
+  const initial = await prisma.tabLineItem.findUnique({ where: { id: itemId } });
+  if (!initial || (expectedSessionId && initial.sessionId !== expectedSessionId)) throw requestError(404, 'not_found');
+  return withSessionWriteLock(initial.sessionId, async (tx, session) => {
+    const item = await tx.tabLineItem.findUnique({ where: { id: itemId } });
+    if (!item || item.sessionId !== initial.sessionId) throw requestError(404, 'not_found');
+    if (!session) throw requestError(404, 'not_found');
+    if (session.status === 'cancelled') throw requestError(409, 'session_not_active');
+    if (item.voidedAt) throw requestError(409, 'item_already_voided');
+    return operation(tx, item);
+  });
+}
 
 // Delete (void) tab line item - kept for audit trail, never hard-deleted
 app.delete('/api/sessions/:sessionId/items/:itemId', requireAuth, async (req, res) => {
   try{
-    await voidTabLineItem(req.params.itemId, getActorName(req), req.query.reason || 'removed by staff');
+    await withSessionItemWriteLock(req.params.itemId, req.params.sessionId, (tx, item) =>
+      voidTabLineItem(item.id, getActorName(req), req.query.reason || 'removed by staff', tx));
     res.status(204).end();
-  }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
+  }catch(e){
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
+    console.error(e); res.status(500).json({ error: 'db_error' });
+  }
 });
 
 // Edit tab line item amount: the original row is voided and a replacement row is
@@ -3133,35 +3664,42 @@ app.delete('/api/sessions/:sessionId/items/:itemId', requireAuth, async (req, re
 app.patch('/api/tab-items/:id', requireAuth, async (req, res) => {
   try{
     const { totalCents } = req.body;
-    const original = await prisma.tabLineItem.findUnique({ where: { id: req.params.id } });
-    if(!original) return res.status(404).json({ error: 'not_found' });
-    const actor = getActorName(req);
-    await voidTabLineItem(original.id, actor, 'corrected: amount changed');
-    const newTotal = Number(totalCents);
-    const rate = original.vatRatePercent != null ? original.vatRatePercent : 20;
-    const updated = await prisma.tabLineItem.create({
-      data: {
-        sessionId: original.sessionId,
-        type: original.type,
-        description: original.description,
-        quantity: original.quantity,
-        unitPrice: original.unitPrice,
-        totalCents: newTotal,
-        vatRatePercent: rate,
-        vatAmountCents: vatAmountFromTotal(newTotal, rate),
-        correctedFromId: original.id
-      }
+    const updated = await withSessionItemWriteLock(req.params.id, null, async (tx, original) => {
+      const actor = getActorName(req);
+      await voidTabLineItem(original.id, actor, 'corrected: amount changed', tx);
+      const newTotal = Number(totalCents);
+      const rate = original.vatRatePercent != null ? original.vatRatePercent : 20;
+      return tx.tabLineItem.create({
+        data: {
+          sessionId: original.sessionId,
+          type: original.type,
+          description: original.description,
+          quantity: original.quantity,
+          unitPrice: original.unitPrice,
+          totalCents: newTotal,
+          vatRatePercent: rate,
+          vatAmountCents: vatAmountFromTotal(newTotal, rate),
+          correctedFromId: original.id
+        }
+      });
     });
     res.json(updated);
-  }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
+  }catch(e){
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
+    console.error(e); res.status(500).json({ error: 'db_error' });
+  }
 });
 
 // Delete (void) tab line item (alternative endpoint) - kept for audit trail
 app.delete('/api/tab-items/:id', requireAuth, async (req, res) => {
   try{
-    await voidTabLineItem(req.params.id, getActorName(req), req.query.reason || 'removed by staff');
+    await withSessionItemWriteLock(req.params.id, null, (tx, item) =>
+      voidTabLineItem(item.id, getActorName(req), req.query.reason || 'removed by staff', tx));
     res.status(204).end();
-  }catch(e){ console.error(e); res.status(500).json({ error: 'db_error' }); }
+  }catch(e){
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
+    console.error(e); res.status(500).json({ error: 'db_error' });
+  }
 });
 
 // Switch table for an active session
@@ -3170,24 +3708,20 @@ app.post('/api/sessions/:id/switch', requireAuth, async (req, res) => {
     const { newTableId } = req.body;
     const sessionId = req.params.id;
     
-    const result = await prisma.$transaction(async (tx)=>{
-      // Get current session to know old table
-      const currentSession = await tx.$queryRawUnsafe(`SELECT id, table_id FROM "Session" WHERE id = $1::uuid`, sessionId);
-      const sess = Array.isArray(currentSession) ? currentSession[0] : currentSession;
-      if(!sess) throw new Error('session_not_found');
-      const oldTableId = sess.table_id;
-      
-      // Check target table availability
-      const targetRows = await tx.$queryRawUnsafe(`SELECT id, status FROM "PoolTable" WHERE id = $1::uuid`, newTableId);
-      const target = Array.isArray(targetRows) ? targetRows[0] : targetRows;
+    const result = await withSessionWriteLock(sessionId, async (tx, lockedSession)=>{
+      if (!lockedSession) throw requestError(404, 'session_not_found');
+      if (lockedSession.status !== 'active') throw requestError(409, 'session_not_active');
+      const oldTableId = lockedSession.tableId;
+      const tables = await lockPoolTables(tx, [oldTableId, newTableId]);
+      const target = tables.find(table => table.id === newTableId);
       if(!target) throw new Error('table_not_found');
-      if(target.status === 'occupied') throw new Error('table_unavailable');
+      if(target.status !== 'available' || await tableHasActiveSession(tx, newTableId)) throw new Error('table_unavailable');
       
       // Update session to new table
       await tx.$executeRawUnsafe(`UPDATE "Session" SET table_id = $1::uuid WHERE id = $2::uuid`, newTableId, sessionId);
       
       // Free old table and occupy new table
-      await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'available' WHERE id = $1::uuid`, oldTableId);
+      await releaseSessionTable(tx, oldTableId);
       await tx.$executeRawUnsafe(`UPDATE "PoolTable" SET status = 'occupied' WHERE id = $1::uuid`, newTableId);
       
       // Return updated session info
@@ -3196,7 +3730,12 @@ app.post('/api/sessions/:id/switch', requireAuth, async (req, res) => {
       return { id: u.id, tableId: u.table_id, patronId: u.patron_id, startedAt: u.started_at, endedAt: u.ended_at, status: u.status, createdAt: u.created_at, numberOfPlayers: u.number_of_players };
     });
     res.json(result);
-  }catch(e){ console.error(e); if(e.message==='table_unavailable') return res.status(409).json({ error: 'table_unavailable' }); res.status(500).json({ error: 'db_error' }); }
+  }catch(e){
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
+    console.error(e);
+    if(e.message==='table_unavailable') return res.status(409).json({ error: 'table_unavailable' });
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 app.get('/api/sessions', requireAuth, async (req, res) => {
@@ -3410,6 +3949,8 @@ app.get('/api/public/tables', async (req, res) => {
         number: tb.number,
         typeName,
         typeIcon: type ? normalizeTableTypeIcon(type.icon, typeName) : null,
+        typeBackground: type?.background ?? null,
+        typeBackgroundOpacity: type?.backgroundOpacity ?? 70,
         typeHourlyRateCents: type && type.base_hourly_cents != null ? Number(type.base_hourly_cents) : null,
         status,
       };
@@ -3458,10 +3999,10 @@ async function findPublicTableSession(tableNumber, pin) {
   return { table, session };
 }
 
-async function fulfillPlayerSearch(sessionId, subscribersAdded, nonSubscribersAdded) {
-  return prisma.$transaction(async (tx) => {
-    const session = await tx.session.findUnique({ where: { id: sessionId } });
+async function fulfillPlayerSearch(sessionId, subscribersAdded, nonSubscribersAdded, pin) {
+  return withSessionWriteLock(sessionId, async (tx, session) => {
     if (!session || session.status !== 'active') throw new Error('session_not_found');
+    if (pin !== undefined && session.pin !== pin) throw new Error('invalid_pin');
     if (!session.lookingForPlayersCount) throw new Error('no_player_search');
 
     const currentPlayers = Number(session.numberOfPlayers ?? 1);
@@ -3659,10 +4200,11 @@ app.post('/api/public/table/:tableNumber/looking-for-players/fulfill', async (re
 
     const context = await findPublicTableSession(tableNumber, req.body?.pin);
     if (context.error) return res.status(context.status).json({ error: context.error });
-    res.json(await fulfillPlayerSearch(context.session.id, subscribersAdded, nonSubscribersAdded));
+    res.json(await fulfillPlayerSearch(context.session.id, subscribersAdded, nonSubscribersAdded, req.body.pin));
   } catch (e) {
     if (e.message === 'invalid_player_count') return res.status(400).json({ error: e.message });
     if (e.message === 'session_not_found') return res.status(404).json({ error: e.message });
+    if (e.message === 'invalid_pin') return res.status(403).json({ error: e.message });
     if (e.message === 'no_player_search' || e.message === 'player_search_changed') return res.status(409).json({ error: e.message });
     console.error(e);
     res.status(500).json({ error: 'db_error' });
@@ -3719,18 +4261,25 @@ app.post('/api/public/table/:tableNumber/order', async (req, res) => {
       return res.status(400).json({ error: 'empty_order' });
     }
 
-    const order = await prisma.pendingOrder.create({
-      data: {
-        sessionId: session.id,
-        tableId: table.id,
-        itemsJson: JSON.stringify(resolvedItems),
-        totalCents,
-        status: 'pending'
+    const order = await withSessionWriteLock(session.id, async (tx, lockedSession) => {
+      if (!lockedSession || lockedSession.status !== 'active' || lockedSession.tableId !== table.id) {
+        throw requestError(400, 'no_active_session');
       }
+      if (!pin || lockedSession.pin !== pin) throw requestError(403, 'invalid_pin');
+      return tx.pendingOrder.create({
+        data: {
+          sessionId: lockedSession.id,
+          tableId: table.id,
+          itemsJson: JSON.stringify(resolvedItems),
+          totalCents,
+          status: 'pending'
+        }
+      });
     });
 
     res.status(201).json({ id: order.id, items: resolvedItems, totalCents: order.totalCents, createdAt: order.createdAt });
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }
@@ -3761,20 +4310,18 @@ app.get('/api/pending-orders', requireAuth, async (req, res) => {
 // Staff: fulfill a pending order - adds its items to the table's tab and marks it done
 app.post('/api/pending-orders/:id/fulfill', requireAuth, async (req, res) => {
   try {
-    const order = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
-    if (!order) return res.status(404).json({ error: 'not_found' });
-    if (order.status !== 'pending') return res.status(400).json({ error: 'already_resolved' });
+    const initialOrder = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
+    if (!initialOrder) return res.status(404).json({ error: 'not_found' });
+    const result = await withSessionWriteLock(initialOrder.sessionId, async (tx, session) => {
+      const order = await tx.pendingOrder.findUnique({ where: { id: req.params.id } });
+      if (!order) throw requestError(404, 'not_found');
+      if (order.status !== 'pending') throw requestError(400, 'already_resolved');
+      if (!session || session.status !== 'active') throw requestError(409, 'session_ended');
 
-    const session = await prisma.session.findUnique({ where: { id: order.sessionId } });
-    if (!session || session.status !== 'active') {
-      return res.status(409).json({ error: 'session_ended' });
-    }
-
-    const items = JSON.parse(order.itemsJson);
-    await prisma.$transaction([
-      ...items.map(item => {
+      const items = JSON.parse(order.itemsJson);
+      for (const item of items) {
         const rate = item.vatRatePercent != null ? item.vatRatePercent : 20;
-        return prisma.tabLineItem.create({
+        await tx.tabLineItem.create({
           data: {
             sessionId: order.sessionId,
             type: 'drink',
@@ -3786,12 +4333,13 @@ app.post('/api/pending-orders/:id/fulfill', requireAuth, async (req, res) => {
             vatAmountCents: vatAmountFromTotal(item.totalCents, rate)
           }
         });
-      }),
-      prisma.pendingOrder.update({ where: { id: order.id }, data: { status: 'fulfilled', fulfilledAt: new Date() } })
-    ]);
-
-    res.json({ success: true });
+      }
+      await tx.pendingOrder.update({ where: { id: order.id }, data: { status: 'fulfilled', fulfilledAt: new Date() } });
+      return { success: true };
+    });
+    res.json(result);
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }
@@ -3800,13 +4348,17 @@ app.post('/api/pending-orders/:id/fulfill', requireAuth, async (req, res) => {
 // Staff: cancel/reject a pending order without adding it to the tab
 app.post('/api/pending-orders/:id/cancel', requireAuth, async (req, res) => {
   try {
-    const order = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
-    if (!order) return res.status(404).json({ error: 'not_found' });
-    if (order.status !== 'pending') return res.status(400).json({ error: 'already_resolved' });
-
-    await prisma.pendingOrder.update({ where: { id: order.id }, data: { status: 'cancelled', fulfilledAt: new Date() } });
+    const initialOrder = await prisma.pendingOrder.findUnique({ where: { id: req.params.id } });
+    if (!initialOrder) return res.status(404).json({ error: 'not_found' });
+    await withSessionWriteLock(initialOrder.sessionId, async (tx, session) => {
+      const order = await tx.pendingOrder.findUnique({ where: { id: req.params.id } });
+      if (!order || order.sessionId !== initialOrder.sessionId || !session) throw requestError(404, 'not_found');
+      if (order.status !== 'pending') throw requestError(400, 'already_resolved');
+      await tx.pendingOrder.update({ where: { id: order.id }, data: { status: 'cancelled', fulfilledAt: new Date() } });
+    });
     res.json({ success: true });
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message, ...e.details });
     console.error(e);
     res.status(500).json({ error: 'db_error' });
   }

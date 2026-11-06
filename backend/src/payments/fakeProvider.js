@@ -9,10 +9,23 @@ module.exports = {
   name: 'fake',
   isConfigured: () => true,
 
-  async createCardPayment({ amountCents }) {
+  async createCardPayment({ amountCents, currency, reference }) {
+    const existing = reference && [...intents.entries()].find(([, intent]) => intent.reference === reference);
+    if(existing) return { providerRef: existing[0], status: existing[1].status };
     const providerRef = 'fake_' + crypto.randomUUID();
-    intents.set(providerRef, { status: 'captured', amountCents });
+    intents.set(providerRef, { status: 'captured', amountCents, currency, reference });
     return { providerRef, status: 'captured' };
+  },
+
+  async reconcileCardPayment({ amountCents, currency, reference, createdAt, providerRef }) {
+    if(!providerRef) {
+      const age = Date.now() - new Date(createdAt).getTime();
+      if(!reference || !Number.isFinite(age) || age < 0 || age >= 23 * 60 * 60 * 1000) throw new Error('payment_reconciliation_required');
+      providerRef = (await this.createCardPayment({ amountCents, currency, reference })).providerRef;
+    }
+    const intent = intents.get(providerRef);
+    if(!intent || intent.amountCents !== amountCents || intent.currency !== currency || intent.reference !== reference) throw new Error('payment_reconciliation_required');
+    return { providerRef, status: intent.status };
   },
 
   async getStatus(providerRef) {
@@ -31,8 +44,12 @@ module.exports = {
     return { status: 'canceled' };
   },
 
-  async refund() {
-    return { status: 'refunded' };
+  async refund({ reference, amountCents, providerRef }) {
+    return { status: 'refunded', providerRefundRef: `fake_refund_${reference}`, amountCents, providerRef, reference };
+  },
+
+  async getRefund({ reference, amountCents, providerRef, providerRefundRef }) {
+    return providerRefundRef ? { status: 'refunded', providerRefundRef, amountCents, providerRef, reference } : null;
   },
 
   // No real settlement data for the fake provider.

@@ -75,6 +75,7 @@ const payment = {
     const where = args.where || {};
     let list = state.payments.slice();
     if (where.method) list = list.filter(p => p.method === where.method);
+    if (where.sessionId) list = list.filter(p => p.sessionId === where.sessionId);
     if (where.id && Array.isArray(where.id.in)) list = list.filter(p => where.id.in.includes(p.id));
     if (where.createdAt) {
       const { gte, lte } = where.createdAt;
@@ -88,6 +89,7 @@ const payment = {
   findFirst: async ({ where } = {}) => {
     if (where && where.providerRef) return state.payments.find(p => p.providerRef === where.providerRef) || null;
     if (where && where.idempotencyKey) return state.payments.find(p => p.idempotencyKey === where.idempotencyKey) || null;
+    if (where && where.sessionId) return state.payments.find(p => p.sessionId === where.sessionId) || null;
     return state.payments[0] || null;
   },
   update: async ({ where, data }) => {
@@ -108,7 +110,10 @@ const receipt = {
     const ids = args.where && args.where.id && args.where.id.in;
     return state.receipts.filter(r => !ids || ids.includes(r.id));
   },
-  findUnique: async ({ where }) => state.receipts.find(r => r.id === where.id) || null
+  findUnique: async ({ where }) => state.receipts.find(r => r.id === where.id) || null,
+  findFirst: async ({ where } = {}) => where && where.sessionId
+    ? state.receipts.find(r => r.sessionId === where.sessionId) || null
+    : state.receipts[0] || null
 };
 
 const creditNote = {
@@ -161,6 +166,7 @@ const paymentEvent = {
 const makeTx = () => ({
   tabLineItem: module.exports.tabLineItem,
   payment: module.exports.payment,
+  paymentEvent: module.exports.paymentEvent,
   receipt: module.exports.receipt,
   creditNote: module.exports.creditNote,
   cashShift: module.exports.cashShift,
@@ -168,6 +174,8 @@ const makeTx = () => ({
   poolTable: module.exports.poolTable,
   session: module.exports.session,
   sessionPlayer: module.exports.sessionPlayer,
+  pendingOrder: module.exports.pendingOrder,
+  transaction: module.exports.transaction,
   $executeRawUnsafe: async () => ({}),
   $queryRawUnsafe: async (sql) => {
     const text = String(sql);
@@ -212,7 +220,7 @@ module.exports = {
   poolTable: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), count: mk() },
   tableType: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
   session: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), updateMany: mk(), deleteMany: mk() },
-  sessionPlayer: { findMany: mk(), findUnique: mk(), create: mk(), createMany: mk(), update: mk(), updateMany: mk(), deleteMany: mk() },
+  sessionPlayer: { findMany: mk(), findUnique: mk(), findFirst: mk(), create: mk(), createMany: mk(), update: mk(), updateMany: mk(), deleteMany: mk() },
   waitlistEntry: { findMany: mk(), create: mk(), deleteMany: mk() },
   venueEvent: { findMany: mk(), findUnique: mk(), create: mk(), update: mk(), deleteMany: mk() },
   tabLineItem: { findMany: mk(), findFirst: mk(), findUnique: mk(), create: mk(), update: mk(), delete: mk() },
@@ -221,7 +229,8 @@ module.exports = {
   drink: { findMany: mk(), create: mk(), findUnique: mk(), update: mk(), delete: mk() },
   // Plain (non-jest.fn) default so it survives jest.resetAllMocks() in suites
   // that don't restore stateful mocks; the public table endpoint expects an array.
-  pendingOrder: { findMany: async () => [], findUnique: mk(), create: mk(), update: mk() },
+  pendingOrder: { findMany: async () => [], findUnique: mk(), findFirst: mk(), create: mk(), update: mk() },
+  transaction: { findFirst: mk() },
 
   // Raw helpers
   $queryRaw: mk(),

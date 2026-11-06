@@ -11,6 +11,8 @@ describe('Table usage / maintenance tracking', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     setupAuthBypass(prisma);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.session.findUnique.mockImplementation(async ({ where }) => ({ id: where.id, status: 'active' }));
   });
 
   test('GET /api/tables exposes lifetime and since-maintenance usage', async () => {
@@ -25,7 +27,8 @@ describe('Table usage / maintenance tracking', () => {
 
   test('ending a session accumulates its duration onto the table usage counters', async () => {
     const startedAt = new Date(Date.now() - 3661 * 1000); // ~1h1m ago
-    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'sess-1', table_id: 'tbl-1', started_at: startedAt }]);
+    const endedAt = new Date();
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'sess-1', table_id: 'tbl-1', started_at: startedAt, ended_at: endedAt }]);
     prisma.$executeRawUnsafe.mockResolvedValue({});
 
     const res = await agent.patch('/api/sessions/sess-1/end');
@@ -36,6 +39,23 @@ describe('Table usage / maintenance tracking', () => {
     // Second arg is the elapsed seconds; second-to-last is the table id
     expect(usageCall[1]).toBeGreaterThanOrEqual(3660);
     expect(usageCall[2]).toBe('tbl-1');
+    expect(usageCall[1]).toBe(Math.round((endedAt - startedAt) / 1000));
+    expect(prisma.$queryRawUnsafe.mock.calls.find(call => String(call[0]).includes('UPDATE "Session"'))[0]).toContain('GREATEST(started_at, clock_timestamp())');
+    const tableLockOrder = prisma.$queryRawUnsafe.mock.invocationCallOrder[0];
+    expect(prisma.$queryRawUnsafe.mock.calls[0][0]).toContain('FOR UPDATE');
+    expect(tableLockOrder).toBeLessThan(prisma.$queryRawUnsafe.mock.invocationCallOrder[1]);
+  });
+
+  test('ending a session never accumulates negative duration', async () => {
+    const endedAt = new Date();
+    const startedAt = new Date(endedAt.getTime() + 60000);
+    prisma.$queryRawUnsafe.mockResolvedValue([{ id: 'sess-1', table_id: 'tbl-1', started_at: startedAt, ended_at: endedAt }]);
+
+    const res = await agent.patch('/api/sessions/sess-1/end');
+
+    expect(res.status).toBe(200);
+    const usageCall = prisma.$executeRawUnsafe.mock.calls.find(c => String(c[0]).includes('total_used_seconds'));
+    expect(usageCall).toBeUndefined();
   });
 
   test('checkout accumulates usage (table_time + usage update in transaction)', async () => {
@@ -46,10 +66,14 @@ describe('Table usage / maintenance tracking', () => {
     prisma.setting.findUnique.mockResolvedValue(null);
 
     const tx = {
-      tabLineItem: { create: jest.fn(async () => ({})) },
+      session: prisma.session,
+      sessionPlayer: prisma.sessionPlayer,
+      setting: prisma.setting,
+      payment: prisma.payment,
+      tabLineItem: { create: jest.fn(async () => ({})), findMany: prisma.tabLineItem.findMany },
       receipt: { create: jest.fn(async () => ({ number: 1, year: 2026, totalTtcCents: 2500, subtotalHtCents: 2083, vatCents: 417, discountCents: 0, itemsJson: JSON.stringify([{ description: 'Table Time', quantity: 1, unitPrice: 2500, totalCents: 2500, vatRatePercent: 20 }]) })) },
       $executeRawUnsafe: jest.fn(async () => ({})),
-      $queryRawUnsafe: jest.fn(async () => [{ next: 1 }])
+      $queryRawUnsafe: jest.fn(async (sql, ...args) => String(sql).includes('base_hourly_cents') ? prisma.$queryRawUnsafe(sql, ...args) : [{ next: 1 }])
     };
     prisma.$transaction.mockImplementation(async (fn) => fn(tx));
 
@@ -84,6 +108,58 @@ describe('Table usage / maintenance tracking', () => {
 
     const updateSql = String(prisma.$queryRawUnsafe.mock.calls[1][0]);
     expect(updateSql).toContain('used_since_maintenance_seconds = 0');
+  });
+
+  test.each(['occupied', 'available'])('maintenance rejects a %s table with an active session', async (previousStatus) => {
+    prisma.$queryRawUnsafe.mockResolvedValueOnce([{ status: previousStatus }]);
+    prisma.session.findMany.mockResolvedValue([{ id: 'sess-1' }]);
+
+    const res = await agent.put('/api/tables/tbl-1').send({ status: 'maintenance', number: 2 });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'table_unavailable' });
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+    expect(prisma.$queryRawUnsafe.mock.calls[0][0]).toContain('FOR UPDATE');
+    expect(prisma.$queryRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(prisma.session.findMany.mock.invocationCallOrder[0]);
+  });
+
+  test.each(['occupied', 'available'])('available rejects a %s table with an active session', async (previousStatus) => {
+    prisma.$queryRawUnsafe.mockResolvedValueOnce([{ status: previousStatus }]);
+    prisma.session.findMany.mockResolvedValue([{ id: 'sess-1' }]);
+
+    const res = await agent.put('/api/tables/tbl-1').send({ status: 'available' });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'table_unavailable' });
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
+  });
+
+  test('leaving maintenance with an active session restores occupied and resets the maintenance counter', async () => {
+    prisma.$queryRawUnsafe
+      .mockResolvedValueOnce([{ status: 'maintenance' }])
+      .mockResolvedValueOnce([{ id: 'tbl-1', table_type_id: 'tt-2', number: 2, status: 'occupied', total_used_seconds: 7200, used_since_maintenance_seconds: 0, created_at: new Date() }]);
+    prisma.session.findMany.mockResolvedValue([{ id: 'sess-1' }]);
+
+    const res = await agent.put('/api/tables/tbl-1').send({ status: 'available', number: 2, tableTypeId: 'tt-2' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'occupied', number: 2, tableTypeId: 'tt-2', totalUsedSeconds: 7200, usedSinceMaintenanceSeconds: 0 });
+    const [sql, ...params] = prisma.$queryRawUnsafe.mock.calls[1];
+    expect(sql).toContain('used_since_maintenance_seconds = 0');
+    expect(params).toEqual([2, 'occupied', 'tt-2', 'tbl-1']);
+  });
+
+  test('maintenance is allowed without an active session', async () => {
+    prisma.$queryRawUnsafe
+      .mockResolvedValueOnce([{ status: 'available' }])
+      .mockResolvedValueOnce([{ id: 'tbl-1', status: 'maintenance' }]);
+    prisma.session.findMany.mockResolvedValue([]);
+
+    const res = await agent.put('/api/tables/tbl-1').send({ status: 'maintenance' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('maintenance');
+    expect(prisma.$queryRawUnsafe.mock.calls[1][1]).toBe('maintenance');
   });
 
   test('table type accepts an optional max used hours threshold', async () => {

@@ -19,6 +19,8 @@ describe('Email / SMTP', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     setupAuthBypass(prisma);
+    prisma.$transaction.mockImplementation(async (fn) => fn(prisma));
+    prisma.session.findUnique.mockImplementation(async ({ where }) => ({ id: where.id, status: 'active' }));
   });
 
   test('GET /api/settings hides SMTP configuration from unauthenticated callers', async () => {
@@ -78,6 +80,7 @@ describe('Email / SMTP', () => {
     prisma.setting.findUnique.mockResolvedValue({ key: 'maintenance_alert_email', value: TO });
     const startedAt = new Date(Date.now() - 4 * 3600 * 1000);
     prisma.$queryRawUnsafe
+      .mockResolvedValueOnce([{ id: 'tbl-1', status: 'occupied' }])
       .mockResolvedValueOnce([{ id: 'sess-1', table_id: 'tbl-1', started_at: startedAt }])
       .mockResolvedValueOnce([{ number: 5, used_since_maintenance_seconds: 4 * 3600, max_used_hours: 4 }]);
     prisma.$executeRawUnsafe.mockResolvedValue({});
@@ -92,6 +95,7 @@ describe('Email / SMTP', () => {
     prisma.setting.findUnique.mockResolvedValue({ key: 'maintenance_alert_email', value: TO });
     const startedAt = new Date(Date.now() - 3600 * 1000); // adds ~1h
     prisma.$queryRawUnsafe
+      .mockResolvedValueOnce([{ id: 'tbl-1', status: 'occupied' }])
       .mockResolvedValueOnce([{ id: 'sess-1', table_id: 'tbl-1', started_at: startedAt }])
       .mockResolvedValueOnce([{ number: 5, used_since_maintenance_seconds: 6 * 3600, max_used_hours: 4 }]);
     prisma.$executeRawUnsafe.mockResolvedValue({});

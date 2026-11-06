@@ -120,6 +120,8 @@ export interface TableType {
   id: string
   name_en: string
   icon?: string | null
+  background?: string | null
+  backgroundOpacity?: number | null
   base_hourly_cents: number
   maxUsedHours?: number | null
   vatRatePercent?: number | null
@@ -277,6 +279,10 @@ export function apiStartSession(tableId: string, numberOfPlayers: number, subscr
   return apiSend('/api/sessions', 'POST', { tableId, numberOfPlayers, subscriberCount })
 }
 
+export function apiCancelSession(sessionId: string) {
+  return apiSend('/api/sessions/' + sessionId + '/cancel', 'POST')
+}
+
 export function apiSetPlayerCount(sessionId: string, numberOfPlayers: number) {
   return apiSend('/api/sessions/' + sessionId, 'PATCH', { numberOfPlayers })
 }
@@ -388,6 +394,10 @@ export function apiCancelPayment(id: string) {
   return apiSend<ReceiptPayment>('/api/payments/' + id + '/cancel', 'POST')
 }
 
+export function apiReconcileCardPayment(id: string, providerRef?: string) {
+  return apiSend<ReceiptPayment>('/api/payments/' + encodeURIComponent(id) + '/reconcile', 'POST', providerRef ? { providerRef } : {})
+}
+
 export function apiSessionSettle(
   sessionId: string,
   body: { playerId?: string; tableSettlementCents?: number; items: { itemId: string; quantity: number }[]; isSubscriber?: boolean },
@@ -423,11 +433,32 @@ export function apiUpdateTableNumber(id: string, number: number) {
   return apiSend('/api/tables/' + id, 'PUT', { number })
 }
 
-export function apiCreateTableType(body: { name_en: string; icon: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
+export interface TableBackgroundImage {
+  id: string
+  contentType: string
+}
+
+export function apiTableBackgroundImages() {
+  return apiGet<TableBackgroundImage[]>('/api/table-background-images')
+}
+
+export function apiDeleteTableBackgroundImage(id: string) {
+  return apiSend('/api/table-background-images/' + encodeURIComponent(id), 'DELETE')
+}
+
+export function apiUploadTableBackgroundImage(file: File) {
+  return request<TableBackgroundImage>('/api/table-background-images', {
+    method: 'POST',
+    headers: { 'Content-Type': file.type },
+    body: file,
+  })
+}
+
+export function apiCreateTableType(body: { name_en: string; icon: string; background: string | null; backgroundOpacity: number; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
   return apiSend('/api/table-types', 'POST', { name_fr: body.name_en, ...body })
 }
 
-export function apiUpdateTableType(id: string, body: { name_en: string; icon: string; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
+export function apiUpdateTableType(id: string, body: { name_en: string; icon: string; background: string | null; backgroundOpacity: number; base_hourly_cents: number; vatRatePercent: number; maxUsedHours?: number | null }) {
   return apiSend('/api/table-types/' + id, 'PUT', { name_fr: body.name_en, ...body })
 }
 
@@ -793,6 +824,8 @@ export interface PublicTable {
   lookingForPlayersUpTo?: boolean
   typeName?: string
   typeIcon?: string | null
+  typeBackground?: string | null
+  typeBackgroundOpacity?: number | null
   typeHourlyRateCents?: number | null
 }
 
