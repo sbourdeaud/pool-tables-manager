@@ -3,7 +3,7 @@
   "info": {
     "title": "Pool Tables Manager API",
     "version": "1.1.0",
-    "description": "REST API for Pool Tables Manager.\n\n**Authentication:** most admin endpoints require a signed-in session. Log in with `POST /auth/local/login` (local admin) or through OIDC (`GET /auth/login`). Swagger UI keeps the session cookie for same-origin \"Try it out\" calls.\n\nEndpoints marked **Public** work without a session. `GET /api/settings` returns a public-safe subset unless authenticated."
+    "description": "REST API for Pool Tables Manager.\n\n**Authentication:** most admin endpoints require a signed-in session. Log in with `POST /auth/local/login` (local admin) or through OIDC (`GET /auth/login`). Swagger UI keeps the session cookie for same-origin \"Try it out\" calls.\n\n**CSRF:** all unsafe requests (methods other than GET, HEAD and OPTIONS), including login, logout, bootstrap and public writes, require the session-bound `x-csrf-token` header, except `POST /api/webhooks/stripe`. Fetch `{ token }` from `GET /api/csrf-token` with the same session cookie before each write; do not cache the response or reuse tokens across login/logout session changes. Swagger UI does this automatically for same-origin unsafe requests only and never sends session credentials or CSRF tokens to other origins.\n\nEndpoints marked **Public** work without authentication (unsafe requests still require a CSRF token and its session cookie). `GET /api/settings` returns a public-safe subset unless authenticated."
   },
   "servers": [
     {
@@ -72,6 +72,12 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "connect.sid"
+      },
+      "csrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-csrf-token",
+        "description": "Required for unsafe requests, including unauthenticated writes, except POST /api/webhooks/stripe. Obtain the session-bound token from GET /api/csrf-token using the same session cookie. Swagger UI supplies it automatically for same-origin unsafe requests."
       }
     },
     "schemas": {
@@ -412,6 +418,57 @@
         }
       }
     },
+    "/api/csrf-token": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get a session-bound CSRF token",
+        "description": "Available without authentication. Creates a session when needed. Use the returned token as x-csrf-token on unsafe requests with the same session cookie. Same-origin only; cross-origin callers are rejected. Responses must not be cached.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Session-bound token",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                },
+                "description": "Prevents caching of session-bound tokens"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "token"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Cross-origin request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/info": {
       "get": {
         "tags": [
@@ -523,15 +580,46 @@
       }
     },
     "/auth/logout": {
-      "get": {
+      "post": {
         "tags": [
           "Auth"
         ],
         "summary": "Log out (destroys the session; ends the OIDC session when possible)",
-        "security": [],
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
         "responses": {
-          "302": {
-            "description": "Redirect to the login page"
+          "200": {
+            "description": "Session destroyed; navigate to redirect to complete logout",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "redirect"
+                  ],
+                  "properties": {
+                    "redirect": {
+                      "type": "string",
+                      "description": "Local / path or the OIDC provider's end-session URL",
+                      "example": "/"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid CSRF token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }

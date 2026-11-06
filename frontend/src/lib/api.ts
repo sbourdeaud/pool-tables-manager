@@ -27,9 +27,43 @@ export interface ApiResult<T = unknown> {
   status: number
 }
 
+let pendingCsrfToken: Promise<string> | null = null
+
+function getCsrfToken(): Promise<string> {
+  if (!pendingCsrfToken) {
+    pendingCsrfToken = fetch('/api/csrf-token', {
+      credentials: 'same-origin',
+      mode: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+    }).then(async (res) => {
+      if (!res.ok) throw new Error('Failed to load CSRF token (' + res.status + ')')
+      const data = await res.json() as { token?: unknown }
+      if (typeof data.token !== 'string' || !data.token) throw new Error('Invalid CSRF token response')
+      return data.token
+    }).finally(() => { pendingCsrfToken = null })
+  }
+  return pendingCsrfToken
+}
+
+async function csrfFetch(url: string, init?: RequestInit): Promise<Response> {
+  if (['GET', 'HEAD', 'OPTIONS'].includes((init?.method || 'GET').toUpperCase())) return fetch(url, init)
+  const headers = new Headers(init?.headers)
+  const send = async () => {
+    headers.set('x-csrf-token', await getCsrfToken())
+    return fetch(url, { ...init, headers, credentials: 'same-origin', mode: 'same-origin' })
+  }
+  const res = await send()
+  if (res.status === 403) {
+    const data = await res.clone().json().catch(() => undefined) as { error?: string } | undefined
+    if (data?.error === 'invalid_csrf_token') return send()
+  }
+  return res
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, init)
+    const res = await csrfFetch(url, init)
     const data = (await res.json().catch(() => undefined)) as T | undefined
     if (res.status === 401) notifyUnauthorized()
     return { ok: res.ok, data, error: (data as { error?: string } | undefined)?.error, status: res.status }
@@ -59,7 +93,7 @@ export async function apiGetSettings(): Promise<SettingsMap> {
 
 export async function apiPatchSetting(key: string, value: string): Promise<SaveResult> {
   try {
-    const res = await fetch('/api/settings', {
+    const res = await csrfFetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [key]: value }),
@@ -109,6 +143,10 @@ export function apiAuthInfo() {
 
 export function apiLocalLogin(password: string) {
   return apiSend('/auth/local/login', 'POST', { username: 'admin', password })
+}
+
+export function apiLogout() {
+  return apiSend<{ redirect: string }>('/auth/logout', 'POST')
 }
 
 export function apiLocalSetup(password: string) {
@@ -801,7 +839,7 @@ export interface BackupImportResult {
 export async function apiImportBackup(file: File): Promise<{ ok: boolean; status: number; data?: BackupImportResult }> {
   try {
     const body = await file.arrayBuffer()
-    const res = await fetch('/api/admin/backup/import', {
+    const res = await csrfFetch('/api/admin/backup/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body,

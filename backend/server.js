@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 require('dotenv').config({ quiet: true });
 const session = require('express-session');
+const { csrfSync } = require('csrf-sync');
 const oidc = require('openid-client');
 const bcrypt = require('bcryptjs');
 const sharp = require('sharp');
@@ -66,6 +67,35 @@ app.use(session({
     secure: process.env.COOKIE_SECURE === 'true'
   }
 }));
+
+const { generateToken, csrfSynchronisedProtection } = csrfSync();
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+app.get('/api/csrf-token', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.vary('Origin');
+  res.vary('Sec-Fetch-Site');
+  res.removeHeader('Access-Control-Allow-Origin');
+  const origin = req.get('origin');
+  const fetchSite = req.get('sec-fetch-site');
+  if ((origin && origin !== `${req.protocol}://${req.get('host')}`) ||
+      (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none')) {
+    return res.status(403).json({ error: 'cross_origin_request' });
+  }
+  res.json({ token: generateToken(req) });
+});
+
+app.use((req, res, next) => {
+  if (safeMethods.has(req.method)) return next();
+  if (req.method === 'POST' && req.path === '/api/webhooks/stripe') return next();
+  if (req.session.csrfToken === undefined) {
+    return res.status(403).json({ error: 'invalid_csrf_token' });
+  }
+  return csrfSynchronisedProtection(req, res, (err) => {
+    if (err) return res.status(403).json({ error: 'invalid_csrf_token' });
+    return next();
+  });
+});
 
 // Helper: Read OIDC settings from DB
 async function getOidcSettings(){
@@ -176,6 +206,7 @@ app.get('/auth/callback', async (req, res) => {
       expectedState: req.session.oidcState,
     });
     const userinfo = await oidc.fetchUserInfo(config, tokens.access_token, tokens.claims() && tokens.claims().sub);
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.user = { tokenSet: tokens, userinfo };
     delete req.session.codeVerifier;
     delete req.session.oidcState;
@@ -186,7 +217,8 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-app.get('/auth/logout', async (req, res) => {
+app.get('/auth/logout', (req, res) => res.set('Allow', 'POST').status(405).json({ error: 'method_not_allowed' }));
+app.post('/auth/logout', async (req, res) => {
   // Local session always ends. With OIDC, also end the identity-provider session
   // (RP-initiated logout) when an id_token is available; fall back to the local
   // redirect if the provider does not support it.
@@ -199,13 +231,13 @@ app.get('/auth/logout', async (req, res) => {
         id_token_hint: idToken,
         post_logout_redirect_uri: `${req.protocol}://${req.get('host')}/`
       });
-      return req.session.destroy(() => res.redirect(endSessionUrl.href));
+      return req.session.destroy(() => res.json({ redirect: endSessionUrl.href }));
     }
   } catch (err) {
     console.warn('OIDC logout error', err.message);
   }
   req.session.destroy(() => {
-    res.redirect('/');
+    res.json({ redirect: '/' });
   });
 });
 
@@ -248,6 +280,7 @@ app.post('/auth/local/login', async (req, res) => {
     if(!hash) return res.status(400).json({ error: 'not_configured' });
     const ok = await bcrypt.compare(password, hash);
     if(!ok) return res.status(401).json({ error: 'invalid_credentials' });
+    await new Promise((resolve, reject) => req.session.regenerate(err => err ? reject(err) : resolve()));
     req.session.user = { local: true, username: 'admin' };
     console.log(`[AUDIT] local-login success from ${req.ip} at ${new Date().toISOString()}`);
     res.json({ success: true });
@@ -1597,9 +1630,11 @@ const TABLE_BACKGROUND_MAX_COUNT = 32;
 const TABLE_BACKGROUND_IMAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function normalizeTableBackgroundImage(bytes, contentType) {
-  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > TABLE_BACKGROUND_MAX_BYTES) return null;
+  if (!Buffer.isBuffer(bytes)) return null;
+  const imageBytes = Buffer.from(bytes);
+  if (imageBytes.byteLength === 0 || imageBytes.byteLength > TABLE_BACKGROUND_MAX_BYTES) return null;
   try {
-    const image = sharp(bytes, { failOn: 'warning', limitInputPixels: TABLE_BACKGROUND_MAX_PIXELS });
+    const image = sharp(imageBytes, { failOn: 'warning', limitInputPixels: TABLE_BACKGROUND_MAX_PIXELS });
     const metadata = await image.metadata();
     if (`image/${metadata.format}` !== contentType || !metadata.width || !metadata.height
       || metadata.width > TABLE_BACKGROUND_MAX_DIMENSION || metadata.height > TABLE_BACKGROUND_MAX_DIMENSION

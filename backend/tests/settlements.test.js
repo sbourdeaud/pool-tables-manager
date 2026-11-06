@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
 const prisma = require('../src/prismaClient');

@@ -11,6 +11,7 @@ module.exports = new Proxy(
     calculatePKCECodeChallenge: notImplemented,
     randomState: notImplemented,
     buildAuthorizationUrl: notImplemented,
+    buildEndSessionUrl: notImplemented,
     authorizationCodeGrant: notImplemented,
     fetchUserInfo: notImplemented,
   },

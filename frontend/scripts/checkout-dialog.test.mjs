@@ -414,7 +414,11 @@ test('reconciliation API targets the reservation and sends only an optional prov
   const apiSource = await readFile(new URL('../src/lib/api.ts', import.meta.url), 'utf8')
   const code = (await transformWithOxc(apiSource, 'api.ts')).code.replace(/export /g, '')
   const requests = []
-  const context = { fetch: async (url, init) => { requests.push({ url, init }); return { ok: true, status: 200, json: async () => ({ id: 'card-1', status: 'captured' }) } } }
+  const context = { Headers, fetch: async (url, init) => {
+    if (url === '/api/csrf-token') return { ok: true, status: 200, json: async () => ({ token: 'test-csrf-token' }) }
+    requests.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ id: 'card-1', status: 'captured' }) }
+  } }
   vm.runInNewContext(`${code}\nglobalThis.reconcile = apiReconcileCardPayment`, context)
   await context.reconcile('card/1')
   await context.reconcile('card/1', 'pi_verified')

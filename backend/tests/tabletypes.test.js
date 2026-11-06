@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const sharp = require('sharp');
 const { setupAuthBypass } = require('./helpers/authBypass');
 

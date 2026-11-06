@@ -1,4 +1,4 @@
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const { Client } = require('pg');
 
 const describePostgres = process.env.SESSION_TEST_POSTGRES_URL ? describe : describe.skip;

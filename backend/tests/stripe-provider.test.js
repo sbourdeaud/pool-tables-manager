@@ -1,7 +1,7 @@
 jest.mock('stripe', () => jest.fn());
 jest.mock('../src/prismaClient', () => require('./__mocks__/src/prismaClient'));
 
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const { setupAuthBypass, restoreStatefulMocks } = require('./helpers/authBypass');
 const prisma = require('../src/prismaClient');
 const app = require('../server');

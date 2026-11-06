@@ -1,4 +1,31 @@
 (function(){
+  let pendingCsrfToken = null;
+  function getCsrfToken(){
+    if(!pendingCsrfToken){
+      pendingCsrfToken = window.fetch('/api/csrf-token', { credentials: 'same-origin', mode: 'same-origin', cache: 'no-store', redirect: 'error' })
+        .then(async res => {
+          if(!res.ok) throw new Error('Failed to load CSRF token');
+          const data = await res.json();
+          if(typeof data.token !== 'string' || !data.token) throw new Error('Invalid CSRF token response');
+          return data.token;
+        }).finally(() => { pendingCsrfToken = null; });
+    }
+    return pendingCsrfToken;
+  }
+  async function fetch(url, init){
+    if(['GET', 'HEAD', 'OPTIONS'].includes(((init && init.method) || 'GET').toUpperCase())) return window.fetch(url, init);
+    const headers = new Headers(init && init.headers);
+    const send = async () => {
+      headers.set('x-csrf-token', await getCsrfToken());
+      return window.fetch(url, { ...init, headers, credentials: 'same-origin', mode: 'same-origin' });
+    };
+    const res = await send();
+    if(res.status === 403){
+      const data = await res.clone().json().catch(() => null);
+      if(data && data.error === 'invalid_csrf_token') return send();
+    }
+    return res;
+  }
   console.log('=== MAIN.JS LOADED ===');
   const themeBtn = document.getElementById('themeBtn');
   const title = document.getElementById('title');

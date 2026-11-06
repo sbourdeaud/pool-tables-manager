@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const request = require('supertest');
+const request = require('./helpers/csrfRequest');
 const { Client } = require('pg');
 
 const describePostgres = process.env.PAYMENT_TEST_POSTGRES_URL ? describe : describe.skip;
