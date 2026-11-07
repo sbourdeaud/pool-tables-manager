@@ -590,7 +590,7 @@ export interface FinancialReport {
   refundsTotal?: number
   byPaymentMethod?: Record<string, number>
   timeSeries?: FinancialReportTimePoint[]
-  dayOfWeekAnalysis?: { dayOfWeek: string; total: number }[]
+  dayOfWeekAnalysis?: { day: string; abbr: string; total: number; count: number }[]
   error?: string
 }
 
