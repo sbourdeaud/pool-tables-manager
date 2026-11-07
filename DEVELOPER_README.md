@@ -336,7 +336,7 @@ Subscribers never pay table time. A player joining in the final 15 minutes of a 
 
 ### Prerequisites
 - Docker and Docker Compose
-- Node.js **22.12+** (Prisma 7 and openid-client 6 requirements; matches the container image)
+- Node.js **22.18.0+ within 22.x**, or **24.11.0+**; both packages use `^22.18.0 || >=24.11.0`. Local development and CI pin **22.23.4** in `.nvmrc`, matching `node:22.23.4-alpine` in Docker. Run `nvm install && nvm use` from the repository root.
 - PostgreSQL (via Docker)
 
 ### Running with Docker

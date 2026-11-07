@@ -540,8 +540,8 @@ export function ReportsPage() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {report.dayOfWeekAnalysis.map((d) => (
-                  <div key={d.dayOfWeek} className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-1.5 text-sm">
-                    <span>{t(d.dayOfWeek)}</span>
+                  <div key={d.day} className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-1.5 text-sm">
+                    <span>{t(d.day)}</span>
                     <span className="font-semibold">{money(d.total, currency)}</span>
                   </div>
                 ))}

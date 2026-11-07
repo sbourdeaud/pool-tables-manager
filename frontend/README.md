@@ -12,8 +12,8 @@ The full app UI, served by the Express backend. The previous client is archived 
 
 ## Stack
 
-- React 18 + TypeScript + Vite 5 (Node 18 compatible)
-- Tailwind CSS 3 with shadcn-style tokens (`src/index.css`); dark mode via `.dark` + `data-theme="dark"`
+- React 19 + TypeScript + Vite 8 (Node `^22.18.0 || >=24.11.0`; `.nvmrc` pins 22.23.4 for local development and CI)
+- Tailwind CSS 4 with shadcn-style tokens (`src/index.css`); dark mode via `.dark` + `data-theme="dark"`
 - shadcn-style primitives vendored in `src/components/ui/` (Radix UI under the hood)
 - QR codes rendered from the existing `/vendor/qrcode.js` (copy lives in `backend/public/vendor/`)
 

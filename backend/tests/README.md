@@ -20,7 +20,7 @@ Comprehensive Jest + Supertest integration test suite for the Pool Tables Manage
 
 ## Requirements
 
-- Node.js **22.12+** (Prisma 7 / openid-client 6)
+- Node.js **22.18.0+ within 22.x**, or **24.11.0+** (`^22.18.0 || >=24.11.0`); `.nvmrc` pins **22.23.4**
 - No database is required: the Prisma client is fully mocked
 - `openid-client` is stubbed (see below)
 
@@ -64,8 +64,8 @@ docker run --rm \
   --network pool-tables-manager_default \
   -v $(pwd)/backend:/app \
   -w /app \
-  node:18-bullseye \
-  bash -c "npm test"
+  node:22.23.4-alpine \
+  sh -c "npm test"
 ```
 
 ### Test Options
@@ -133,7 +133,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version-file: '.nvmrc'
           
       - name: Install dependencies
         working-directory: backend
@@ -153,7 +153,7 @@ jobs:
 ### GitLab CI Example
 ```yaml
 test:backend:
-  image: node:18-bullseye
+  image: node:22.23.4-alpine
   stage: test
   script:
     - cd backend

@@ -101,8 +101,11 @@ The entrypoint script will automatically:
 - Regenerate the Prisma client (Prisma 7 + `@prisma/adapter-pg`)
 - Start the server
 
-Running the backend **outside Docker** requires Node.js **22.12+** (Prisma 7 / openid-client 6). The
-container image already uses `node:22-bookworm-slim`.
+Both packages require Node.js **22.18.0 or newer within 22.x**, or **24.11.0 and newer**
+(`^22.18.0 || >=24.11.0`). Local development and CI use **22.23.4**, pinned in `.nvmrc`;
+run `nvm install && nvm use` from the repository root before installing dependencies.
+Both Docker build stages use the Alpine-based `node:22.23.4-alpine` image. Update `.nvmrc`
+and both image tags in `backend/Dockerfile` together when upgrading the pinned runtime.
 
 ## Troubleshooting
 
@@ -237,7 +240,7 @@ pool-tables-manager/
 ├── frontend/                   # React 19 + Vite 8 + Tailwind 4 source
 │   └── src/                    # staff SPA, player app, status board
 ├── backend/
-│   ├── Dockerfile              # App container definition (node:22-bookworm-slim)
+│   ├── Dockerfile              # App container definition (node:22.23.4-alpine)
 │   ├── docker-entrypoint.sh    # Startup script (migrations + Prisma client + server)
 │   ├── server.js               # Express 5 API + static frontend host
 │   ├── prisma.config.ts        # Prisma 7 datasource config
