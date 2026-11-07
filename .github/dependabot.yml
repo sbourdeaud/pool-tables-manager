@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # Keep each action family reviewable; do not combine unrelated upgrades.
+      checkout:
+        patterns: ["actions/checkout"]
+      setup-node:
+        patterns: ["actions/setup-node"]
+      codeql:
+        patterns: ["github/codeql-action"]
+
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      types:
+        patterns: ["@types/*"]
+        update-types: [minor, patch]
+      jest:
+        patterns: ["jest", "jest-*", "@jest/*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      types:
+        patterns: ["@types/*"]
+        update-types: [minor, patch]
+      eslint:
+        patterns: ["eslint", "@eslint/*", "typescript-eslint"]
+        update-types: [minor, patch]
