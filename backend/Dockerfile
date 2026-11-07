@@ -10,13 +10,13 @@ COPY package.json package-lock.json ./
 # Remove dependency source maps here so the pruned tree is what gets copied.
 RUN npm ci --omit=dev \
     && npm cache clean --force \
-    && find node_modules -name '*.map' -type f -delete 2>/dev/null || true
+    && find node_modules -name '*.map' -type f -delete
 
 # Prisma 7 reads the datasource URL from prisma.config.ts (env resolves eagerly),
 # so generation needs DATABASE_URL set — it does not connect at build time.
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-RUN DATABASE_URL="postgres://build:build@localhost:5432/build" npx prisma generate
+RUN DATABASE_URL="postgres://build:build@localhost:5432/build" ./node_modules/.bin/prisma generate
 
 # ---- Runtime ------------------------------------------------------------------
 FROM node:22.23.4-alpine AS runtime
