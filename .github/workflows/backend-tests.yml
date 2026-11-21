@@ -3,25 +3,16 @@ name: Backend Tests
 permissions:
   contents: read
 
+# CI owns the blocking PostgreSQL + coverage run. Keep this manual-only workflow
+# for quick diagnostics without a database service, not duplicate push/PR tests.
 on:
-  push:
-    branches: [ master, main, develop ]
-    paths:
-      - 'backend/**'
-      - '.nvmrc'
-      - '.github/workflows/backend-tests.yml'
-  pull_request:
-    branches: [ master, main, develop ]
-    paths:
-      - 'backend/**'
-      - '.nvmrc'
-      - '.github/workflows/backend-tests.yml'
   workflow_dispatch:
 
 jobs:
   test:
     name: Run Backend Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     defaults:
       run:
@@ -29,10 +20,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
@@ -47,29 +40,25 @@ jobs:
         env:
           DATABASE_URL: postgres://build:build@localhost:5432/build
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage
+        run: npm test -- --coverage --coverageReporters=json --coverageReporters=lcov --coverageReporters=text
         env:
           NODE_ENV: test
 
-      - name: Generate coverage report
-        if: success()
-        run: npm test -- --coverage --coverageReporters=json --coverageReporters=lcov --coverageReporters=text
-        continue-on-error: true
+      - name: Upload test results
+        if: ${{ always() && hashFiles('backend/coverage/**') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results
+          path: backend/coverage/
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Upload coverage to Codecov
-        if: success()
-        uses: codecov/codecov-action@v4
+      - name: Upload coverage to Codecov (optional)
+        if: ${{ !cancelled() && vars.ENABLE_CODECOV == 'true' && hashFiles('backend/coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           directory: backend/coverage
           flags: backend
           fail_ci_if_error: false
         continue-on-error: true
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: backend/coverage/
-          retention-days: 30

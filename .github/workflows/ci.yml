@@ -9,10 +9,33 @@ on:
   pull_request:
     branches: [ master, main, develop, release ]
 
+# Only superseded PR runs are disposable. Every pushed commit can trigger a release,
+# so give pushes unique groups (cancel-in-progress: false alone still drops pending runs).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  workflow-validation:
+    name: Workflow validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Test workflow helpers
+        run: node --test scripts/*.test.mjs
+      - name: Validate all workflows with actionlint
+        run: bash scripts/check-workflows.sh
+
   backend:
     name: Backend lint and PostgreSQL tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18
@@ -31,16 +54,36 @@ jobs:
       DATABASE_URL: postgres://test:test@localhost:5432/test
       SESSION_TEST_POSTGRES_URL: postgres://test:test@localhost:5432/test
       PAYMENT_TEST_POSTGRES_URL: postgres://test:test@localhost:5432/test
+      # Disposable service only: backup/payment suites create and drop their own databases.
+      BACKUP_TEST_POSTGRES_URL: postgres://test:test@localhost:5432/test
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
+      - name: Install and verify PostgreSQL 18 clients
+        # Ubuntu 24.04's default client can be older than the service. Use PGDG's
+        # signed repository and put the matching binaries before runner defaults.
+        run: |
+          curl --fail --silent --show-error --location \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            --output "$RUNNER_TEMP/postgresql.asc"
+          sudo install -m 644 "$RUNNER_TEMP/postgresql.asc" /usr/share/keyrings/postgresql.asc
+          printf '%s\n' 'deb [signed-by=/usr/share/keyrings/postgresql.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-client-18
+          echo '/usr/lib/postgresql/18/bin' >> "$GITHUB_PATH"
+          for tool in psql pg_dump pg_restore; do
+            "/usr/lib/postgresql/18/bin/$tool" --version | grep -E '\(PostgreSQL\) 18\.'
+          done
       - name: Install dependencies
         run: npm ci
       - name: Lint
@@ -49,18 +92,38 @@ jobs:
         run: npx prisma generate
       - name: Apply test database migrations
         run: npx prisma migrate deploy
-      - name: Test
-        run: npm test
+      - name: Test with coverage
+        # One blocking invocation: coverage must not hide a failure or run tests twice.
+        run: npm test -- --coverage --coverageReporters=json --coverageReporters=lcov --coverageReporters=text
+      - name: Upload coverage artifact
+        if: ${{ always() && hashFiles('backend/coverage/**') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload coverage to Codecov (optional)
+        if: ${{ !cancelled() && vars.ENABLE_CODECOV == 'true' && hashFiles('backend/coverage/lcov.info') != '' }}
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          directory: backend/coverage
+          flags: backend
+          fail_ci_if_error: false
+        continue-on-error: true
 
   frontend:
     name: Frontend type-check + build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'

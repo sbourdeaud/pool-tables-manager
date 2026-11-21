@@ -3,6 +3,22 @@ name: Publish container image
 on:
   push:
     tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      expected_commit:
+        required: true
+        type: string
+      update_latest:
+        default: false
+        type: boolean
+    outputs:
+      image:
+        value: ${{ jobs.prepare.outputs.image }}
+      digest:
+        value: ${{ jobs.merge.outputs.digest }}
   workflow_dispatch:
     inputs:
       tag:
@@ -11,13 +27,11 @@ on:
       update_latest:
         description: 'Also move the :latest tag to this image'
         required: false
-        default: 'true'
-        type: choice
-        options: ['true', 'false']
+        default: false
+        type: boolean
 
 permissions:
   contents: read
-  packages: write
 
 # Serialize publication, including :latest, without canceling pending releases.
 concurrency:
@@ -40,28 +54,41 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          if [[ ! "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo 'Requested git tag must also be a valid Docker tag.' >&2
+          if [[ "$TAG" == latest || ! "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo 'Requested git tag must be a valid Docker tag other than reserved latest.' >&2
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: refs/tags/${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
 
       # Resolve once so both platforms build the same commit even if the tag moves.
       - name: Resolve commit
         id: commit
-        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          if [[ -n "$EXPECTED_COMMIT" && "$commit" != "$EXPECTED_COMMIT" ]]; then
+            echo 'Tag no longer points to the commit validated by CI.' >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.platform }}
     needs: prepare
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -73,32 +100,47 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - uses: docker/login-action@v3
+      - name: Build release frontend from the resolved commit
+        working-directory: frontend
+        env:
+          BUILD_COMMIT_SHA: ${{ needs.prepare.outputs.commit }}
+          BUILD_GIT_STATUS: clean
+        run: |
+          npm ci
+          npm run build
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ needs.prepare.outputs.image }}
           tags: |
             type=raw,value=${{ needs.prepare.outputs.tag }}
-            type=raw,value=latest,enable=${{ github.event_name == 'push' || inputs.update_latest == 'true' }}
           labels: |
             org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.tag }}
 
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: backend
           platforms: ${{ matrix.platform }}
@@ -106,6 +148,20 @@ jobs:
           outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=publish-image-${{ matrix.arch }}
           cache-to: type=gha,scope=publish-image-${{ matrix.arch }},mode=max
+
+      # Use current workflow tooling even when manually rebuilding an older tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-tools
+          persist-credentials: false
+
+      - name: Smoke-test native image against disposable PostgreSQL
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: bash .workflow-tools/scripts/smoke-image.sh "$IMAGE@$DIGEST" "$COMMIT"
 
       - name: Export digest
         env:
@@ -116,7 +172,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/digests"
           touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digests-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -129,38 +185,45 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: digests-amd64
           path: ${{ runner.temp }}/digests/amd64
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: digests-arm64
           path: ${{ runner.temp }}/digests/arm64
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ needs.prepare.outputs.image }}
-          tags: |
-            type=raw,value=${{ needs.prepare.outputs.tag }}
-            type=raw,value=latest,enable=${{ github.event_name == 'push' || inputs.update_latest == 'true' }}
-          labels: |
-            org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
-
       - name: Create and inspect manifest
+        id: manifest
         env:
           IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          UPDATE_LATEST: ${{ github.event_name == 'push' || inputs.update_latest }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -175,11 +238,32 @@ jobs:
             [[ "$digest" =~ ^[a-f0-9]{64}$ ]]
             sources+=("$IMAGE@sha256:$digest")
           done
-          mapfile -t tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          (( ${#tags[@]} > 0 ))
-          tag_args=()
-          for tag in "${tags[@]}"; do
-            tag_args+=(-t "$tag")
-          done
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          docker buildx imagetools inspect "${tags[0]}"
+          docker buildx imagetools create -t "$IMAGE:$TAG" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$TAG" --raw > "$RUNNER_TEMP/manifest.json"
+          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]' "$RUNNER_TEMP/manifest.json"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r '.digest')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+          # Never demote latest to a prerelease or an older manual rebuild.
+          if [[ "$UPDATE_LATEST" == true && "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            current=''
+            if docker buildx imagetools inspect "$IMAGE:latest" --format '{{json .Image}}' > "$RUNNER_TEMP/latest.json" 2> "$RUNNER_TEMP/latest.log"; then
+              current=$(jq -er '.["linux/amd64"].config.Labels["org.opencontainers.image.version"] // .config.Labels["org.opencontainers.image.version"] // error("latest has no version label")' "$RUNNER_TEMP/latest.json")
+              # Old images used metadata-action's unprefixed version label.
+              [[ "$current" == v* ]] || current="v$current"
+            elif ! grep -qE 'manifest unknown|manifest.*not found' "$RUNNER_TEMP/latest.log" &&
+                 ! grep -qF "$IMAGE:latest: not found" "$RUNNER_TEMP/latest.log"; then
+              cat "$RUNNER_TEMP/latest.log" >&2
+              exit 1
+            fi
+            advance=$(CURRENT="$current" node --input-type=module -e '
+              import { shouldUpdateLatest } from "./scripts/image-policy.mjs";
+              console.log(shouldUpdateLatest(process.env.TAG, true, process.env.CURRENT));
+            ')
+            if [[ "$advance" == true ]]; then
+              docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE@$digest"
+            else
+              echo "Keeping latest at $current rather than $TAG"
+            fi
+          fi

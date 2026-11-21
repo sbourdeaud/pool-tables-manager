@@ -20,7 +20,7 @@ Run in the indicated package directory; neither package defines a formatter scri
 - For mocked API tests, mock `src/prismaClient` before requiring `server.js`. Use `tests/helpers/csrfRequest` instead of raw Supertest for ordinary mutations: CSRF remains active in tests. Use raw Supertest for rejection/security tests.
 - Stateful mock reset order: `jest.resetAllMocks()` → `restoreStatefulMocks(prisma)` → reset relevant `prisma.state` fields → `setupAuthBypass(prisma)`; see `backend/tests/subscriptions.test.js`.
 - PostgreSQL suites skip unless explicitly enabled. `SESSION_TEST_POSTGRES_URL` must point to a migrated disposable DB: tests delete table contents. `PAYMENT_TEST_POSTGRES_URL` and `BACKUP_TEST_POSTGRES_URL` create/drop databases and need creation privileges; backup tests also need `psql`, `pg_dump`, and `pg_restore`. Never use the application DB for these.
-- Full PostgreSQL CI setup/order is in `.github/workflows/ci.yml`: PostgreSQL 18, `npm ci` → lint → Prisma generate → migrate deploy → tests. The separate `backend-tests.yml` workflow runs without a database service.
+- Full PostgreSQL CI setup/order is in `.github/workflows/ci.yml`: PostgreSQL 18, `npm ci` → lint → Prisma generate → migrate deploy → tests. The separate `backend-tests.yml` workflow is manual-only and runs without a database service. CI enables real backup/restore tests with PostgreSQL 18 clients and collects backend coverage in its single test invocation.
 
 ## Builds and local deployment
 
@@ -35,4 +35,4 @@ Run in the indicated package directory; neither package defines a formatter scri
 
 - Prisma 7 reads `DATABASE_URL` from `backend/prisma.config.ts`, not the schema. Even `npx prisma generate` needs it, but does not connect: from `backend/`, use `DATABASE_URL=postgres://build:build@localhost:5432/build npx prisma generate` for generation only. Migration commands must target the intended real database.
 - Use `npm run ui:add -- <component>` / `npm run ui:update -- <component>` in `frontend/`, not bare shadcn: the wrappers repair generated `cn` imports to `#lib/utils`.
-- Pushes to `master`/`main` trigger automatic version/tag/release creation and image publication; `release` pushes run CI without that release trigger. Check `.github/workflows/release-on-merge.yml` before release operations.
+- Successful push CI on `master`/`main` triggers automatic version/tag/draft creation, image publication, then release finalization at the tested SHA; `release` pushes run CI without that release trigger. Manual release dispatch is read-only. Check `.github/workflows/release-on-merge.yml` and `.github/README.md` before release operations.
